@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "ait-protocol": {
+      "command": "node",
+      "args": [
+        "--enable-source-maps",
+        "/Users/nwalton/Desktop/ait-protocol/mcp/dist/server.js"
+      ],
+      "env": {
+        "PDS_URL": "http://localhost:2583",
+        "APPVIEW_DID": "did:plc:aitappview000000000001"
+      }
+    }
+  }
+}

@@ -1,0 +1,40 @@
+# Node.js / TypeScript
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# Local service data (PDS, AppView, PLC directory state)
+.pds/
+.plc/
+.appview/
+**/data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3
+*.db
+*.db-journal
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Test coverage
+coverage/
+
+# specs/ and decisions/ are intentionally NOT ignored —
+# they are first-class artifacts of the project and must be tracked in git.

@@ -1,0 +1,12 @@
+{
+  "name": "ait-pds",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Local PDS launcher for the AIT network. Thin wrapper around @atproto/pds, modeled on bluesky-social/pds/service/index.js.",
+  "scripts": {
+    "start": "node launcher.js"
+  },
+  "dependencies": {
+    "@atproto/pds": "^0.4.0"
+  }
+}

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ait.appview</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/nwalton/Desktop/ait-protocol/bin/run-appview.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/nwalton/Desktop/ait-protocol/appview</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/ait-appview.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/ait-appview.err</string>
+</dict>
+</plist>

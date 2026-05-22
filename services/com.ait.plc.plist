@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ait.plc</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/nwalton/Desktop/ait-protocol/bin/run-plc.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/nwalton/Desktop/ait-protocol/plc</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/ait-plc.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/ait-plc.err</string>
+</dict>
+</plist>

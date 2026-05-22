@@ -1,0 +1,26 @@
+{
+  "name": "ait-appview",
+  "version": "0.0.1",
+  "private": true,
+  "description": "AIT AppView — firehose subscriber + SQLite indexer + XRPC query endpoints.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node --enable-source-maps dist/server.js",
+    "dev": "tsx watch src/server.ts"
+  },
+  "dependencies": {
+    "@atproto/api": "^0.13.0",
+    "@atproto/repo": "^0.5.0",
+    "@atproto/sync": "^0.1.0",
+    "@atproto/xrpc-server": "^0.7.0",
+    "better-sqlite3": "^11.0.0",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.4.0"
+  }
+}

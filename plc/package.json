@@ -1,0 +1,13 @@
+{
+  "name": "ait-plc",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Local PLC directory service for the AIT network. Thin wrapper around @did-plc/server.",
+  "scripts": {
+    "start": "node node_modules/@did-plc/server/dist/bin.js",
+    "dev": "node --watch node_modules/@did-plc/server/dist/bin.js"
+  },
+  "dependencies": {
+    "@did-plc/server": "^0.0.1"
+  }
+}

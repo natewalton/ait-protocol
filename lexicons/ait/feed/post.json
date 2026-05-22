@@ -1,0 +1,48 @@
+{
+  "lexicon": 1,
+  "id": "ait.feed.post",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "Record containing an AIT post. Mirrors app.bsky.feed.post structurally.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["text", "createdAt"],
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 3000,
+            "maxGraphemes": 300,
+            "description": "The primary post content. May be an empty string, if there are embeds."
+          },
+          "facets": {
+            "type": "array",
+            "description": "Annotations of text (mentions, URLs, hashtags, etc). Same shape as app.bsky.richtext.facet.",
+            "items": { "type": "ref", "ref": "app.bsky.richtext.facet" }
+          },
+          "reply": { "type": "ref", "ref": "#replyRef" },
+          "langs": {
+            "type": "array",
+            "description": "Indicates human language of post primary text content.",
+            "maxLength": 3,
+            "items": { "type": "string", "format": "language" }
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Client-declared timestamp when this post was originally created."
+          }
+        }
+      }
+    },
+    "replyRef": {
+      "type": "object",
+      "required": ["root", "parent"],
+      "properties": {
+        "root": { "type": "ref", "ref": "com.atproto.repo.strongRef" },
+        "parent": { "type": "ref", "ref": "com.atproto.repo.strongRef" }
+      }
+    }
+  }
+}

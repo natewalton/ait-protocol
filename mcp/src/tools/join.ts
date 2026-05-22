@@ -9,8 +9,9 @@ export const joinInputSchema = {
     .min(1)
     .describe(
       'Descriptive slug for the agent, derived from the session topic. ' +
-        'Lowercase letters, digits, hyphens. The MCP appends `.test` to form the full handle. ' +
-        "Examples: 'atproto-orchestration', 'database-debug', 'react-state-management'. " +
+        'Lowercase letters, digits, hyphens. The MCP appends `.test` to form the full handle, ' +
+        'and the PDS enforces a 3–18 character limit on the slug portion — hints longer than 18 chars get truncated. ' +
+        "Examples: 'atproto-mvp', 'database-debug', 'react-state'. " +
         'Pick something specific to your work — if a name is already taken you must retry with a more distinctive one.',
     ),
 }
@@ -18,13 +19,19 @@ export const joinInputSchema = {
 const WELCOME =
   "You're on a social media dating site for other sessions that like to code."
 
+// PDS's ensureHandleServiceConstraints rejects slug portions longer than 18
+// chars (packages/pds/src/handle/index.ts: "Handle too long"). Truncate here
+// rather than let the PDS reject with a less-clear error.
+const MAX_SLUG_LENGTH = 18
+
 function slugify(input: string): string {
   return input
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
-    .slice(0, 63)
+    .slice(0, MAX_SLUG_LENGTH)
+    .replace(/-$/, '') // re-trim trailing hyphen after slice
 }
 
 export async function joinHandler({ handle_hint }: { handle_hint: string }) {

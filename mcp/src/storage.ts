@@ -3,20 +3,27 @@
 // The MCP process can be reaped by Claude Code between tool calls, taking
 // in-memory identity with it. Combined with ADR-0014/0023 (handles never
 // re-bind), that's permanent orphaning. To prevent it, we persist identity
-// to disk keyed by the **Claude session** — so a reaped+respawned MCP
+// to disk keyed by the **Claude process** — so a reaped+respawned MCP
 // inside the same Claude conversation recovers its identity, but a fresh
 // `claude` invocation gets a fresh identity.
 //
-// Session key derivation (best available signal wins):
-//   1. Parent process's argv contains `--resume <UUID>`  → use that UUID.
-//      Claude Code passes this on all session continuations; it's the
-//      true session ID. Verified empirically with `ps -o args=` on the
-//      MCP's parent during a live session.
-//   2. Fallback: `<ppid>-<sha256(parent-start-time):12>`.
-//      Stable for the lifetime of the Claude process; changes if Claude
-//      itself restarts. Acceptable degradation when the UUID isn't
-//      extractable.
-//   3. Last resort: just `ppid`. (Should be unreachable in practice.)
+// Session key: `sha256(<ppid>-<parent_start_time>)`, truncated.
+//
+//   - PPID + parent-process-start-time uniquely identifies the parent
+//     Claude process. The pair is invariant for the lifetime of that
+//     process, so every MCP child it spawns derives the same key.
+//   - The pair changes when Claude itself restarts (new PID, new start
+//     time even on PID reuse), which gives "fresh `claude` invocation =
+//     fresh identity" semantics.
+//   - There is NO fallback or alternate scheme. A single deterministic
+//     derivation eliminates the risk that one logical session resolves
+//     to two different storage files at different moments (which would
+//     give the same conversation two distinct AIT identities — bad).
+//
+// Trade-off accepted: `claude --resume <uuid>` after a full Claude restart
+// produces a new parent process, hence a new key, hence a new AIT identity.
+// We lose continuity across Claude restarts in exchange for a guarantee
+// that the same Claude process always sees the same identity.
 //
 // See ADR-0030.
 
@@ -32,18 +39,11 @@ const STORAGE_DIR = path.join(
   'ait-mcp',
 )
 
-function parentArgs(): string {
-  try {
-    return execSync(`ps -o args= -p ${process.ppid}`, {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    })
-  } catch {
-    return ''
-  }
-}
-
 function parentStart(): string {
+  // `lstart` is the canonical absolute start time on macOS / BSD ps. On Linux
+  // it's accepted too. We tolerate failure: an empty start string means the
+  // key collapses to just the PPID, which is still stable for that process's
+  // lifetime — same parent process, same key.
   try {
     return execSync(`ps -o lstart= -p ${process.ppid}`, {
       encoding: 'utf-8',
@@ -55,22 +55,11 @@ function parentStart(): string {
 }
 
 function sessionKey(): string {
-  const args = parentArgs()
-  const uuid = args.match(/--resume\s+([0-9a-f-]{36})/i)
-  if (uuid) return `cs-${uuid[1]}`
-
-  const start = parentStart()
-  if (start) {
-    const startHash = createHash('sha256').update(start).digest('hex').slice(0, 12)
-    return `pp-${process.ppid}-${startHash}`
-  }
-
-  return `pp-${process.ppid}`
+  return `${process.ppid}-${parentStart()}`
 }
 
 function identityPath(): string {
-  const key = sessionKey()
-  const hash = createHash('sha256').update(key).digest('hex').slice(0, 16)
+  const hash = createHash('sha256').update(sessionKey()).digest('hex').slice(0, 16)
   return path.join(STORAGE_DIR, `identity-${hash}.json`)
 }
 

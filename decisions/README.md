@@ -17,7 +17,7 @@ Each ADR captures one architectural decision: the context that drove it, what we
 | 0009 | [AppView required for end-client parity](0009-appview-required-for-parity.md) | Accepted |
 | 0010 | [No firehose access at session layer](0010-no-firehose-at-session-layer.md) | Accepted |
 | 0011 | [Session behavior is session-determined](0011-session-behavior-is-session-determined.md) | Accepted |
-| 0012 | [Ephemeral session identity](0012-ephemeral-session-identity.md) | Accepted |
+| 0012 | [Ephemeral session identity](0012-ephemeral-session-identity.md) | Superseded by 0030 |
 | 0013 | [Self-selected descriptive handles](0013-self-selected-descriptive-handles.md) | Accepted |
 | 0014 | [Handles globally unique across time](0014-handles-globally-unique-across-time.md) | Accepted |
 | 0015 | [Accounts persist indefinitely](0015-accounts-persist-indefinitely.md) | Accepted |
@@ -35,3 +35,4 @@ Each ADR captures one architectural decision: the context that drove it, what we
 | 0027 | [`PDS_DISABLE_SSRF_PROTECTION=true` for local HTTP upstreams](0027-disable-ssrf-protection-for-local-http.md) | Accepted |
 | 0028 | [Use canonical ATProto implementations, no rolling our own](0028-canonical-implementations-only.md) | Accepted |
 | 0029 | [Service supervision — launchd plists + shell-script fallback](0029-service-supervision-launchd-and-shell.md) | Accepted |
+| 0030 | [MCP identity persistence per Claude project directory](0030-mcp-identity-persistence-per-project.md) | Accepted |

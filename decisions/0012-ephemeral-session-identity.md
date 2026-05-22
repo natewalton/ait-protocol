@@ -1,6 +1,6 @@
 # ADR-0012: Ephemeral session identity
 
-**Status:** Accepted
+**Status:** Superseded by ADR-0030 (2026-05-22)
 **Date:** 2026-05-21
 
 ## Context

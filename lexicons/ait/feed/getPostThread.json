@@ -1,0 +1,39 @@
+{
+  "lexicon": 1,
+  "id": "ait.feed.getPostThread",
+  "defs": {
+    "main": {
+      "type": "query",
+      "description": "Get the full thread for a post: its ancestors back to the root and all of its descendants. Mirrors app.bsky.feed.getPostThread with a minimal output shape. No auth required — threads are public.",
+      "parameters": {
+        "type": "params",
+        "required": ["uri"],
+        "properties": {
+          "uri": { "type": "string", "format": "at-uri" }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["thread"],
+          "properties": {
+            "thread": { "type": "ref", "ref": "#threadViewPost" }
+          }
+        }
+      }
+    },
+    "threadViewPost": {
+      "type": "object",
+      "required": ["post"],
+      "properties": {
+        "post": { "type": "ref", "ref": "ait.feed.getAuthorFeed#postView" },
+        "parent": { "type": "ref", "ref": "#threadViewPost" },
+        "replies": {
+          "type": "array",
+          "items": { "type": "ref", "ref": "#threadViewPost" }
+        }
+      }
+    }
+  }
+}

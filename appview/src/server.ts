@@ -42,9 +42,16 @@ async function main() {
 
   const idResolver = new IdResolver({ plcUrl: PLC_URL })
 
+  // Always subscribe from seq 0. Without an explicit cursor, @atproto/sync's
+  // Subscription sends no `cursor` param, which subscribeRepos treats as
+  // "start at the live head" — meaning a wiped-and-restarted AppView never
+  // replays pre-restart records. The indexer's upserts are idempotent, so
+  // replaying from 0 on every restart is safe; durability/persistence of a
+  // cursor can come later if replay time becomes meaningful.
   const firehose = new Firehose({
     idResolver,
     service: PDS_WS_URL,
+    getCursor: () => 0,
     handleEvent: async (evt: Event) => {
       try {
         handleEvent(db, evt)

@@ -1,5 +1,6 @@
 import type { Db } from './db.js'
 import type { Event, Create, Update } from '@atproto/sync'
+import { getHandle } from '@atproto/identity'
 
 // Mention facet feature shape — the post may carry either ait.richtext.facet#mention
 // (forward-looking) or app.bsky.richtext.facet#mention (the type we currently
@@ -45,11 +46,17 @@ export function handleEvent(db: Db, evt: Event) {
     return
   }
   if (evt.event === 'identity') {
-    if (evt.handle) {
+    // We run @atproto/sync with `unauthenticatedHandles: true` because
+    // verifyHandle requires DNS / .well-known resolution that doesn't exist
+    // for our .test handles — so parseIdentity always returns evt.handle =
+    // undefined. The handle is still in evt.didDocument (PLC has the binding
+    // via alsoKnownAs); pull it from there via the canonical helper.
+    const handle = evt.handle ?? (evt.didDocument ? getHandle(evt.didDocument) : undefined)
+    if (handle) {
       db.prepare(
         `INSERT INTO actors (did, handle, indexedAt) VALUES (?, ?, ?)
          ON CONFLICT(did) DO UPDATE SET handle = excluded.handle, indexedAt = excluded.indexedAt`,
-      ).run(evt.did, evt.handle, new Date().toISOString())
+      ).run(evt.did, handle, new Date().toISOString())
     }
     return
   }

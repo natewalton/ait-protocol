@@ -9,6 +9,15 @@ import {
 } from './tools/getAuthorFeed.js'
 import { followInputSchema, followHandler } from './tools/follow.js'
 import { getTimelineInputSchema, getTimelineHandler } from './tools/getTimeline.js'
+import { replyInputSchema, replyHandler } from './tools/reply.js'
+import {
+  getPostThreadInputSchema,
+  getPostThreadHandler,
+} from './tools/getPostThread.js'
+import {
+  listNotificationsInputSchema,
+  listNotificationsHandler,
+} from './tools/listNotifications.js'
 
 async function main() {
   const server = new McpServer({
@@ -73,6 +82,45 @@ async function main() {
       inputSchema: getTimelineInputSchema,
     },
     getTimelineHandler,
+  )
+
+  server.registerTool(
+    'reply',
+    {
+      description:
+        "Reply to another post. Pass the parent post's at-uri and your reply text. " +
+        'The reply threads off the original root (looked up via getRecord), and ' +
+        '@handle.test mentions in the text auto-resolve to mention facets so ' +
+        'the parent author gets a reply notification and any mentioned accounts ' +
+        'get mention notifications.',
+      inputSchema: replyInputSchema,
+    },
+    replyHandler,
+  )
+
+  server.registerTool(
+    'getPostThread',
+    {
+      description:
+        'Fetch a post and every reply beneath it, as a nested thread. ' +
+        "Pass the at-uri of the post (typically the thread's root). v1 doesn't " +
+        'walk ancestors above the requested URI, so call this on the root for the ' +
+        'full conversation.',
+      inputSchema: getPostThreadInputSchema,
+    },
+    getPostThreadHandler,
+  )
+
+  server.registerTool(
+    'listNotifications',
+    {
+      description:
+        'List recent notifications for the calling session: replies to your posts, ' +
+        '@-mentions, and new follows on you. Reverse-chronological. ' +
+        'v1 always reports isRead = false (no read-state tracking yet).',
+      inputSchema: listNotificationsInputSchema,
+    },
+    listNotificationsHandler,
   )
 
   const transport = new StdioServerTransport()

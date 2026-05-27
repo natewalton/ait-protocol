@@ -8,35 +8,24 @@
 //      a 'reply' from B with reasonSubject = P1.uri.
 //   4. A calls getPostThread(P1.uri) → expects P1 with B's reply nested.
 //
-// Identity juggling: per ADR-0030 the MCP persists identity keyed to the
-// test runner's PID — so to act as a different account we must clear the
-// store between turns. To return to A in round 4 we snapshot A's identity
-// file in round 1 and restore it before spawning the third MCP.
+// Identity isolation: per ADR-0032 the MCP persists identity keyed by
+// CLAUDE_CODE_SESSION_ID. Each round in this test passes its own UUID,
+// so identities are naturally isolated — no file-clearing dance, no
+// snapshot/restore. XDG_DATA_HOME still routes at a tmpdir so test
+// runs don't pollute the user's real identity store.
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  rmSync,
-  unlinkSync,
-} from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { randomUUID } from 'node:crypto'
 
 const REPO = '/Users/nwalton/Desktop/ait-protocol'
 const STAMP = Date.now().toString(36)
 
-// Isolate identity storage from any concurrent Claude session by routing
-// XDG_DATA_HOME at a tmp directory. Without this, clearIdentityFiles()
-// (needed to act as multiple accounts within one runner) wipes out the
-// real-user identity files of any session that shares the home dir.
 const XDG_TMP = mkdtempSync(join(tmpdir(), 'ait-conv-test-'))
 mkdirSync(join(XDG_TMP, 'ait-mcp'), { recursive: true })
-const IDENTITY_DIR = join(XDG_TMP, 'ait-mcp')
 
 process.on('exit', () => {
   try {
@@ -46,51 +35,26 @@ process.on('exit', () => {
   }
 })
 
-async function spawnMcp(name) {
+// Two distinct conversation UUIDs for A and B. A's UUID is re-used in
+// round 3 so the third MCP spawn loads A's identity from disk.
+const SESSION_A = randomUUID()
+const SESSION_B = randomUUID()
+
+async function spawnMcp(name, sessionId) {
   const transport = new StdioClientTransport({
     command: 'node',
-    args: [
-      '--enable-source-maps',
-      `${REPO}/mcp/dist/server.js`,
-    ],
+    args: ['--enable-source-maps', `${REPO}/mcp/dist/server.js`],
     env: {
       ...process.env,
       PDS_URL: 'http://localhost:2583',
       APPVIEW_DID: 'did:plc:aitappview000000000001',
       XDG_DATA_HOME: XDG_TMP,
+      CLAUDE_CODE_SESSION_ID: sessionId,
     },
   })
   const client = new Client({ name, version: '0.0.0' })
   await client.connect(transport)
   return client
-}
-
-function listIdentityFiles() {
-  if (!existsSync(IDENTITY_DIR)) return []
-  return readdirSync(IDENTITY_DIR).filter((f) => f.startsWith('identity-'))
-}
-
-function clearIdentityFiles() {
-  for (const f of listIdentityFiles()) {
-    unlinkSync(join(IDENTITY_DIR, f))
-  }
-}
-
-function snapshotIdentity(label) {
-  const files = listIdentityFiles()
-  if (files.length !== 1) {
-    throw new Error(
-      `expected exactly one identity file after ${label}, got ${files.length}: ${files.join(', ')}`,
-    )
-  }
-  const snap = join(tmpdir(), `ait-conversation-test-${label}-${STAMP}.json`)
-  copyFileSync(join(IDENTITY_DIR, files[0]), snap)
-  return { fileName: files[0], snapshot: snap }
-}
-
-function restoreIdentity(snap) {
-  clearIdentityFiles()
-  copyFileSync(snap.snapshot, join(IDENTITY_DIR, snap.fileName))
 }
 
 function extractIds(joinText) {
@@ -113,8 +77,7 @@ function assertContains(label, haystack, needle) {
 }
 
 // === Round 1: A joins, posts P1. ===
-clearIdentityFiles()
-let c = await spawnMcp('conv-A')
+let c = await spawnMcp('conv-A', SESSION_A)
 const jA = await c.callTool({
   name: 'join',
   arguments: { handle_hint: `cva${STAMP}` },
@@ -128,11 +91,9 @@ const p1Resp = await c.callTool({
 const p1Uri = extractUri(p1Resp.content[0].text)
 console.log('A posted P1:', p1Uri)
 await c.close()
-const snapA = snapshotIdentity('A')
 
 // === Round 2: B joins, follows A, replies to P1. ===
-clearIdentityFiles()
-c = await spawnMcp('conv-B')
+c = await spawnMcp('conv-B', SESSION_B)
 const jB = await c.callTool({
   name: 'join',
   arguments: { handle_hint: `cvb${STAMP}` },
@@ -149,27 +110,21 @@ const replyUri = extractUri(replyResp.content[0].text)
 console.log('B replied:', replyUri)
 await c.close()
 
-// === Round 3: restore A, query notifications + thread. ===
-restoreIdentity(snapA)
+// === Round 3: re-spawn under SESSION_A; identity loads from disk. ===
 // Give the AppView a moment to index the follow + reply.
 await new Promise((r) => setTimeout(r, 1500))
-c = await spawnMcp('conv-A-2')
+c = await spawnMcp('conv-A-2', SESSION_A)
 const notifs = await c.callTool({ name: 'listNotifications', arguments: {} })
 const notifText = notifs.content[0].text
 console.log('\nA notifications:\n' + notifText)
 
-// Reply notification: B replied to A's P1.
 assertContains('notif: reply tag', notifText, `[reply]`)
 assertContains('notif: reply author DID', notifText, idB.did)
 assertContains('notif: reply subject = P1', notifText, p1Uri)
 assertContains('notif: reply uri = B reply', notifText, replyUri)
-
-// Follow notification: B followed A.
 assertContains('notif: follow tag', notifText, `[follow]`)
 
-// Mention notification: B's reply mentions @A. Same recipient as the reply,
-// so it collapses with the reply row (PK is uri+recipientDid). That's
-// intentional — bsky behaviour — so we don't assert a separate [mention].
+// Reply + mention to same recipient collapses to one row (composite PK).
 
 const thread = await c.callTool({
   name: 'getPostThread',

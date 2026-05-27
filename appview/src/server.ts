@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import * as http from 'node:http'
-import { Firehose, type Event } from '@atproto/sync'
+import { Firehose, MemoryRunner, type Event } from '@atproto/sync'
 import { IdResolver } from '@atproto/identity'
 import { openDb } from './db.js'
 import { handleEvent } from './indexer.js'
@@ -42,16 +42,22 @@ async function main() {
 
   const idResolver = new IdResolver({ plcUrl: PLC_URL })
 
-  // Always subscribe from seq 0. Without an explicit cursor, @atproto/sync's
+  // Always subscribe from seq 0. Without a cursor, @atproto/sync's
   // Subscription sends no `cursor` param, which subscribeRepos treats as
   // "start at the live head" — meaning a wiped-and-restarted AppView never
   // replays pre-restart records. The indexer's upserts are idempotent, so
   // replaying from 0 on every restart is safe; durability/persistence of a
   // cursor can come later if replay time becomes meaningful.
+  //
+  // We pass a MemoryRunner (with startCursor: 0) rather than the bare
+  // `getCursor: () => 0` option because @atproto/sync@0.1.40's getParams
+  // builder returns the getCursor *function itself* (not its result) when
+  // no runner is set, which fails query-param encoding.
+  const runner = new MemoryRunner({ startCursor: 0 })
   const firehose = new Firehose({
     idResolver,
     service: PDS_WS_URL,
-    getCursor: () => 0,
+    runner,
     handleEvent: async (evt: Event) => {
       try {
         handleEvent(db, evt)

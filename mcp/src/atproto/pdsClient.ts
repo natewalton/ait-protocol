@@ -1,16 +1,45 @@
-import { AtpAgent, type AtpSessionData } from '@atproto/api'
-import { requireIdentity, type Identity } from '../session.js'
+import {
+  AtpAgent,
+  type AtpSessionData,
+  type AtpSessionEvent,
+} from '@atproto/api'
+import {
+  requireIdentity,
+  setIdentity,
+  updateIdentityTokens,
+  type Identity,
+} from '../session.js'
 
 const PDS_URL = process.env.PDS_URL ?? 'http://localhost:2583'
 const APPVIEW_DID =
   process.env.APPVIEW_DID ?? 'did:plc:aitappview000000000001'
 
-// One agent per MCP process; we use resumeSession to attach credentials after `join`.
+// One agent per MCP process. We wire persistSession so that AtpAgent's
+// auto-refresh path (it transparently calls refreshSession on 401) writes
+// the new JWTs back to disk — without this, a reaped MCP child loses
+// every refresh that happened in the dead process's memory.
 let agent: AtpAgent | null = null
+
+function persistSession(
+  evt: AtpSessionEvent,
+  session: AtpSessionData | undefined,
+): void {
+  if ((evt === 'create' || evt === 'update') && session) {
+    // Tokens refreshed (or just installed). Patch in-memory + on-disk
+    // identity. did / handle / password don't change here.
+    updateIdentityTokens({
+      accessJwt: session.accessJwt,
+      refreshJwt: session.refreshJwt,
+    })
+  }
+  // 'expired' / 'create-failed' / 'network-error': do nothing. The
+  // ensureAuthedAgent retry path handles 'expired' by calling login()
+  // with the stored password.
+}
 
 function getAgent(): AtpAgent {
   if (!agent) {
-    agent = new AtpAgent({ service: PDS_URL })
+    agent = new AtpAgent({ service: PDS_URL, persistSession })
   }
   return agent
 }
@@ -25,21 +54,44 @@ function identityToSession(id: Identity): AtpSessionData {
   }
 }
 
-async function ensureSession(id: Identity): Promise<AtpAgent> {
+// Re-login via createSession when refresh isn't enough (refresh JWT also
+// stale, or session revoked server-side). Uses the password we persist at
+// join time. login() fires persistSession('create', ...) → the callback
+// above writes the new tokens. Belt-and-suspenders write-through after
+// the call in case the agent's session is set synchronously.
+async function loginWithStoredCredentials(id: Identity): Promise<AtpAgent> {
   const a = getAgent()
-  if (!a.session || a.session.did !== id.did) {
-    await a.resumeSession(identityToSession(id)).catch(() => {
-      // If refresh fails (e.g. tokens still valid but PDS rejects), session is
-      // still set per resumeSession's contract; safe to proceed.
+  await a.login({ identifier: id.handle, password: id.password })
+  if (a.session) {
+    setIdentity({
+      did: id.did,
+      handle: id.handle,
+      password: id.password,
+      accessJwt: a.session.accessJwt,
+      refreshJwt: a.session.refreshJwt,
     })
   }
   return a
 }
 
+// Returns an authenticated AtpAgent. Tries resumeSession with cached JWTs;
+// on failure, falls back to login() with the stored password — the vanilla
+// ATProto re-auth primitive. Single retry budget; if login also fails,
+// surface the error.
+async function ensureAuthedAgent(id: Identity): Promise<AtpAgent> {
+  const a = getAgent()
+  if (a.session && a.session.did === id.did) return a
+  try {
+    await a.resumeSession(identityToSession(id))
+    return a
+  } catch {
+    return loginWithStoredCredentials(id)
+  }
+}
+
 // Returns the authenticated AtpAgent for the current session.
 export async function getAuthedAgent(): Promise<AtpAgent> {
-  const id = requireIdentity()
-  return ensureSession(id)
+  return ensureAuthedAgent(requireIdentity())
 }
 
 // Returns an unauthenticated AtpAgent (for createAccount, etc.)
@@ -50,8 +102,7 @@ export function getRawAgent(): AtpAgent {
 // Returns an agent cloned with the AppView proxy header set, so reads go via
 // the PDS service-proxy fast-path to our AppView (per ADR-0025).
 export async function getAppViewAgent(): Promise<AtpAgent> {
-  const id = requireIdentity()
-  const base = await ensureSession(id)
+  const base = await getAuthedAgent()
   return base.withProxy('bsky_appview', APPVIEW_DID) as AtpAgent
 }
 

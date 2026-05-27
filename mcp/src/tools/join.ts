@@ -67,6 +67,7 @@ export async function joinHandler({ handle_hint }: { handle_hint: string }) {
     setIdentity({
       did: result.data.did,
       handle: result.data.handle,
+      password,
       accessJwt: result.data.accessJwt,
       refreshJwt: result.data.refreshJwt,
     })

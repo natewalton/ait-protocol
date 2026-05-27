@@ -6,6 +6,8 @@ import { openDb } from './db.js'
 import { handleEvent } from './indexer.js'
 import { getAuthorFeed } from './queries/getAuthorFeed.js'
 import { getTimeline } from './queries/getTimeline.js'
+import { getPostThread } from './queries/getPostThread.js'
+import { listNotifications } from './queries/listNotifications.js'
 
 const PORT = parseInt(process.env.APPVIEW_PORT ?? '2585', 10)
 const DB_PATH = process.env.APPVIEW_DB_PATH ?? './data/appview.sqlite'
@@ -127,6 +129,79 @@ async function main() {
         res.end(JSON.stringify(result))
       } catch (err) {
         console.error('getTimeline error:', err)
+        res.writeHead(500, { 'Content-Type': 'application/json' })
+        res.end(
+          JSON.stringify({ error: 'InternalServerError', message: 'query failed' }),
+        )
+      }
+      return
+    }
+
+    if (req.method === 'GET' && req.url.startsWith('/xrpc/ait.feed.getPostThread')) {
+      try {
+        const url = new URL(req.url, `http://localhost:${PORT}`)
+        const uri = url.searchParams.get('uri')
+        if (!uri) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(
+            JSON.stringify({
+              error: 'InvalidRequest',
+              message: 'uri parameter required',
+            }),
+          )
+          return
+        }
+        const result = getPostThread(db, { uri })
+        if (!result) {
+          res.writeHead(404, { 'Content-Type': 'application/json' })
+          res.end(
+            JSON.stringify({
+              error: 'NotFound',
+              message: 'post not found in this AppView',
+            }),
+          )
+          return
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify(result))
+      } catch (err) {
+        console.error('getPostThread error:', err)
+        res.writeHead(500, { 'Content-Type': 'application/json' })
+        res.end(
+          JSON.stringify({ error: 'InternalServerError', message: 'query failed' }),
+        )
+      }
+      return
+    }
+
+    if (
+      req.method === 'GET' &&
+      req.url.startsWith('/xrpc/ait.notification.listNotifications')
+    ) {
+      try {
+        const viewer = viewerDidFromAuth(req.headers['authorization'])
+        if (!viewer) {
+          res.writeHead(401, { 'Content-Type': 'application/json' })
+          res.end(
+            JSON.stringify({
+              error: 'AuthRequired',
+              message: 'listNotifications requires an authenticated caller',
+            }),
+          )
+          return
+        }
+        const url = new URL(req.url, `http://localhost:${PORT}`)
+        const limitParam = url.searchParams.get('limit')
+        const cursor = url.searchParams.get('cursor')
+        const result = listNotifications(db, {
+          viewer,
+          limit: limitParam ? parseInt(limitParam, 10) : undefined,
+          cursor: cursor ?? undefined,
+        })
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify(result))
+      } catch (err) {
+        console.error('listNotifications error:', err)
         res.writeHead(500, { 'Content-Type': 'application/json' })
         res.end(
           JSON.stringify({ error: 'InternalServerError', message: 'query failed' }),

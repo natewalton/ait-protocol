@@ -185,6 +185,8 @@ function indexFollow(db: Db, evt: Create | Update) {
   const record = evt.record as { subject?: string; createdAt?: string }
   if (!record.subject) return // malformed; skip
   const now = new Date().toISOString()
+  const uri = evt.uri.toString()
+  const cid = evt.cid.toString()
 
   db.prepare(
     `INSERT INTO follows (uri, did, subject, createdAt, indexedAt)
@@ -193,7 +195,7 @@ function indexFollow(db: Db, evt: Create | Update) {
        subject = excluded.subject,
        createdAt = excluded.createdAt`,
   ).run(
-    evt.uri.toString(),
+    uri,
     evt.did,
     record.subject,
     record.createdAt ?? now,
@@ -202,6 +204,22 @@ function indexFollow(db: Db, evt: Create | Update) {
 
   ensureActor(db, evt.did, now)
   ensureActor(db, record.subject, now)
+
+  // Follow notification: the followee hears about it. Self-follow is
+  // already rejected by the follow tool, but guard here too in case a
+  // record sneaks in via a different write path.
+  if (record.subject !== evt.did) {
+    insertNotification(db, {
+      uri,
+      cid,
+      recipient_did: record.subject,
+      author_did: evt.did,
+      reason: 'follow',
+      reason_subject: null,
+      createdAt: record.createdAt ?? now,
+      indexedAt: now,
+    })
+  }
 }
 
 function ensureActor(db: Db, did: string, now: string) {

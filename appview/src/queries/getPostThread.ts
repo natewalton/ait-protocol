@@ -25,8 +25,8 @@ interface PostRow {
   did: string
   text: string
   facets: string | null
-  reply_root_uri: string | null
-  reply_parent_uri: string | null
+  replyRootUri: string | null
+  replyParentUri: string | null
   createdAt: string
   indexedAt: string
   handle: string | null
@@ -42,10 +42,10 @@ function rowToView(r: PostRow): ThreadViewPost {
         $type: 'ait.feed.post',
         text: r.text,
         facets: r.facets ? JSON.parse(r.facets) : undefined,
-        reply: r.reply_parent_uri
+        reply: r.replyParentUri
           ? {
-              root: { uri: r.reply_root_uri ?? r.reply_parent_uri },
-              parent: { uri: r.reply_parent_uri },
+              root: { uri: r.replyRootUri ?? r.replyParentUri },
+              parent: { uri: r.replyParentUri },
             }
           : undefined,
         createdAt: r.createdAt,
@@ -60,30 +60,30 @@ function rowToView(r: PostRow): ThreadViewPost {
 // URI are not walked; if the caller hands us a reply, the parent chain is
 // not returned. The spec asks for "given a root URI" — assume that contract.
 export function getPostThread(db: Db, params: PostThreadParams): PostThreadResult | null {
-  // One SQL query for the root post plus every post whose reply_root points at it.
-  // Self-rooting posts (reply_root_uri = own uri) wouldn't happen via the writer,
+  // One SQL query for the root post plus every post whose replyRoot points at it.
+  // Self-rooting posts (replyRootUri = own uri) wouldn't happen via the writer,
   // but the `uri = ?` arm guarantees the root itself is included either way.
   const rows = db
     .prepare(
       `SELECT p.uri, p.cid, p.did, p.text, p.facets,
-              p.reply_root_uri, p.reply_parent_uri,
+              p.replyRootUri, p.replyParentUri,
               p.createdAt, p.indexedAt,
               a.handle
        FROM posts p
        LEFT JOIN actors a ON a.did = p.did
-       WHERE p.uri = ? OR p.reply_root_uri = ?`,
+       WHERE p.uri = ? OR p.replyRootUri = ?`,
     )
     .all(params.uri, params.uri) as PostRow[]
 
   const root = rows.find((r) => r.uri === params.uri)
   if (!root) return null
 
-  // Build a tree by reply_parent_uri. Sort siblings by createdAt ASC so
+  // Build a tree by replyParentUri. Sort siblings by createdAt ASC so
   // threads read top-down.
   const byParent = new Map<string, ThreadViewPost[]>()
   for (const r of rows) {
     if (r.uri === params.uri) continue
-    const parent = r.reply_parent_uri ?? params.uri
+    const parent = r.replyParentUri ?? params.uri
     const arr = byParent.get(parent) ?? []
     arr.push(rowToView(r))
     byParent.set(parent, arr)

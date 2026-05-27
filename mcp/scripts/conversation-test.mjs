@@ -51,7 +51,7 @@ async function spawnMcp(name) {
     command: 'node',
     args: [
       '--enable-source-maps',
-      `${REPO}/.claude/worktrees/cool-leakey-4ecf15/mcp/dist/server.js`,
+      `${REPO}/mcp/dist/server.js`,
     ],
     env: {
       ...process.env,
@@ -168,7 +168,7 @@ assertContains('notif: reply uri = B reply', notifText, replyUri)
 assertContains('notif: follow tag', notifText, `[follow]`)
 
 // Mention notification: B's reply mentions @A. Same recipient as the reply,
-// so it collapses with the reply row (PK is uri+recipient_did). That's
+// so it collapses with the reply row (PK is uri+recipientDid). That's
 // intentional — bsky behaviour — so we don't assert a separate [mention].
 
 const thread = await c.callTool({

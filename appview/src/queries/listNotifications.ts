@@ -25,21 +25,21 @@ export interface ListNotificationsResult {
 interface NotificationRow {
   uri: string
   cid: string
-  recipient_did: string
-  author_did: string
+  recipientDid: string
+  authorDid: string
   reason: 'reply' | 'mention' | 'follow'
-  reason_subject: string | null
+  reasonSubject: string | null
   createdAt: string
   indexedAt: string
-  author_handle: string | null
+  authorHandle: string | null
 }
 
 interface PostRow {
   uri: string
   text: string
   facets: string | null
-  reply_root_uri: string | null
-  reply_parent_uri: string | null
+  replyRootUri: string | null
+  replyParentUri: string | null
   createdAt: string
 }
 
@@ -56,12 +56,12 @@ export function listNotifications(
   const limit = Math.min(Math.max(params.limit ?? 50, 1), 100)
 
   let query = `
-    SELECT n.uri, n.cid, n.recipient_did, n.author_did, n.reason,
-           n.reason_subject, n.createdAt, n.indexedAt,
-           a.handle AS author_handle
+    SELECT n.uri, n.cid, n.recipientDid, n.authorDid, n.reason,
+           n.reasonSubject, n.createdAt, n.indexedAt,
+           a.handle AS authorHandle
     FROM notifications n
-    LEFT JOIN actors a ON a.did = n.author_did
-    WHERE n.recipient_did = ?
+    LEFT JOIN actors a ON a.did = n.authorDid
+    WHERE n.recipientDid = ?
   `
   const args: (string | number)[] = [params.viewer]
   if (params.cursor) {
@@ -86,7 +86,7 @@ export function listNotifications(
     const placeholders = postUris.map(() => '?').join(',')
     const postRows = db
       .prepare(
-        `SELECT uri, text, facets, reply_root_uri, reply_parent_uri, createdAt
+        `SELECT uri, text, facets, replyRootUri, replyParentUri, createdAt
          FROM posts WHERE uri IN (${placeholders})`,
       )
       .all(...postUris) as PostRow[]
@@ -122,10 +122,10 @@ export function listNotifications(
             $type: 'ait.feed.post',
             text: p.text,
             facets: p.facets ? JSON.parse(p.facets) : undefined,
-            reply: p.reply_parent_uri
+            reply: p.replyParentUri
               ? {
-                  root: { uri: p.reply_root_uri ?? p.reply_parent_uri },
-                  parent: { uri: p.reply_parent_uri },
+                  root: { uri: p.replyRootUri ?? p.replyParentUri },
+                  parent: { uri: p.replyParentUri },
                 }
               : undefined,
             createdAt: p.createdAt,
@@ -136,13 +136,13 @@ export function listNotifications(
     const view: NotificationView = {
       uri: r.uri,
       cid: r.cid,
-      author: { did: r.author_did, handle: r.author_handle ?? '' },
+      author: { did: r.authorDid, handle: r.authorHandle ?? '' },
       reason: r.reason,
       record,
       isRead: false, // v1 always false, per spec
       indexedAt: r.indexedAt,
     }
-    if (r.reason_subject) view.reasonSubject = r.reason_subject
+    if (r.reasonSubject) view.reasonSubject = r.reasonSubject
     return view
   })
 

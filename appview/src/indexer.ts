@@ -85,15 +85,15 @@ function indexPost(db: Db, evt: Create | Update) {
   const replyParentUri = record.reply?.parent?.uri ?? null
 
   db.prepare(
-    `INSERT INTO posts (uri, cid, did, text, facets, reply_root_uri, reply_parent_uri, createdAt, indexedAt)
+    `INSERT INTO posts (uri, cid, did, text, facets, replyRootUri, replyParentUri, createdAt, indexedAt)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(uri) DO UPDATE SET
-       cid              = excluded.cid,
-       text             = excluded.text,
-       facets           = excluded.facets,
-       reply_root_uri   = excluded.reply_root_uri,
-       reply_parent_uri = excluded.reply_parent_uri,
-       createdAt        = excluded.createdAt`,
+       cid            = excluded.cid,
+       text           = excluded.text,
+       facets         = excluded.facets,
+       replyRootUri   = excluded.replyRootUri,
+       replyParentUri = excluded.replyParentUri,
+       createdAt      = excluded.createdAt`,
   ).run(
     uri,
     cid,
@@ -115,10 +115,10 @@ function indexPost(db: Db, evt: Create | Update) {
       insertNotification(db, {
         uri,
         cid,
-        recipient_did: parentAuthor,
-        author_did: evt.did,
+        recipientDid: parentAuthor,
+        authorDid: evt.did,
         reason: 'reply',
-        reason_subject: replyParentUri,
+        reasonSubject: replyParentUri,
         createdAt: record.createdAt ?? now,
         indexedAt: now,
       })
@@ -145,10 +145,10 @@ function indexPost(db: Db, evt: Create | Update) {
       insertNotification(db, {
         uri,
         cid,
-        recipient_did: recipient,
-        author_did: evt.did,
+        recipientDid: recipient,
+        authorDid: evt.did,
         reason: 'mention',
-        reason_subject: uri,
+        reasonSubject: uri,
         createdAt: record.createdAt ?? now,
         indexedAt: now,
       })
@@ -159,30 +159,30 @@ function indexPost(db: Db, evt: Create | Update) {
 interface NotificationRow {
   uri: string
   cid: string
-  recipient_did: string
-  author_did: string
+  recipientDid: string
+  authorDid: string
   reason: 'reply' | 'mention' | 'follow'
-  reason_subject: string | null
+  reasonSubject: string | null
   createdAt: string
   indexedAt: string
 }
 
 function insertNotification(db: Db, n: NotificationRow) {
-  // PK is (uri, recipient_did) — N mentioned recipients on one post produce
+  // PK is (uri, recipientDid) — N mentioned recipients on one post produce
   // N rows. A single post that both replies-to and mentions the same
   // person collapses to one row (first write wins), which matches bsky
   // and avoids double-pinging.
   db.prepare(
-    `INSERT INTO notifications (uri, cid, recipient_did, author_did, reason, reason_subject, createdAt, indexedAt)
+    `INSERT INTO notifications (uri, cid, recipientDid, authorDid, reason, reasonSubject, createdAt, indexedAt)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(uri, recipient_did) DO NOTHING`,
+     ON CONFLICT(uri, recipientDid) DO NOTHING`,
   ).run(
     n.uri,
     n.cid,
-    n.recipient_did,
-    n.author_did,
+    n.recipientDid,
+    n.authorDid,
     n.reason,
-    n.reason_subject,
+    n.reasonSubject,
     n.createdAt,
     n.indexedAt,
   )
@@ -219,10 +219,10 @@ function indexFollow(db: Db, evt: Create | Update) {
     insertNotification(db, {
       uri,
       cid,
-      recipient_did: record.subject,
-      author_did: evt.did,
+      recipientDid: record.subject,
+      authorDid: evt.did,
       reason: 'follow',
-      reason_subject: null,
+      reasonSubject: null,
       createdAt: record.createdAt ?? now,
       indexedAt: now,
     })

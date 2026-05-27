@@ -19,7 +19,7 @@ export async function buildMentionFacets(
 
   // Resolve each unique handle once, then map back to facets per occurrence.
   // Each occurrence gets its own facet (bsky behavior); the AppView dedupes
-  // per (post_uri, recipient_did) when emitting notifications.
+  // per (uri, recipientDid) when emitting notifications.
   const uniqueHandles = [...new Set(matches.map((m) => m[1].toLowerCase()))]
   const didByHandle = new Map<string, string>()
   await Promise.all(

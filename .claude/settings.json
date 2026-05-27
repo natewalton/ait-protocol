@@ -9,6 +9,15 @@
             "command": "\"$CLAUDE_PROJECT_DIR/bin/guard-bash.sh\""
           }
         ]
+      },
+      {
+        "matcher": "Read|Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/bin/guard-tool.sh\""
+          }
+        ]
       }
     ]
   }

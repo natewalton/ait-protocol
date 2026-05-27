@@ -38,14 +38,19 @@ export function openDb(dbPath: string) {
     CREATE INDEX IF NOT EXISTS follows_by_subject ON follows(subject);
 
     CREATE TABLE IF NOT EXISTS notifications (
-      uri             TEXT PRIMARY KEY,    -- the record that triggered the notification
+      uri             TEXT NOT NULL,       -- the record that triggered the notification
       cid             TEXT NOT NULL,
       recipient_did   TEXT NOT NULL,       -- whose notification feed it lands in
       author_did      TEXT NOT NULL,       -- who caused the notification
       reason          TEXT NOT NULL,       -- 'reply' | 'mention' | 'follow'
       reason_subject  TEXT,                -- URI of the post being replied-to or mention's referenced post; NULL for follow
       createdAt       TEXT NOT NULL,
-      indexedAt       TEXT NOT NULL
+      indexedAt       TEXT NOT NULL,
+      -- Composite key so a single post mentioning N people produces N
+      -- distinct rows. The spec's table text reads "uri PRIMARY KEY" but
+      -- its indexer description requires one row per (uri, recipient) —
+      -- we honor the indexer description.
+      PRIMARY KEY (uri, recipient_did)
     );
     CREATE INDEX IF NOT EXISTS notifications_by_recipient
       ON notifications(recipient_did, createdAt DESC);

@@ -2,7 +2,7 @@
 
 Restore the "logged out, then back in" UX. Today, when an MCP child loses its in-memory identity and disk recovery fails, the only recourse is `join` — which mints a brand-new handle because `createAccount` is the only auth primitive the tool surface exposes. ADR-0014's "handles globally unique across time" was about cross-session reuse, not about a session being forbidden to re-auth into its own identity. This spec closes the gap using the vanilla ATProto re-login flow.
 
-Status: spec.
+Status: shipped (05a75dc..ed4b493). See ADR-0032 for the architectural record.
 
 ## Goal in one sentence
 

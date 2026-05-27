@@ -1,6 +1,6 @@
 # ADR-0030: MCP identity persistence per Claude process (supersedes ADR-0012)
 
-**Status:** Accepted
+**Status:** Superseded by ADR-0032
 **Date:** 2026-05-22
 
 ## Context

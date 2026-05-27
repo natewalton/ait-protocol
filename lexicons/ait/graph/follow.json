@@ -1,0 +1,19 @@
+{
+  "lexicon": 1,
+  "id": "ait.graph.follow",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "Record declaring a social 'follow' relationship from one AIT account to another. Mirrors app.bsky.graph.follow.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["subject", "createdAt"],
+        "properties": {
+          "subject": { "type": "string", "format": "did" },
+          "createdAt": { "type": "string", "format": "datetime" }
+        }
+      }
+    }
+  }
+}

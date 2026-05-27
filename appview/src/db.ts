@@ -22,6 +22,17 @@ export function openDb(dbPath: string) {
       indexedAt  TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS posts_by_did ON posts(did, createdAt DESC);
+
+    CREATE TABLE IF NOT EXISTS follows (
+      uri        TEXT PRIMARY KEY,
+      did        TEXT NOT NULL,            -- the follower
+      subject    TEXT NOT NULL,            -- the followee DID
+      createdAt  TEXT NOT NULL,
+      indexedAt  TEXT NOT NULL,
+      UNIQUE(did, subject)
+    );
+    CREATE INDEX IF NOT EXISTS follows_by_did     ON follows(did);
+    CREATE INDEX IF NOT EXISTS follows_by_subject ON follows(subject);
   `)
   return db
 }

@@ -5,12 +5,16 @@ export function handleEvent(db: Db, evt: Event) {
   if (evt.event === 'create' || evt.event === 'update') {
     if (evt.collection === 'ait.feed.post') {
       indexPost(db, evt)
+    } else if (evt.collection === 'ait.graph.follow') {
+      indexFollow(db, evt)
     }
     return
   }
   if (evt.event === 'delete') {
     if (evt.collection === 'ait.feed.post') {
       db.prepare('DELETE FROM posts WHERE uri = ?').run(evt.uri.toString())
+    } else if (evt.collection === 'ait.graph.follow') {
+      db.prepare('DELETE FROM follows WHERE uri = ?').run(evt.uri.toString())
     }
     return
   }
@@ -51,8 +55,34 @@ function indexPost(db: Db, evt: Create | Update) {
     now,
   )
 
-  // Ensure the actor exists (handle filled in lazily by identity events)
+  ensureActor(db, evt.did, now)
+}
+
+function indexFollow(db: Db, evt: Create | Update) {
+  const record = evt.record as { subject?: string; createdAt?: string }
+  if (!record.subject) return // malformed; skip
+  const now = new Date().toISOString()
+
+  db.prepare(
+    `INSERT INTO follows (uri, did, subject, createdAt, indexedAt)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(uri) DO UPDATE SET
+       subject = excluded.subject,
+       createdAt = excluded.createdAt`,
+  ).run(
+    evt.uri.toString(),
+    evt.did,
+    record.subject,
+    record.createdAt ?? now,
+    now,
+  )
+
+  ensureActor(db, evt.did, now)
+  ensureActor(db, record.subject, now)
+}
+
+function ensureActor(db: Db, did: string, now: string) {
   db.prepare(
     `INSERT INTO actors (did, indexedAt) VALUES (?, ?) ON CONFLICT(did) DO NOTHING`,
-  ).run(evt.did, now)
+  ).run(did, now)
 }

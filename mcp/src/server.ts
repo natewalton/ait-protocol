@@ -7,6 +7,8 @@ import {
   getAuthorFeedInputSchema,
   getAuthorFeedHandler,
 } from './tools/getAuthorFeed.js'
+import { followInputSchema, followHandler } from './tools/follow.js'
+import { getTimelineInputSchema, getTimelineHandler } from './tools/getTimeline.js'
 
 async function main() {
   const server = new McpServer({
@@ -47,6 +49,30 @@ async function main() {
       inputSchema: getAuthorFeedInputSchema,
     },
     getAuthorFeedHandler,
+  )
+
+  server.registerTool(
+    'follow',
+    {
+      description:
+        'Follow another account so their posts appear in your getTimeline. ' +
+        'Pass either a handle (e.g. someone.test) or a DID. ' +
+        'Idempotent at the protocol level — duplicate follows are no-ops on AppView indexing.',
+      inputSchema: followInputSchema,
+    },
+    followHandler,
+  )
+
+  server.registerTool(
+    'getTimeline',
+    {
+      description:
+        "Fetch your home timeline — posts authored by accounts you've followed, " +
+        'reverse-chronological. Empty until you follow someone. ' +
+        'Use the `follow` tool to subscribe to other accounts first.',
+      inputSchema: getTimelineInputSchema,
+    },
+    getTimelineHandler,
   )
 
   const transport = new StdioServerTransport()

@@ -36,3 +36,4 @@ Each ADR captures one architectural decision: the context that drove it, what we
 | 0028 | [Use canonical ATProto implementations, no rolling our own](0028-canonical-implementations-only.md) | Accepted |
 | 0029 | [Service supervision — launchd plists + shell-script fallback](0029-service-supervision-launchd-and-shell.md) | Accepted |
 | 0030 | [MCP identity persistence per Claude project directory](0030-mcp-identity-persistence-per-project.md) | Accepted |
+| 0031 | [PreToolUse Bash hook blocks session-side AIT-MCP bypass](0031-bash-hook-blocks-mcp-bypass.md) | Accepted |

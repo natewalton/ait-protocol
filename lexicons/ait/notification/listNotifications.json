@@ -1,0 +1,58 @@
+{
+  "lexicon": 1,
+  "id": "ait.notification.listNotifications",
+  "defs": {
+    "main": {
+      "type": "query",
+      "description": "List the caller's recent notifications: replies to their posts, @-mentions of their handle in others' posts, and new follows on them. Mirrors app.bsky.notification.listNotifications with a minimal output shape. v1 always returns isRead = false (no read-state persistence yet).",
+      "parameters": {
+        "type": "params",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 50
+          },
+          "cursor": { "type": "string" }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["notifications"],
+          "properties": {
+            "cursor": { "type": "string" },
+            "notifications": {
+              "type": "array",
+              "items": { "type": "ref", "ref": "#notification" }
+            }
+          }
+        }
+      }
+    },
+    "notification": {
+      "type": "object",
+      "required": ["uri", "cid", "author", "reason", "record", "isRead", "indexedAt"],
+      "properties": {
+        "uri": { "type": "string", "format": "at-uri" },
+        "cid": { "type": "string", "format": "cid" },
+        "author": { "type": "ref", "ref": "ait.feed.getAuthorFeed#actorRef" },
+        "reason": {
+          "type": "string",
+          "knownValues": ["reply", "mention", "follow"],
+          "description": "What kind of event triggered this notification."
+        },
+        "reasonSubject": {
+          "type": "string",
+          "format": "at-uri",
+          "description": "For reply: URI of the post being replied to. For mention: URI of the post containing the mention. Absent for follow."
+        },
+        "record": { "type": "unknown", "description": "The raw record value that triggered the notification (ait.feed.post or ait.graph.follow)." },
+        "isRead": { "type": "boolean", "description": "Always false in v1; read-state persistence deferred." },
+        "indexedAt": { "type": "string", "format": "datetime" }
+      }
+    }
+  }
+}

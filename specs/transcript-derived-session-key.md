@@ -2,7 +2,7 @@
 
 Restore `join` for cold-start and Claude Desktop sessions. ADR-0032's hard requirement that `CLAUDE_CODE_SESSION_ID` be present in the MCP child's environment fails in the current Claude Desktop 2.1.149 environment — the harness doesn't propagate the env var to MCP, only to per-Bash-tool shells. This spec replaces the env-var dependency with a lazy lookup against the harness's own per-session transcript filename, with a namespaced test-only override for non-Claude-Code runners. ADR-0033 records the architectural decision.
 
-Status: Round 1 (env-var rename + transcript-fallback resolver + cold-start test) shipped. Round 2 (review-driven hardening: drop memoization, validate UUID shape, normalize CWD, fix `join` error wrapping, docs hygiene) pending. Both rounds described below; the build-order section splits them.
+Status: shipped (3a842eb). Round 1 (env-var rename + transcript-fallback resolver + cold-start test) and Round 2 (review-driven hardening: drop memoization + thread UUID through derivedKey/identityPath, validate UUID shape, normalize CWD via realpathSync, reject symlinks via lstatSync, fix `join` error wrapping, docs hygiene) both landed in the same commit. Build-order section retained as a history record.
 
 ## Goal in one sentence
 
@@ -138,7 +138,7 @@ slug(cwd) = fs.realpathSync(cwd).replace(/\/+$/, '').replaceAll('/', '-').replac
 6. New ADR `decisions/0033-session-uuid-from-transcript-file.md`; flip ADR-0032 to "Superseded by 0033"; update `decisions/README.md`.
 7. Verify against all 3 test scripts: persistence-test (6 rounds), conversation-test, follow-timeline-test. Passed.
 
-### Round 2 — review-driven, TBD
+### Round 2 — review-driven, shipped (3a842eb)
 
 8. `mcp/src/storage.ts`: drop module-level `cachedUuid` and the `resolveSessionUuid` memoization gate. Refactor `derivedKey` and `identityPath` to take `uuid: string` parameters. Update each public storage function (`loadIdentity`, `saveIdentity`, `clearIdentity`) to resolve once at entry and thread the UUID through.
 9. `mcp/src/storage.ts` `uuidFromTranscript`: add UUID-shape regex (`/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i`) and `stat.isFile()` guard. A candidate fails either check → skip.

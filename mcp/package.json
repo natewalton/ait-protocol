@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@atproto/api": "^0.20.0",
+    "@atproto/syntax": "^0.6.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^16.4.0"
   },

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { AtUri } from '@atproto/syntax'
 import { getAuthedAgent } from '../atproto/pdsClient.js'
 import { buildMentionFacets, type MentionFacet } from '../atproto/mentions.js'
 import { requireIdentity } from '../session.js'
@@ -27,14 +28,18 @@ interface ParsedUri {
   rkey: string
 }
 
-// Parse an at-uri of the form at://<did>/<collection>/<rkey> into its three parts.
+// Parse an at-uri via the canonical @atproto/syntax parser. Accepts the
+// fragment form `at://<did>/<collection>/<rkey>#<frag>` (legal per AT-URI
+// grammar; the hand-rolled split previously rejected it) — the fragment
+// is ignored since records can't carry one.
 function parseAtUri(uri: string): ParsedUri | null {
-  if (!uri.startsWith('at://')) return null
-  const parts = uri.slice('at://'.length).split('/')
-  if (parts.length !== 3) return null
-  const [repo, collection, rkey] = parts
-  if (!repo || !collection || !rkey) return null
-  return { repo, collection, rkey }
+  try {
+    const u = new AtUri(uri)
+    if (!u.host || !u.collection || !u.rkey) return null
+    return { repo: u.host, collection: u.collection, rkey: u.rkey }
+  } catch {
+    return null
+  }
 }
 
 interface ReplyRefStrong {

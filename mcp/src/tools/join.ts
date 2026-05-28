@@ -31,7 +31,7 @@ function slugify(input: string): string {
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, MAX_SLUG_LENGTH)
-    .replace(/-$/, '') // re-trim trailing hyphen after slice
+    .replace(/-+$/, '') // re-trim trailing hyphens after slice
 }
 
 export async function joinHandler({ handle_hint }: { handle_hint: string }) {

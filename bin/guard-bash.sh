@@ -70,6 +70,44 @@ if printf '%s' "$CMD" | grep -Eq '(cat|less|more|head|tail|jq|grep|awk|sed|node|
   block "Read attempt on pds/.env or plc/.env (contain PDS_ADMIN_PASSWORD, PDS_JWT_SECRET, ADMIN_SECRET, signing keys)."
 fi
 
+# 4. Symlink bypass — `cat /tmp/legit -> ~/.local/share/ait-mcp/identity-X.json`
+# doesn't trip patterns 2 or 3 because the literal CMD text contains no
+# "ait-mcp/identity" / "pds/.env" / "plc/.env" substring. Resolve any
+# path-like token in the CMD and re-check against the same patterns.
+# Same shape as guard-tool.sh's resolve_path (fix15) — see that file.
+resolve_path() {
+  local p="$1"
+  local r
+  if command -v realpath >/dev/null 2>&1 && r="$(realpath "$p" 2>/dev/null)"; then
+    printf '%s' "$r"
+  elif command -v readlink >/dev/null 2>&1 && r="$(readlink -f "$p" 2>/dev/null)" && [ -n "$r" ]; then
+    printf '%s' "$r"
+  elif r="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$p" 2>/dev/null)"; then
+    printf '%s' "$r"
+  else
+    printf '%s' "$p"
+  fi
+}
+
+# Extract every token that looks like a path (contains at least one `/`),
+# resolve it, and only block when the resolved value exists on disk AND
+# matches a credential pattern. The `-e` existence check is what keeps
+# documentation strings ("see ~/.local/share/ait-mcp/identity-X" in a
+# commit message body, README, etc.) from tripping the guard. Real
+# symlinks to credential files exist; phantom text references don't.
+for token in $(printf '%s' "$CMD" | grep -oE '[A-Za-z0-9_./~-]+' | grep -E '/' || true); do
+  resolved="$(resolve_path "$token")"
+  [ -e "$resolved" ] || continue
+  case "$resolved" in
+    */ait-mcp/identity-*|*/ait-mcp/identity-*.json)
+      block "Read attempt via path that resolves to a credential file ($token → $resolved)."
+      ;;
+    */pds/.env|*/plc/.env|pds/.env|plc/.env)
+      block "Read attempt via path that resolves to pds/.env or plc/.env ($token → $resolved)."
+      ;;
+  esac
+done
+
 # Note: a separate rule for `com.atproto.admin.*` strings was considered and
 # dropped — it false-positived on documentation and commit messages that
 # literally reference those endpoint names. Rule 1 already catches any

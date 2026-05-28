@@ -4,6 +4,8 @@ Restore the "logged out, then back in" UX. Today, when an MCP child loses its in
 
 Status: shipped (05a75dc..ed4b493). See ADR-0032 for the architectural record.
 
+> **Note:** The session-key portion of this spec is **superseded by `specs/transcript-derived-session-key.md` (ADR-0033)**. The re-login flow, `persistSession` wiring, encryption envelope, and hook coverage carry forward. The env-var contract described below (`CLAUDE_CODE_SESSION_ID`) is no longer current — production reads the harness's transcript filename and test runners use `AIT_MCP_TEST_SESSION_ID`. Body retained for historical context.
+
 ## Goal in one sentence
 
 When in-memory identity is lost or its JWTs are stale, the next tool call transparently re-authenticates the session into its existing handle using `com.atproto.server.createSession` — the same primitive any other ATProto client uses to log back in.

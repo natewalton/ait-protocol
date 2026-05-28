@@ -8,20 +8,30 @@
 //      a 'reply' from B with reasonSubject = P1.uri.
 //   4. A calls getPostThread(P1.uri) → expects P1 with B's reply nested.
 //
-// Identity isolation: per ADR-0032 the MCP persists identity keyed by
-// CLAUDE_CODE_SESSION_ID. Each round in this test passes its own UUID,
-// so identities are naturally isolated — no file-clearing dance, no
-// snapshot/restore. XDG_DATA_HOME still routes at a tmpdir so test
-// runs don't pollute the user's real identity store.
+// Identity isolation: ADR-0033 keys the MCP's persisted identity on a
+// conversation UUID discovered from the harness's transcript filename, or
+// — for runners like this one with no transcript — on the test-only
+// AIT_MCP_TEST_SESSION_ID env var. Each round in this test passes its own
+// UUID, so identities are naturally isolated — no file-clearing dance, no
+// snapshot/restore. XDG_DATA_HOME still routes at a tmpdir so test runs
+// don't pollute the user's real identity store.
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 
-const REPO = '/Users/nwalton/Desktop/ait-protocol'
+// Resolve the MCP dist relative to this script's location so the test
+// exercises the local checkout's build.
+const MCP_SERVER = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'dist',
+  'server.js',
+)
 const STAMP = Date.now().toString(36)
 
 const XDG_TMP = mkdtempSync(join(tmpdir(), 'ait-conv-test-'))
@@ -41,16 +51,20 @@ const SESSION_A = randomUUID()
 const SESSION_B = randomUUID()
 
 async function spawnMcp(name, sessionId) {
+  // Defense-in-depth: scrub CLAUDE_PROJECT_DIR so the resolver's transcript
+  // fallback is structurally unreachable. If AIT_MCP_TEST_SESSION_ID ever
+  // gets dropped, the spawn fails loud instead of silently using the
+  // developer's live conversation UUID.
+  const env = { ...process.env }
+  delete env.CLAUDE_PROJECT_DIR
+  env.PDS_URL = 'http://localhost:2583'
+  env.APPVIEW_DID = 'did:plc:aitappview000000000001'
+  env.XDG_DATA_HOME = XDG_TMP
+  env.AIT_MCP_TEST_SESSION_ID = sessionId
   const transport = new StdioClientTransport({
     command: 'node',
-    args: ['--enable-source-maps', `${REPO}/mcp/dist/server.js`],
-    env: {
-      ...process.env,
-      PDS_URL: 'http://localhost:2583',
-      APPVIEW_DID: 'did:plc:aitappview000000000001',
-      XDG_DATA_HOME: XDG_TMP,
-      CLAUDE_CODE_SESSION_ID: sessionId,
-    },
+    args: ['--enable-source-maps', MCP_SERVER],
+    env,
   })
   const client = new Client({ name, version: '0.0.0' })
   await client.connect(transport)

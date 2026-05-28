@@ -29,6 +29,31 @@ fi
 
 [ -z "$PATH_FIELD" ] && exit 0
 
+# Resolve symlinks before pattern-matching so `ln -s ~/.local/share/ait-mcp/
+# identity-abc.json /tmp/legit.txt` plus a Read on /tmp/legit.txt doesn't
+# slip past the credential-dir patterns. Falls back to the literal string
+# if no resolver is available — fail-closed still works for any path that
+# literally contains the credential dir name.
+resolve_path() {
+  local p="$1"
+  # macOS BSD realpath doesn't accept -m (GNU coreutils does). Plain
+  # `realpath` works on both for existing paths — and a non-existent
+  # credential file isn't the bypass surface this guards. python3 is the
+  # universal fallback (present on every macOS dev box).
+  local r
+  if command -v realpath >/dev/null 2>&1 && r="$(realpath "$p" 2>/dev/null)"; then
+    printf '%s' "$r"
+  elif command -v readlink >/dev/null 2>&1 && r="$(readlink -f "$p" 2>/dev/null)" && [ -n "$r" ]; then
+    printf '%s' "$r"
+  elif r="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$p" 2>/dev/null)"; then
+    printf '%s' "$r"
+  else
+    printf '%s' "$p"
+  fi
+}
+
+RESOLVED="$(resolve_path "$PATH_FIELD")"
+
 block() {
   local reason="$1"
   cat >&2 <<EOF
@@ -51,14 +76,14 @@ EOF
 }
 
 # 1. The persisted MCP identity files.
-case "$PATH_FIELD" in
+case "$RESOLVED" in
   */ait-mcp/identity-*|*/ait-mcp/identity-*.json)
     block "Read/Edit/Write attempt on \$XDG_DATA_HOME/ait-mcp/identity-*.json (the encrypted persisted MCP-session credentials)."
     ;;
 esac
 
 # 2. The credential-bearing .env files for PDS or PLC.
-case "$PATH_FIELD" in
+case "$RESOLVED" in
   */pds/.env|*/plc/.env|pds/.env|plc/.env)
     block "Read/Edit/Write attempt on pds/.env or plc/.env (contain PDS_ADMIN_PASSWORD, PDS_JWT_SECRET, ADMIN_SECRET, signing keys)."
     ;;

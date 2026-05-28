@@ -1,4 +1,5 @@
 import type { Db } from '../db.js'
+import { decodeCursor, encodeCursor } from './cursor.js'
 
 export interface ListNotificationsParams {
   viewer: string // DID
@@ -40,6 +41,8 @@ interface PostRow {
   facets: string | null
   replyRootUri: string | null
   replyParentUri: string | null
+  replyRootCid: string | null
+  replyParentCid: string | null
   createdAt: string
 }
 
@@ -62,13 +65,15 @@ export function listNotifications(
     FROM notifications n
     LEFT JOIN actors a ON a.did = n.authorDid
     WHERE n.recipientDid = ?
+      AND (a.active = 1 OR a.active IS NULL)
   `
   const args: (string | number)[] = [params.viewer]
   if (params.cursor) {
-    query += ' AND n.createdAt < ?'
-    args.push(params.cursor)
+    const c = decodeCursor(params.cursor)
+    query += ' AND (n.createdAt, n.uri) < (?, ?)'
+    args.push(c.createdAt, c.uri)
   }
-  query += ' ORDER BY n.createdAt DESC LIMIT ?'
+  query += ' ORDER BY n.createdAt DESC, n.uri DESC LIMIT ?'
   args.push(limit)
 
   const rows = db.prepare(query).all(...args) as NotificationRow[]
@@ -86,7 +91,10 @@ export function listNotifications(
     const placeholders = postUris.map(() => '?').join(',')
     const postRows = db
       .prepare(
-        `SELECT uri, text, facets, replyRootUri, replyParentUri, createdAt
+        `SELECT uri, text, facets,
+                replyRootUri, replyParentUri,
+                replyRootCid, replyParentCid,
+                createdAt
          FROM posts WHERE uri IN (${placeholders})`,
       )
       .all(...postUris) as PostRow[]
@@ -124,8 +132,14 @@ export function listNotifications(
             facets: p.facets ? JSON.parse(p.facets) : undefined,
             reply: p.replyParentUri
               ? {
-                  root: { uri: p.replyRootUri ?? p.replyParentUri },
-                  parent: { uri: p.replyParentUri },
+                  root: {
+                    uri: p.replyRootUri ?? p.replyParentUri,
+                    cid: p.replyRootCid ?? p.replyParentCid ?? '',
+                  },
+                  parent: {
+                    uri: p.replyParentUri,
+                    cid: p.replyParentCid ?? '',
+                  },
                 }
               : undefined,
             createdAt: p.createdAt,
@@ -147,7 +161,9 @@ export function listNotifications(
   })
 
   const cursor =
-    rows.length === limit ? rows[rows.length - 1].createdAt : undefined
+    rows.length === limit
+      ? encodeCursor(rows[rows.length - 1].createdAt, rows[rows.length - 1].uri)
+      : undefined
 
   return { cursor, notifications }
 }

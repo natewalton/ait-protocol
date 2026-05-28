@@ -106,4 +106,54 @@ export async function getAppViewAgent(): Promise<AtpAgent> {
   return base.withProxy('bsky_appview', APPVIEW_DID) as AtpAgent
 }
 
+function isAuthError(err: unknown): boolean {
+  // AtpAgent throws an XRPCError with .status on transport-level failure.
+  // Anything that surfaced 401 should trigger a single re-login retry; any
+  // other status (or non-status error) just propagates.
+  return (err as { status?: number })?.status === 401
+}
+
+// Run fn with an authed AtpAgent. If fn throws a 401, fire a fresh login
+// via the stored password and replay fn once. Closes the
+// persistSession('expired') gap that left auto-refresh failures unhandled
+// (see specs/reauth-robustness.md Fix 13).
+export async function withAuthedAgent<T>(
+  fn: (agent: AtpAgent) => Promise<T>,
+): Promise<T> {
+  const id = requireIdentity()
+  let agent = await ensureAuthedAgent(id)
+  try {
+    return await fn(agent)
+  } catch (err) {
+    if (!isAuthError(err)) throw err
+    agent = await loginWithStoredCredentials(id)
+    return fn(agent)
+  }
+}
+
+// Same retry shape for fetch-based reads (the ait.* lexicons aren't in
+// @atproto/api's registry, so the read tools call PDS-proxied XRPC via raw
+// fetch). Returns the Response — the caller checks .ok and parses JSON.
+// Always sends the AppView proxy header.
+export async function authedFetch(
+  pathAndQuery: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const id = requireIdentity()
+  await ensureAuthedAgent(id)
+  const call = async (): Promise<Response> => {
+    const jwt = requireIdentity().accessJwt
+    const headers = {
+      ...(init.headers ?? {}),
+      Authorization: `Bearer ${jwt}`,
+      'atproto-proxy': `${APPVIEW_DID}#bsky_appview`,
+    } as Record<string, string>
+    return fetch(`${PDS_URL}${pathAndQuery}`, { ...init, headers })
+  }
+  const first = await call()
+  if (first.status !== 401) return first
+  await loginWithStoredCredentials(id)
+  return call()
+}
+
 export { PDS_URL, APPVIEW_DID }

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { getAuthedAgent } from '../atproto/pdsClient.js'
+import { withAuthedAgent } from '../atproto/pdsClient.js'
 import { buildMentionFacets, type MentionFacet } from '../atproto/mentions.js'
 import { requireIdentity } from '../session.js'
 
@@ -16,34 +16,34 @@ export const postInputSchema = {
 
 export async function postHandler({ text }: { text: string }) {
   const id = requireIdentity()
-  const agent = await getAuthedAgent()
+  return withAuthedAgent(async (agent) => {
+    const facets = await buildMentionFacets(agent, text)
 
-  const facets = await buildMentionFacets(agent, text)
+    const record: {
+      $type: string
+      text: string
+      facets?: MentionFacet[]
+      createdAt: string
+    } = {
+      $type: 'ait.feed.post',
+      text,
+      createdAt: new Date().toISOString(),
+    }
+    if (facets.length > 0) record.facets = facets
 
-  const record: {
-    $type: string
-    text: string
-    facets?: MentionFacet[]
-    createdAt: string
-  } = {
-    $type: 'ait.feed.post',
-    text,
-    createdAt: new Date().toISOString(),
-  }
-  if (facets.length > 0) record.facets = facets
+    const result = await agent.com.atproto.repo.createRecord({
+      repo: id.did,
+      collection: 'ait.feed.post',
+      record,
+    })
 
-  const result = await agent.com.atproto.repo.createRecord({
-    repo: id.did,
-    collection: 'ait.feed.post',
-    record,
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Posted.\nURI: ${result.data.uri}\nCID: ${result.data.cid}`,
+        },
+      ],
+    }
   })
-
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: `Posted.\nURI: ${result.data.uri}\nCID: ${result.data.cid}`,
-      },
-    ],
-  }
 }

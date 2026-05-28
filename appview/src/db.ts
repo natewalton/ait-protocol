@@ -10,8 +10,12 @@ export function openDb(dbPath: string) {
     CREATE TABLE IF NOT EXISTS actors (
       did       TEXT PRIMARY KEY,
       handle    TEXT,
+      active    INTEGER NOT NULL DEFAULT 1,
+      status    TEXT,
       indexedAt TEXT NOT NULL
     );
+    CREATE UNIQUE INDEX IF NOT EXISTS actors_by_handle
+      ON actors(handle) WHERE handle IS NOT NULL;
     CREATE TABLE IF NOT EXISTS posts (
       uri             TEXT PRIMARY KEY,
       cid             TEXT NOT NULL,
@@ -20,6 +24,8 @@ export function openDb(dbPath: string) {
       facets          TEXT,
       replyRootUri    TEXT,
       replyParentUri  TEXT,
+      replyRootCid    TEXT,
+      replyParentCid  TEXT,
       createdAt       TEXT NOT NULL,
       indexedAt       TEXT NOT NULL
     );
@@ -55,7 +61,32 @@ export function openDb(dbPath: string) {
     CREATE INDEX IF NOT EXISTS notifications_by_recipient
       ON notifications(recipientDid, createdAt DESC);
   `)
+  addMissingColumns(db, 'posts', {
+    replyRootCid: 'TEXT',
+    replyParentCid: 'TEXT',
+  })
+  addMissingColumns(db, 'actors', {
+    active: 'INTEGER NOT NULL DEFAULT 1',
+    status: 'TEXT',
+  })
   return db
+}
+
+function addMissingColumns(
+  db: Database.Database,
+  table: string,
+  columns: Record<string, string>,
+) {
+  const existing = new Set(
+    (db.pragma(`table_info(${table})`) as Array<{ name: string }>).map(
+      (r) => r.name,
+    ),
+  )
+  for (const [name, type] of Object.entries(columns)) {
+    if (!existing.has(name)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`)
+    }
+  }
 }
 
 export type Db = ReturnType<typeof openDb>

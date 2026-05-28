@@ -8,39 +8,23 @@ import { getAuthorFeed } from './queries/getAuthorFeed.js'
 import { getTimeline } from './queries/getTimeline.js'
 import { getPostThread } from './queries/getPostThread.js'
 import { listNotifications } from './queries/listNotifications.js'
+import { InvalidRequestError, parseLimit } from './xrpc/params.js'
+import { makeVerifyViewer } from './xrpc/auth.js'
 
 const PORT = parseInt(process.env.APPVIEW_PORT ?? '2585', 10)
 const DB_PATH = process.env.APPVIEW_DB_PATH ?? './data/appview.sqlite'
 const PDS_WS_URL = process.env.APPVIEW_PDS_WS_URL ?? 'ws://localhost:2583'
 const PLC_URL = process.env.APPVIEW_PLC_URL ?? 'http://localhost:2582'
-
-// Extract the caller's DID from the Bearer JWT's `iss` claim.
-// The PDS service-proxy signs JWTs *as the user* (the PDS holds the user's
-// signing keys), so the issuer field carries the viewer DID. The `aud`
-// field is the target service (our AppView).
-// For local-only dev we trust the PDS-signed JWT without verifying its
-// signature — the AppView only listens on localhost and the PDS is the
-// only thing forwarding to it.
-function viewerDidFromAuth(authHeader: string | string[] | undefined): string | null {
-  const h = Array.isArray(authHeader) ? authHeader[0] : authHeader
-  if (!h?.startsWith('Bearer ')) return null
-  const token = h.slice(7)
-  const [, payload] = token.split('.')
-  if (!payload) return null
-  try {
-    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8')) as {
-      iss?: string
-    }
-    return decoded.iss ?? null
-  } catch {
-    return null
-  }
+const APPVIEW_DID = process.env.APPVIEW_DID
+if (!APPVIEW_DID) {
+  throw new Error('APPVIEW_DID env var required for JWT aud verification')
 }
 
 async function main() {
   const db = openDb(DB_PATH)
 
   const idResolver = new IdResolver({ plcUrl: PLC_URL })
+  const verifyViewer = makeVerifyViewer(idResolver, APPVIEW_DID!)
 
   // Always subscribe from seq 0. Without a cursor, @atproto/sync's
   // Subscription sends no `cursor` param, which subscribeRepos treats as
@@ -77,160 +61,148 @@ async function main() {
   firehose.start()
   console.log(`firehose subscribed to ${PDS_WS_URL}`)
 
+  const sendJson = (
+    res: http.ServerResponse,
+    status: number,
+    body: unknown,
+  ) => {
+    res.writeHead(status, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(body))
+  }
+
+  const sendInvalidRequest = (res: http.ServerResponse, message: string) =>
+    sendJson(res, 400, { error: 'InvalidRequest', message })
+
+  const sendAuthRequired = (res: http.ServerResponse, message: string) =>
+    sendJson(res, 401, { error: 'AuthRequired', message })
+
+  const sendInternal = (res: http.ServerResponse) =>
+    sendJson(res, 500, { error: 'InternalServerError', message: 'query failed' })
+
+  const handleQuery = async (
+    res: http.ServerResponse,
+    name: string,
+    fn: () => void | Promise<void>,
+  ) => {
+    try {
+      await fn()
+    } catch (err) {
+      if (err instanceof InvalidRequestError) {
+        sendInvalidRequest(res, err.message)
+        return
+      }
+      console.error(`${name} error:`, err)
+      sendInternal(res)
+    }
+  }
+
   const server = http.createServer((req, res) => {
-    if (!req.url) {
-      res.writeHead(400)
+    if (!req.url || req.method !== 'GET') {
+      res.writeHead(req.url ? 405 : 400)
       res.end()
       return
     }
 
-    if (req.method === 'GET' && req.url.startsWith('/xrpc/ait.feed.getAuthorFeed')) {
-      try {
-        const url = new URL(req.url, `http://localhost:${PORT}`)
-        const actor = url.searchParams.get('actor')
-        if (!actor) {
-          res.writeHead(400, { 'Content-Type': 'application/json' })
-          res.end(
-            JSON.stringify({
-              error: 'InvalidRequest',
-              message: 'actor parameter required',
-            }),
-          )
-          return
-        }
-        const limitParam = url.searchParams.get('limit')
-        const cursor = url.searchParams.get('cursor')
-        const result = getAuthorFeed(db, {
-          actor,
-          limit: limitParam ? parseInt(limitParam, 10) : undefined,
-          cursor: cursor ?? undefined,
-        })
-        res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify(result))
-      } catch (err) {
-        console.error('getAuthorFeed error:', err)
-        res.writeHead(500, { 'Content-Type': 'application/json' })
-        res.end(
-          JSON.stringify({ error: 'InternalServerError', message: 'query failed' }),
-        )
-      }
+    const url = new URL(req.url, `http://localhost:${PORT}`)
+    const segments = url.pathname.split('/')
+    const nsid =
+      segments.length === 3 && segments[1] === 'xrpc' ? segments[2] : null
+
+    if (nsid === null) {
+      sendJson(res, 404, { error: 'NotFound', message: 'no such endpoint' })
       return
     }
 
-    if (req.method === 'GET' && req.url.startsWith('/xrpc/ait.feed.getTimeline')) {
-      try {
-        const viewer = viewerDidFromAuth(req.headers['authorization'])
-        if (!viewer) {
-          res.writeHead(401, { 'Content-Type': 'application/json' })
-          res.end(
-            JSON.stringify({
-              error: 'AuthRequired',
-              message: 'getTimeline requires an authenticated caller',
-            }),
-          )
-          return
-        }
-        const url = new URL(req.url, `http://localhost:${PORT}`)
-        const limitParam = url.searchParams.get('limit')
-        const cursor = url.searchParams.get('cursor')
-        const result = getTimeline(db, {
-          viewer,
-          limit: limitParam ? parseInt(limitParam, 10) : undefined,
-          cursor: cursor ?? undefined,
+    switch (nsid) {
+      case 'ait.feed.getAuthorFeed':
+        handleQuery(res, 'getAuthorFeed', () => {
+          const actor = url.searchParams.get('actor')
+          if (!actor) {
+            sendInvalidRequest(res, 'actor parameter required')
+            return
+          }
+          const limit = parseLimit(url.searchParams.get('limit'))
+          const cursor = url.searchParams.get('cursor')
+          const result = getAuthorFeed(db, {
+            actor,
+            limit,
+            cursor: cursor ?? undefined,
+          })
+          sendJson(res, 200, result)
         })
-        res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify(result))
-      } catch (err) {
-        console.error('getTimeline error:', err)
-        res.writeHead(500, { 'Content-Type': 'application/json' })
-        res.end(
-          JSON.stringify({ error: 'InternalServerError', message: 'query failed' }),
-        )
-      }
-      return
-    }
+        return
 
-    if (req.method === 'GET' && req.url.startsWith('/xrpc/ait.feed.getPostThread')) {
-      try {
-        const url = new URL(req.url, `http://localhost:${PORT}`)
-        const uri = url.searchParams.get('uri')
-        if (!uri) {
-          res.writeHead(400, { 'Content-Type': 'application/json' })
-          res.end(
-            JSON.stringify({
-              error: 'InvalidRequest',
-              message: 'uri parameter required',
-            }),
+      case 'ait.feed.getTimeline':
+        handleQuery(res, 'getTimeline', async () => {
+          const viewer = await verifyViewer(
+            req.headers['authorization'],
+            'ait.feed.getTimeline',
           )
-          return
-        }
-        const result = getPostThread(db, { uri })
-        if (!result) {
-          res.writeHead(404, { 'Content-Type': 'application/json' })
-          res.end(
-            JSON.stringify({
+          if (!viewer) {
+            sendAuthRequired(res, 'getTimeline requires an authenticated caller')
+            return
+          }
+          const limit = parseLimit(url.searchParams.get('limit'))
+          const cursor = url.searchParams.get('cursor')
+          const result = getTimeline(db, {
+            viewer,
+            limit,
+            cursor: cursor ?? undefined,
+          })
+          sendJson(res, 200, result)
+        })
+        return
+
+      case 'ait.feed.getPostThread':
+        handleQuery(res, 'getPostThread', () => {
+          const uri = url.searchParams.get('uri')
+          if (!uri) {
+            sendInvalidRequest(res, 'uri parameter required')
+            return
+          }
+          const result = getPostThread(db, { uri })
+          if (!result) {
+            sendJson(res, 404, {
               error: 'NotFound',
               message: 'post not found in this AppView',
-            }),
-          )
-          return
-        }
-        res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify(result))
-      } catch (err) {
-        console.error('getPostThread error:', err)
-        res.writeHead(500, { 'Content-Type': 'application/json' })
-        res.end(
-          JSON.stringify({ error: 'InternalServerError', message: 'query failed' }),
-        )
-      }
-      return
-    }
-
-    if (
-      req.method === 'GET' &&
-      req.url.startsWith('/xrpc/ait.notification.listNotifications')
-    ) {
-      try {
-        const viewer = viewerDidFromAuth(req.headers['authorization'])
-        if (!viewer) {
-          res.writeHead(401, { 'Content-Type': 'application/json' })
-          res.end(
-            JSON.stringify({
-              error: 'AuthRequired',
-              message: 'listNotifications requires an authenticated caller',
-            }),
-          )
-          return
-        }
-        const url = new URL(req.url, `http://localhost:${PORT}`)
-        const limitParam = url.searchParams.get('limit')
-        const cursor = url.searchParams.get('cursor')
-        const result = listNotifications(db, {
-          viewer,
-          limit: limitParam ? parseInt(limitParam, 10) : undefined,
-          cursor: cursor ?? undefined,
+            })
+            return
+          }
+          sendJson(res, 200, result)
         })
-        res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify(result))
-      } catch (err) {
-        console.error('listNotifications error:', err)
-        res.writeHead(500, { 'Content-Type': 'application/json' })
-        res.end(
-          JSON.stringify({ error: 'InternalServerError', message: 'query failed' }),
-        )
-      }
-      return
-    }
+        return
 
-    if (req.method === 'GET' && req.url === '/xrpc/_health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ status: 'ok' }))
-      return
-    }
+      case 'ait.notification.listNotifications':
+        handleQuery(res, 'listNotifications', async () => {
+          const viewer = await verifyViewer(
+            req.headers['authorization'],
+            'ait.notification.listNotifications',
+          )
+          if (!viewer) {
+            sendAuthRequired(
+              res,
+              'listNotifications requires an authenticated caller',
+            )
+            return
+          }
+          const limit = parseLimit(url.searchParams.get('limit'))
+          const cursor = url.searchParams.get('cursor')
+          const result = listNotifications(db, {
+            viewer,
+            limit,
+            cursor: cursor ?? undefined,
+          })
+          sendJson(res, 200, result)
+        })
+        return
 
-    res.writeHead(404, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ error: 'NotFound', message: 'no such endpoint' }))
+      case '_health':
+        sendJson(res, 200, { status: 'ok' })
+        return
+
+      default:
+        sendJson(res, 404, { error: 'NotFound', message: 'no such endpoint' })
+    }
   })
 
   server.listen(PORT, () => {

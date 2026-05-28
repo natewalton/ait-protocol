@@ -1,6 +1,7 @@
 import type { Db } from './db.js'
 import type { Event, Create, Update } from '@atproto/sync'
 import { getHandle } from '@atproto/identity'
+import { AtUri } from '@atproto/syntax'
 
 // Mention facet feature shape — the post may carry either ait.richtext.facet#mention
 // (forward-looking) or app.bsky.richtext.facet#mention (the type we currently
@@ -45,6 +46,21 @@ export function handleEvent(db: Db, evt: Event) {
     }
     return
   }
+  if (evt.event === 'account') {
+    db.prepare(
+      `INSERT INTO actors (did, active, status, indexedAt) VALUES (?, ?, ?, ?)
+       ON CONFLICT(did) DO UPDATE SET
+         active    = excluded.active,
+         status    = excluded.status,
+         indexedAt = excluded.indexedAt`,
+    ).run(
+      evt.did,
+      evt.active ? 1 : 0,
+      evt.status ?? null,
+      new Date().toISOString(),
+    )
+    return
+  }
   if (evt.event === 'identity') {
     // We run @atproto/sync with `unauthenticatedHandles: true` because
     // verifyHandle requires DNS / .well-known resolution that doesn't exist
@@ -52,7 +68,11 @@ export function handleEvent(db: Db, evt: Event) {
     // undefined. The handle is still in evt.didDocument (PLC has the binding
     // via alsoKnownAs); pull it from there via the canonical helper.
     const handle = evt.handle ?? (evt.didDocument ? getHandle(evt.didDocument) : undefined)
-    if (handle) {
+    // `handle.invalid` is the canonical sentinel for a broken DID↔handle
+    // binding (per the #identity lexicon). Treat it as no-handle: don't
+    // write it as if it were a real handle, but also don't clear an
+    // existing valid handle on the row.
+    if (handle && handle !== 'handle.invalid') {
       db.prepare(
         `INSERT INTO actors (did, handle, indexedAt) VALUES (?, ?, ?)
          ON CONFLICT(did) DO UPDATE SET handle = excluded.handle, indexedAt = excluded.indexedAt`,
@@ -64,10 +84,11 @@ export function handleEvent(db: Db, evt: Event) {
 
 // Parse the repo-DID out of an at-uri (e.g. at://did:plc:abc/ait.feed.post/tid → did:plc:abc).
 function repoDidFromUri(uri: string): string | null {
-  if (!uri.startsWith('at://')) return null
-  const rest = uri.slice('at://'.length)
-  const slash = rest.indexOf('/')
-  return slash === -1 ? rest : rest.slice(0, slash)
+  try {
+    return new AtUri(uri).host
+  } catch {
+    return null
+  }
 }
 
 function indexPost(db: Db, evt: Create | Update) {
@@ -83,16 +104,23 @@ function indexPost(db: Db, evt: Create | Update) {
 
   const replyRootUri = record.reply?.root?.uri ?? null
   const replyParentUri = record.reply?.parent?.uri ?? null
+  const replyRootCid = record.reply?.root?.cid ?? null
+  const replyParentCid = record.reply?.parent?.cid ?? null
 
   db.prepare(
-    `INSERT INTO posts (uri, cid, did, text, facets, replyRootUri, replyParentUri, createdAt, indexedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO posts
+       (uri, cid, did, text, facets,
+        replyRootUri, replyParentUri, replyRootCid, replyParentCid,
+        createdAt, indexedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(uri) DO UPDATE SET
        cid            = excluded.cid,
        text           = excluded.text,
        facets         = excluded.facets,
        replyRootUri   = excluded.replyRootUri,
        replyParentUri = excluded.replyParentUri,
+       replyRootCid   = excluded.replyRootCid,
+       replyParentCid = excluded.replyParentCid,
        createdAt      = excluded.createdAt`,
   ).run(
     uri,
@@ -102,6 +130,8 @@ function indexPost(db: Db, evt: Create | Update) {
     record.facets ? JSON.stringify(record.facets) : null,
     replyRootUri,
     replyParentUri,
+    replyRootCid,
+    replyParentCid,
     record.createdAt ?? now,
     now,
   )

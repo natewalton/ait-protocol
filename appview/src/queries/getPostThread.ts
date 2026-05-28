@@ -12,6 +12,7 @@ export interface ThreadViewPost {
     record: unknown
     indexedAt: string
   }
+  parent?: ThreadViewPost
   replies?: ThreadViewPost[]
 }
 
@@ -27,6 +28,8 @@ interface PostRow {
   facets: string | null
   replyRootUri: string | null
   replyParentUri: string | null
+  replyRootCid: string | null
+  replyParentCid: string | null
   createdAt: string
   indexedAt: string
   handle: string | null
@@ -44,8 +47,14 @@ function rowToView(r: PostRow): ThreadViewPost {
         facets: r.facets ? JSON.parse(r.facets) : undefined,
         reply: r.replyParentUri
           ? {
-              root: { uri: r.replyRootUri ?? r.replyParentUri },
-              parent: { uri: r.replyParentUri },
+              root: {
+                uri: r.replyRootUri ?? r.replyParentUri,
+                cid: r.replyRootCid ?? r.replyParentCid ?? '',
+              },
+              parent: {
+                uri: r.replyParentUri,
+                cid: r.replyParentCid ?? '',
+              },
             }
           : undefined,
         createdAt: r.createdAt,
@@ -55,24 +64,54 @@ function rowToView(r: PostRow): ThreadViewPost {
   }
 }
 
-// Returns the requested post and every descendant in its thread, organised
-// into a nested threadViewPost. v1 limitation: ancestors above the requested
-// URI are not walked; if the caller hands us a reply, the parent chain is
-// not returned. The spec asks for "given a root URI" — assume that contract.
+const POST_SELECT = `
+  SELECT p.uri, p.cid, p.did, p.text, p.facets,
+         p.replyRootUri, p.replyParentUri,
+         p.replyRootCid, p.replyParentCid,
+         p.createdAt, p.indexedAt,
+         a.handle
+  FROM posts p
+  LEFT JOIN actors a ON a.did = p.did
+`
+
+function postByUri(db: Db, uri: string): PostRow | undefined {
+  return db.prepare(`${POST_SELECT} WHERE p.uri = ?`).get(uri) as
+    | PostRow
+    | undefined
+}
+
+// Walk from `startUri` upward via replyParentUri, building views bottom-up
+// so each returned view's `.parent` points to the next ancestor. Terminates
+// at the root post (no replyParentUri), a missing parent, or a cycle.
+function walkAncestors(db: Db, startUri: string | null): ThreadViewPost | undefined {
+  if (!startUri) return undefined
+  const chain: PostRow[] = []
+  const visited = new Set<string>()
+  let curUri: string | null = startUri
+  while (curUri && !visited.has(curUri)) {
+    visited.add(curUri)
+    const row = postByUri(db, curUri)
+    if (!row) break
+    chain.push(row)
+    curUri = row.replyParentUri
+  }
+  let parentView: ThreadViewPost | undefined = undefined
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const view = rowToView(chain[i])
+    view.parent = parentView
+    parentView = view
+  }
+  return parentView
+}
+
+// Returns the requested post, its ancestor chain via `parent`, and every
+// descendant via `replies`.
 export function getPostThread(db: Db, params: PostThreadParams): PostThreadResult | null {
   // One SQL query for the root post plus every post whose replyRoot points at it.
   // Self-rooting posts (replyRootUri = own uri) wouldn't happen via the writer,
   // but the `uri = ?` arm guarantees the root itself is included either way.
   const rows = db
-    .prepare(
-      `SELECT p.uri, p.cid, p.did, p.text, p.facets,
-              p.replyRootUri, p.replyParentUri,
-              p.createdAt, p.indexedAt,
-              a.handle
-       FROM posts p
-       LEFT JOIN actors a ON a.did = p.did
-       WHERE p.uri = ? OR p.replyRootUri = ?`,
-    )
+    .prepare(`${POST_SELECT} WHERE p.uri = ? OR p.replyRootUri = ?`)
     .all(params.uri, params.uri) as PostRow[]
 
   const root = rows.find((r) => r.uri === params.uri)
@@ -101,5 +140,7 @@ export function getPostThread(db: Db, params: PostThreadParams): PostThreadResul
     return node
   }
 
-  return { thread: attach(rowToView(root)) }
+  const thread = attach(rowToView(root))
+  thread.parent = walkAncestors(db, root.replyParentUri)
+  return { thread }
 }

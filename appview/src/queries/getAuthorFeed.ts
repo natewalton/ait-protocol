@@ -1,4 +1,5 @@
 import type { Db } from '../db.js'
+import { decodeCursor, encodeCursor } from './cursor.js'
 
 export interface AuthorFeedParams {
   actor: string // DID or handle
@@ -35,17 +36,21 @@ export function getAuthorFeed(db: Db, params: AuthorFeedParams): AuthorFeedResul
   }
 
   const actor = db
-    .prepare('SELECT did, handle FROM actors WHERE did = ?')
-    .get(did) as { did: string; handle: string | null } | undefined
+    .prepare('SELECT did, handle, active FROM actors WHERE did = ?')
+    .get(did) as
+    | { did: string; handle: string | null; active: number | null }
+    | undefined
+  if (actor && actor.active === 0) return { feed: [] }
 
   let query =
     'SELECT uri, cid, did, text, facets, createdAt, indexedAt FROM posts WHERE did = ?'
   const args: (string | number)[] = [did]
   if (params.cursor) {
-    query += ' AND createdAt < ?'
-    args.push(params.cursor)
+    const c = decodeCursor(params.cursor)
+    query += ' AND (createdAt, uri) < (?, ?)'
+    args.push(c.createdAt, c.uri)
   }
-  query += ' ORDER BY createdAt DESC LIMIT ?'
+  query += ' ORDER BY createdAt DESC, uri DESC LIMIT ?'
   args.push(limit)
 
   const rows = db.prepare(query).all(...args) as Array<{
@@ -74,7 +79,9 @@ export function getAuthorFeed(db: Db, params: AuthorFeedParams): AuthorFeedResul
   }))
 
   const nextCursor =
-    rows.length === limit ? rows[rows.length - 1].createdAt : undefined
+    rows.length === limit
+      ? encodeCursor(rows[rows.length - 1].createdAt, rows[rows.length - 1].uri)
+      : undefined
 
   return { cursor: nextCursor, feed }
 }

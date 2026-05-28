@@ -13,6 +13,7 @@
     "@atproto/api": "^0.13.0",
     "@atproto/repo": "^0.5.0",
     "@atproto/sync": "^0.1.0",
+    "@atproto/syntax": "^0.6.0",
     "@atproto/xrpc-server": "^0.7.0",
     "better-sqlite3": "^11.0.0",
     "dotenv": "^16.4.0"

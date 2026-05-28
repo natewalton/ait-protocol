@@ -1,4 +1,5 @@
 import type { Db } from '../db.js'
+import { decodeCursor, encodeCursor } from './cursor.js'
 
 export interface TimelineParams {
   viewer: string // DID
@@ -31,13 +32,15 @@ export function getTimeline(db: Db, params: TimelineParams): TimelineResult {
     FROM posts p
     JOIN follows f ON f.subject = p.did AND f.did = ?
     LEFT JOIN actors a ON a.did = p.did
+    WHERE (a.active = 1 OR a.active IS NULL)
   `
   const args: (string | number)[] = [params.viewer]
   if (params.cursor) {
-    query += ' WHERE p.createdAt < ?'
-    args.push(params.cursor)
+    const c = decodeCursor(params.cursor)
+    query += ' AND (p.createdAt, p.uri) < (?, ?)'
+    args.push(c.createdAt, c.uri)
   }
-  query += ' ORDER BY p.createdAt DESC LIMIT ?'
+  query += ' ORDER BY p.createdAt DESC, p.uri DESC LIMIT ?'
   args.push(limit)
 
   const rows = db.prepare(query).all(...args) as Array<{
@@ -67,7 +70,9 @@ export function getTimeline(db: Db, params: TimelineParams): TimelineResult {
   }))
 
   const nextCursor =
-    rows.length === limit ? rows[rows.length - 1].createdAt : undefined
+    rows.length === limit
+      ? encodeCursor(rows[rows.length - 1].createdAt, rows[rows.length - 1].uri)
+      : undefined
 
   return { cursor: nextCursor, feed }
 }

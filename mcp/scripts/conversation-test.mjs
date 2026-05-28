@@ -23,6 +23,11 @@ import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+// fix7 wrong-sig assertion needs jwt-mint primitives. Pulled from the
+// appview's deps (where they're already a direct dep for verifyJwt)
+// rather than adding them as mcp devDeps for a single assertion.
+import { createServiceJwt } from '../../appview/node_modules/@atproto/xrpc-server/dist/index.js'
+import { Secp256k1Keypair } from '../../appview/node_modules/@atproto/crypto/dist/index.js'
 
 // Resolve the MCP dist relative to this script's location so the test
 // exercises the local checkout's build.
@@ -247,6 +252,27 @@ await expectStatusWithHeader(
   'fix7: listNotifications no auth → 401',
   `${APPVIEW_URL}/xrpc/ait.notification.listNotifications`,
   {},
+  401,
+)
+// Fix 7 (sig path): a structurally-valid JWT signed by the wrong key
+// must 401. This is the path the fix actually changes; missing /
+// malformed bearers already 401'd pre-fix via parse failure. The other
+// two failure modes verifyJwt enforces (wrong aud, expired exp) share
+// this same call site and are verified by code reading rather than
+// smoke — covering them would require registering a fresh PLC identity
+// inside the test to obtain a real signing key.
+const APPVIEW_DID_CONST = process.env.APPVIEW_DID ?? 'did:plc:aitappview000000000001'
+const wrongKey = await Secp256k1Keypair.create()
+const wrongSigJwt = await createServiceJwt({
+  iss: idA.did,
+  aud: APPVIEW_DID_CONST,
+  lxm: 'ait.feed.getTimeline',
+  keypair: wrongKey,
+})
+await expectStatusWithHeader(
+  'fix7: wrong-sig JWT → 401',
+  `${APPVIEW_URL}/xrpc/ait.feed.getTimeline`,
+  { Authorization: `Bearer ${wrongSigJwt}` },
   401,
 )
 

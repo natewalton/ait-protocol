@@ -343,4 +343,79 @@ if (missing.length > 0) {
 }
 console.log(`ok    [fix5: pagination total]: all ${extraUris.length} URIs returned across limit=1 pages`)
 
+// Fix 13: when both accessJwt and refreshJwt are stale (server-side
+// session revoked, refresh JWT corrupted, etc.) the writers and readers
+// must re-login with the stored password and retry once, not surface
+// 401. Procedure: join a fresh handle, corrupt the on-disk JWTs (keep
+// the password intact), spawn a new MCP child against the same session
+// UUID, and call both a writer (post) and a reader (listNotifications).
+// Both must succeed and the on-disk JWTs must be rewritten.
+const SESSION_C = randomUUID()
+const cFix13a = await spawnMcp('conv-Fix13-a', SESSION_C)
+const jFix13 = await cFix13a.callTool({
+  name: 'join',
+  arguments: { handle_hint: `fix13${STAMP}` },
+})
+const idFix13 = extractIds(jFix13.content[0].text)
+await cFix13a.close()
+
+// Set the env the storage module reads at import time, then load the
+// just-persisted identity, replace its JWTs with structurally-valid
+// garbage that fails resumeSession AND refreshSession, and write back.
+// The password remains intact so loginWithStoredCredentials can recover.
+process.env.XDG_DATA_HOME = XDG_TMP
+process.env.AIT_MCP_TEST_SESSION_ID = SESSION_C
+const storage = await import('../dist/storage.js')
+const persisted = storage.loadIdentity()
+if (!persisted || persisted.did !== idFix13.did) {
+  console.error('FAIL [fix13 precondition: loadIdentity for fresh handle]')
+  console.error('persisted:', persisted)
+  process.exit(1)
+}
+const GARBAGE_JWT =
+  'eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiJnYXJiYWdlIn0.garbagesigbytes'
+storage.saveIdentity({
+  did: persisted.did,
+  handle: persisted.handle,
+  password: persisted.password,
+  accessJwt: GARBAGE_JWT,
+  refreshJwt: GARBAGE_JWT,
+})
+delete process.env.AIT_MCP_TEST_SESSION_ID
+
+const cFix13b = await spawnMcp('conv-Fix13-b', SESSION_C)
+const postRetry = await cFix13b.callTool({
+  name: 'post',
+  arguments: { text: 'fix13 retry probe' },
+})
+const retryUri = extractUri(postRetry.content[0].text)
+if (!retryUri) {
+  console.error('FAIL [fix13: post after stale JWTs did not surface a URI]')
+  console.error('content:', postRetry.content[0].text)
+  process.exit(1)
+}
+console.log(
+  `ok    [fix13: post re-login retry]: post landed at ${retryUri.slice(0, 60)}`,
+)
+const notifsRetry = await cFix13b.callTool({
+  name: 'listNotifications',
+  arguments: {},
+})
+if (!notifsRetry.content[0].text.length) {
+  console.error('FAIL [fix13: listNotifications after stale JWTs returned empty content]')
+  process.exit(1)
+}
+console.log('ok    [fix13: listNotifications re-login retry]')
+await cFix13b.close()
+
+process.env.AIT_MCP_TEST_SESSION_ID = SESSION_C
+const reloaded = storage.loadIdentity()
+delete process.env.AIT_MCP_TEST_SESSION_ID
+if (!reloaded || reloaded.accessJwt === GARBAGE_JWT || reloaded.refreshJwt === GARBAGE_JWT) {
+  console.error('FAIL [fix13: re-login did not persist fresh JWTs to disk]')
+  console.error('reloaded:', reloaded)
+  process.exit(1)
+}
+console.log('ok    [fix13: fresh JWTs persisted on disk after re-login]')
+
 console.log('\nconversation-loop smoke test PASSED')

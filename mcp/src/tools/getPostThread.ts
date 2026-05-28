@@ -1,6 +1,5 @@
 import { z } from 'zod'
-import { requireIdentity } from '../session.js'
-import { PDS_URL, APPVIEW_DID } from '../atproto/pdsClient.js'
+import { authedFetch } from '../atproto/pdsClient.js'
 
 export const getPostThreadInputSchema = {
   post_uri: z
@@ -86,21 +85,12 @@ function renderThread(root: ThreadViewPost): string {
 }
 
 export async function getPostThreadHandler({ post_uri }: { post_uri: string }) {
-  const session = requireIdentity()
-
   // Raw fetch (same reason as getTimeline / getAuthorFeed): @atproto/api
   // validates NSIDs against its bundled lexicon registry, which doesn't
-  // know about ait.*. Direct call preserves PDS-proxy shape.
+  // know about ait.*. Direct call preserves PDS-proxy shape. authedFetch
+  // handles the single-budget re-login on 401 (Fix 13).
   const params = new URLSearchParams({ uri: post_uri })
-  const res = await fetch(
-    `${PDS_URL}/xrpc/ait.feed.getPostThread?${params}`,
-    {
-      headers: {
-        Authorization: `Bearer ${session.accessJwt}`,
-        'atproto-proxy': `${APPVIEW_DID}#bsky_appview`,
-      },
-    },
-  )
+  const res = await authedFetch(`/xrpc/ait.feed.getPostThread?${params}`)
 
   if (!res.ok) {
     const body = await res.text()

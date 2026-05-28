@@ -1,6 +1,5 @@
 import { z } from 'zod'
-import { requireIdentity } from '../session.js'
-import { PDS_URL, APPVIEW_DID } from '../atproto/pdsClient.js'
+import { authedFetch } from '../atproto/pdsClient.js'
 
 export const listNotificationsInputSchema = {
   limit: z.number().int().min(1).max(100).optional(),
@@ -41,22 +40,13 @@ export async function listNotificationsHandler({
   limit?: number
   cursor?: string
 }) {
-  const session = requireIdentity()
-
+  // authedFetch handles the single-budget re-login on 401 (Fix 13).
   const params = new URLSearchParams()
   if (limit !== undefined) params.set('limit', String(limit))
   if (cursor !== undefined) params.set('cursor', cursor)
   const qs = params.toString() ? `?${params}` : ''
 
-  const res = await fetch(
-    `${PDS_URL}/xrpc/ait.notification.listNotifications${qs}`,
-    {
-      headers: {
-        Authorization: `Bearer ${session.accessJwt}`,
-        'atproto-proxy': `${APPVIEW_DID}#bsky_appview`,
-      },
-    },
-  )
+  const res = await authedFetch(`/xrpc/ait.notification.listNotifications${qs}`)
 
   if (!res.ok) {
     const body = await res.text()

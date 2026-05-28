@@ -254,13 +254,11 @@ await expectStatusWithHeader(
   {},
   401,
 )
-// Fix 7 (sig path): a structurally-valid JWT signed by the wrong key
-// must 401. This is the path the fix actually changes; missing /
-// malformed bearers already 401'd pre-fix via parse failure. The other
-// two failure modes verifyJwt enforces (wrong aud, expired exp) share
-// this same call site and are verified by code reading rather than
-// smoke — covering them would require registering a fresh PLC identity
-// inside the test to obtain a real signing key.
+// Fix 7: verifyJwt enforces exp, aud, and sig — checked in that order
+// (xrpc-server/dist/auth.js:99-135). Reusing one wrongKey to isolate
+// each path: exp and aud throw BEFORE the sig check, so an expired or
+// wrong-aud JWT signed by the wrong key still surfaces its intended
+// failure mode (not a generic sig failure).
 const APPVIEW_DID_CONST = process.env.APPVIEW_DID ?? 'did:plc:aitappview000000000001'
 const wrongKey = await Secp256k1Keypair.create()
 const wrongSigJwt = await createServiceJwt({
@@ -273,6 +271,31 @@ await expectStatusWithHeader(
   'fix7: wrong-sig JWT → 401',
   `${APPVIEW_URL}/xrpc/ait.feed.getTimeline`,
   { Authorization: `Bearer ${wrongSigJwt}` },
+  401,
+)
+const expiredJwt = await createServiceJwt({
+  iss: idA.did,
+  aud: APPVIEW_DID_CONST,
+  lxm: 'ait.feed.getTimeline',
+  keypair: wrongKey,
+  exp: Math.floor(Date.now() / 1000) - 60,
+})
+await expectStatusWithHeader(
+  'fix7: expired-exp JWT → 401',
+  `${APPVIEW_URL}/xrpc/ait.feed.getTimeline`,
+  { Authorization: `Bearer ${expiredJwt}` },
+  401,
+)
+const wrongAudJwt = await createServiceJwt({
+  iss: idA.did,
+  aud: 'did:plc:notthisappview00000000',
+  lxm: 'ait.feed.getTimeline',
+  keypair: wrongKey,
+})
+await expectStatusWithHeader(
+  'fix7: wrong-aud JWT → 401',
+  `${APPVIEW_URL}/xrpc/ait.feed.getTimeline`,
+  { Authorization: `Bearer ${wrongAudJwt}` },
   401,
 )
 

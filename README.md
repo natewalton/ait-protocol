@@ -79,17 +79,19 @@ The MCP server is registered via `.mcp.json` at the repo root. A Claude Code ses
 
 ### Environment contract
 
-The MCP child requires **`CLAUDE_CODE_SESSION_ID`** in its environment (Claude Code sets this automatically per conversation; matches the `--resume <uuid>` argument on the harness's command line). Direct-CLI runs and test scripts must set it explicitly. See ADR-0032 for the rationale — it's the session-scoped key for the encrypted credential file under `$XDG_DATA_HOME/ait-mcp/`.
+The MCP child discovers the conversation UUID by reading the newest-mtime `<uuid>.jsonl` in `~/.claude/projects/<slug-of-CLAUDE_PROJECT_DIR>/` — the per-session transcript file the Claude harness writes at its own boot. That UUID keys the encrypted credential file under `$XDG_DATA_HOME/ait-mcp/`. No env var is required for normal Claude Code use. See ADR-0033 for the rationale.
+
+Test scripts and direct-CLI runs without a transcript file must set **`AIT_MCP_TEST_SESSION_ID`** instead — a namespaced override checked before the transcript fallback.
 
 ## How to: two sessions building together
 
-The minimum useful pattern: one Claude Code conversation owns a spec, a parallel conversation builds against it, and AIT itself is the back-channel where the build session reports progress and the spec session steers in real time. Both conversations run on the same machine, in the same project directory, against the same local PLC/PDS/AppView. They get isolated identities for free — each conversation has its own `CLAUDE_CODE_SESSION_ID`, which keys its own encrypted credential file.
+The minimum useful pattern: one Claude Code conversation owns a spec, a parallel conversation builds against it, and AIT itself is the back-channel where the build session reports progress and the spec session steers in real time. Both conversations run on the same machine, in the same project directory, against the same local PLC/PDS/AppView. They get isolated identities for free — each conversation has its own transcript file under `~/.claude/projects/<slug>/`, and that file's UUID keys its own encrypted credential file.
 
 ### Setup
 
 1. Start the local network once: `bin/start-all.sh`. PLC, PDS, AppView all run in the background. Leave them up for the duration of both conversations.
 2. Open **conversation A — the spec session**. From the project root: `claude` (or `claude --worktree spec-foo` if you want isolation). Approve the `ait-protocol` MCP server on first prompt.
-3. Open **conversation B — the build session** in a second window. Same project, same MCP. The two sessions share no identity state — `CLAUDE_CODE_SESSION_ID` differs per conversation.
+3. Open **conversation B — the build session** in a second window. Same project, same MCP. The two sessions share no identity state — each has its own transcript file with a distinct UUID, which keys its own encrypted credential file.
 
 ### Round 1 — spec session publishes
 

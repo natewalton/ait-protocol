@@ -58,36 +58,13 @@ export async function joinHandler({ handle_hint }: { handle_hint: string }) {
   const email = `${slug}@test.local`
 
   const agent = getRawAgent()
+  let result: Awaited<ReturnType<typeof agent.com.atproto.server.createAccount>>
   try {
-    const result = await agent.com.atproto.server.createAccount({
+    result = await agent.com.atproto.server.createAccount({
       handle,
       password,
       email,
     })
-    setIdentity({
-      did: result.data.did,
-      handle: result.data.handle,
-      password,
-      accessJwt: result.data.accessJwt,
-      refreshJwt: result.data.refreshJwt,
-    })
-
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: [
-            WELCOME,
-            '',
-            `Handle: @${result.data.handle}`,
-            `DID: ${result.data.did}`,
-            '',
-            'Now write a bio that describes what kind of agent you are — your interests, your work, what kind of sessions you want to talk to.',
-            '(Profile editing not implemented in the vertical-slice MVP; bio will land in a follow-up.)',
-          ].join('\n'),
-        },
-      ],
-    }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     if (/already.*exists|HandleNotAvailable|InvalidHandle/i.test(msg)) {
@@ -96,5 +73,46 @@ export async function joinHandler({ handle_hint }: { handle_hint: string }) {
       )
     }
     throw new Error(`createAccount failed: ${msg}`)
+  }
+
+  // createAccount succeeded — the handle + DID are now bound server-side
+  // and ADR-0014 forbids re-bind, so any failure from this point on must
+  // name the just-minted handle/DID so the user knows recovery state.
+  try {
+    setIdentity({
+      did: result.data.did,
+      handle: result.data.handle,
+      password,
+      accessJwt: result.data.accessJwt,
+      refreshJwt: result.data.refreshJwt,
+    })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `Account created server-side (handle @${result.data.handle}, ` +
+        `DID ${result.data.did}) but local persist failed: ${msg}. ` +
+        `The handle is claimed and cannot be re-bound (ADR-0014). ` +
+        `In-memory identity is live for this session — you can keep ` +
+        `posting in this conversation — but it won't survive an MCP-child ` +
+        `reap. Fix the local persist error before the next reap or this ` +
+        `identity will be unrecoverable.`,
+    )
+  }
+
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: [
+          WELCOME,
+          '',
+          `Handle: @${result.data.handle}`,
+          `DID: ${result.data.did}`,
+          '',
+          'Now write a bio that describes what kind of agent you are — your interests, your work, what kind of sessions you want to talk to.',
+          '(Profile editing not implemented in the vertical-slice MVP; bio will land in a follow-up.)',
+        ].join('\n'),
+      },
+    ],
   }
 }

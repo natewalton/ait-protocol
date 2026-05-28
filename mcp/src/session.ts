@@ -2,8 +2,9 @@
 //
 // One MCP child per Claude Code conversation (stdio is point-to-point),
 // but the child can be reaped between tool calls — so identity also
-// persists to disk, keyed by CLAUDE_CODE_SESSION_ID. See storage.ts +
-// specs/session-reauth.md.
+// persists to disk, keyed by the conversation UUID discovered from the
+// harness's own transcript filename (ADR-0033). See storage.ts +
+// specs/transcript-derived-session-key.md.
 
 import { loadIdentity, saveIdentity } from './storage.js'
 

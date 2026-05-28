@@ -1,16 +1,17 @@
 // Verifies the MCP identity-persistence + re-auth contract from
-// specs/session-reauth.md (ADR-0032). Four assertions:
+// specs/transcript-derived-session-key.md (ADR-0033, supersedes 0032).
+// Five assertions:
 //
-//   (a) Fresh MCP under the same CLAUDE_CODE_SESSION_ID loads the prior
+//   (a) Fresh MCP under the same AIT_MCP_TEST_SESSION_ID loads the prior
 //       identity from disk and acts without a second `join`.
 //   (b) Tampering the file's accessJwt forces AtpAgent's auto-refresh
 //       path; the post succeeds because the refresh JWT is still valid.
 //   (c) Tampering BOTH JWTs forces the login() fallback with the stored
 //       password; the post still succeeds (vanilla createSession).
-//   (d) An MCP child with a different CLAUDE_CODE_SESSION_ID cannot
+//   (d) An MCP child with a different AIT_MCP_TEST_SESSION_ID cannot
 //       decrypt the original session's file. Independent identities.
 //
-// All rounds set CLAUDE_CODE_SESSION_ID explicitly on the spawn env so
+// All rounds set AIT_MCP_TEST_SESSION_ID explicitly on the spawn env so
 // the test doesn't depend on the runner's own env state. Identity files
 // are not deleted between rounds — the per-session key gives us
 // isolation.
@@ -24,9 +25,28 @@ import {
   randomBytes,
   randomUUID,
 } from 'node:crypto'
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
-import { homedir } from 'node:os'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
+
+// Resolve the MCP dist relative to this script's location so the test
+// exercises the local checkout's build (worktree or main), not whichever
+// checkout happens to live at the previously-hardcoded absolute path.
+const MCP_SERVER = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'dist',
+  'server.js',
+)
 
 const STORAGE_DIR = join(homedir(), '.local', 'share', 'ait-mcp')
 const STAMP = Date.now().toString(36)
@@ -77,18 +97,22 @@ function encryptInto(sessionId, outer, inner) {
 }
 
 async function spawn(sessionId) {
+  // Defense-in-depth: scrub CLAUDE_PROJECT_DIR so the resolver's transcript
+  // fallback is structurally unreachable. If AIT_MCP_TEST_SESSION_ID ever
+  // gets dropped in a refactor, rounds 1-5 fail loud instead of silently
+  // using the developer's live conversation UUID.
+  const env = { ...process.env }
+  delete env.CLAUDE_PROJECT_DIR
+  env.PDS_URL = 'http://localhost:2583'
+  env.APPVIEW_DID = 'did:plc:aitappview000000000001'
+  env.AIT_MCP_TEST_SESSION_ID = sessionId
   const transport = new StdioClientTransport({
     command: 'node',
     args: [
       '--enable-source-maps',
-      '/Users/nwalton/Desktop/ait-protocol/mcp/dist/server.js',
+      MCP_SERVER,
     ],
-    env: {
-      ...process.env,
-      PDS_URL: 'http://localhost:2583',
-      APPVIEW_DID: 'did:plc:aitappview000000000001',
-      CLAUDE_CODE_SESSION_ID: sessionId,
-    },
+    env,
   })
   const client = new Client({ name: 'persist-test', version: '0.0.0' })
   await client.connect(transport)
@@ -171,7 +195,7 @@ ok('(d) independent SESSION_B', 'post rejected as expected (no identity for new 
 await c.close()
 
 // Bonus: positive assertion that decrypting SESSION_A's file with SESSION_B's
-// derived key throws (the encryption is meaningfully bound to the session id).
+// derived key throws (the encryption is meaningfully bound to the session UUID).
 try {
   const raw = JSON.parse(readFileSync(fileFor(SESSION_A), 'utf-8'))
   const decipher = createDecipheriv(
@@ -190,6 +214,77 @@ try {
     '(d) cross-decrypt blocked',
     `decrypt with wrong key threw as expected: ${(err.message ?? err).toString().slice(0, 80)}`,
   )
+}
+
+// === Round 6 — (e) ADR-0033 production path: cold-start fallback ===
+// Verify the resolver picks the UUID from a transcript file when
+// AIT_MCP_TEST_SESSION_ID is unset. Simulates the Claude Desktop /
+// cold-start case where no env var is propagated but a transcript exists.
+console.log('\nRound 6: cold-start fallback — transcript file, no test override')
+{
+  const tmpHome = mkdtempSync(join(tmpdir(), 'ait-cold-home-'))
+  const tmpXdg = mkdtempSync(join(tmpdir(), 'ait-cold-xdg-'))
+  // Register cleanup BEFORE the work so a fail() → process.exit(1) inside
+  // the block doesn't strand the tmpdirs.
+  process.on('exit', () => {
+    try { rmSync(tmpHome, { recursive: true, force: true }) } catch {}
+    try { rmSync(tmpXdg, { recursive: true, force: true }) } catch {}
+  })
+
+  const fakeCwd = join(tmpHome, 'work', 'project')
+  mkdirSync(fakeCwd, { recursive: true })
+  // realpathSync resolves macOS /var/folders → /private/var/folders so the
+  // slug the resolver computes matches the dir we created below.
+  const realCwd = realpathSync(fakeCwd)
+  const slug = realCwd.replace(/\/+$/, '').replaceAll('/', '-').replaceAll('.', '-')
+  const realHome = realpathSync(tmpHome)
+  const projectsDir = join(realHome, '.claude', 'projects', slug)
+  mkdirSync(projectsDir, { recursive: true })
+  const fakeUuid = randomUUID()
+  writeFileSync(join(projectsDir, `${fakeUuid}.jsonl`), '')
+
+  const env = { ...process.env }
+  delete env.AIT_MCP_TEST_SESSION_ID
+  // Defense-in-depth symmetric to rounds 1-5: a future fallback that
+  // restored a CLAUDE_CODE_SESSION_ID read for backwards-compat would
+  // silently use the developer's live conversation UUID and Round 6's
+  // assertion would still appear to pass.
+  delete env.CLAUDE_CODE_SESSION_ID
+  env.HOME = realHome
+  env.XDG_DATA_HOME = tmpXdg
+  env.CLAUDE_PROJECT_DIR = realCwd
+  env.PDS_URL = 'http://localhost:2583'
+  env.APPVIEW_DID = 'did:plc:aitappview000000000001'
+
+  const transport = new StdioClientTransport({
+    command: 'node',
+    args: [
+      '--enable-source-maps',
+      MCP_SERVER,
+    ],
+    env,
+  })
+  const client = new Client({ name: 'persist-cold', version: '0.0.0' })
+  await client.connect(transport)
+
+  const coldHint = `cs${STAMP}`.slice(0, 18)
+  const joinResult = await client.callTool({
+    name: 'join',
+    arguments: { handle_hint: coldHint },
+  })
+  if (!joinResult.content?.[0]?.text?.match(/Handle:\s+@/)) {
+    fail('(e) cold-start join', `no Handle line: ${JSON.stringify(joinResult).slice(0, 200)}`)
+  }
+  ok('(e) cold-start join', 'join succeeded without test env var')
+
+  const expectedHash = createHash('sha256').update(fakeUuid).digest('hex').slice(0, 16)
+  const expectedPath = join(tmpXdg, 'ait-mcp', `identity-${expectedHash}.json`)
+  if (!existsSync(expectedPath)) {
+    fail('(e) cold-start file path', `expected identity file at ${expectedPath}; not found`)
+  }
+  ok('(e) cold-start file path', 'identity file keyed by transcript UUID')
+
+  await client.close()
 }
 
 console.log('\npersistence-test PASSED')

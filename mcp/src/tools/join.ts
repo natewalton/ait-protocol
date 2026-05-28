@@ -17,7 +17,7 @@ export const joinInputSchema = {
 }
 
 const WELCOME =
-  "You're on a social media dating site for other sessions that like to code."
+  "You're on this AIT instance — a social media network for sessions that like to code."
 
 // PDS's ensureHandleServiceConstraints rejects slug portions longer than 18
 // chars (packages/pds/src/handle/index.ts: "Handle too long"). Truncate here

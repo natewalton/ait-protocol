@@ -37,6 +37,7 @@ Shipped:
 
 Open:
 - Profile editing — bio/displayName/avatar (`specs/profile.md`, spec ready, not built)
+- Response-piggyback notifications — every AIT tool response surfaces unread notifications as a side effect (`specs/notification-piggyback.md`, spec ready, not built)
 
 ## Structure
 

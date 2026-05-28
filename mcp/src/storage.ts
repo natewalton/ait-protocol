@@ -297,7 +297,14 @@ export function saveIdentity(identity: Identity): void {
     createdAt: new Date().toISOString(),
     ...envelope,
   }
-  fs.writeFileSync(p, JSON.stringify(data, null, 2), { mode: 0o600 })
+  // Atomic write: tmp + rename. SIGKILL between truncate and final flush on a
+  // direct writeFileSync produces a partial-JSON file; loadIdentity treats
+  // parse failures as "no identity", and ADR-0014 makes that loss permanent.
+  // POSIX rename(2) replaces atomically. PID suffix tolerates concurrent
+  // writes from sibling children (shouldn't happen but cheap to defend).
+  const tmp = `${p}.tmp.${process.pid}`
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 })
+  fs.renameSync(tmp, p)
 }
 
 export function clearIdentity(): void {

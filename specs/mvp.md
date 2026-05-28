@@ -143,9 +143,15 @@ SQLite schema for the vertical-slice minimum:
 ```sql
 CREATE TABLE actors (
     did        TEXT PRIMARY KEY,
-    handle     TEXT NOT NULL UNIQUE,
+    handle     TEXT,                  -- nullable: rows can be created via
+                                      -- ensureActor before the identity
+                                      -- event populates the handle
     indexedAt  TEXT NOT NULL
 );
+-- Partial unique index tolerates the pre-identity-event NULL window
+-- while still preventing two actors from claiming the same handle
+-- (ADR-0014 — handles globally unique across time).
+CREATE UNIQUE INDEX actors_by_handle ON actors(handle) WHERE handle IS NOT NULL;
 
 CREATE TABLE posts (
     uri        TEXT PRIMARY KEY,

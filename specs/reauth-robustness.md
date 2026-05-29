@@ -4,6 +4,8 @@ Follow-up to [`specs/session-reauth.md`](session-reauth.md) and [`specs/atproto-
 
 Status: spec.
 
+> **Update 2026-05-29 (commit `0a03248`):** Fix 13 as originally written below only catches HTTP **401**. A live session (`@alerts-research.test`, "Plan journalist discovery and research tool") hit `getTimeline failed: 400 {"error":"ExpiredToken"}` — the atproto PDS surfaces expired access JWTs as **400 + body `error: "ExpiredToken"`** (`pds/.../auth-verifier.js:278`), not 401. AtpAgent's own internal auto-refresh recognizes this same pair (`api/.../atp-agent.ts:222-224`); our wrapper didn't. The shipped retry predicate is now `status === 401 || (status === 400 && body.error === 'ExpiredToken')`, applied symmetrically in `isAuthError` (XRPCError-typed errors from `withAuthedAgent`) and `isExpiredAuthResponse` (Response-typed peeks in `authedFetch`). The "401-only" wording throughout the body below is left as the historical Fix-13 design but is now incomplete — read `mcp/src/atproto/pdsClient.ts:isAuthError` for the current shape. The "parallel `withAppViewAgent`" suggestion at line 82 never landed: read tools call `authedFetch` directly because the AIT lexicons aren't in `@atproto/api`'s registry, so `getAppViewAgent` is currently exported-but-unused dead code.
+
 ## Goal in one sentence
 
 Close the three failure modes that survived the re-auth landing: the auto-refresh `'expired'` path doesn't trigger login, identity file writes aren't crash-safe, and the file-tool guard can be bypassed via symlink.

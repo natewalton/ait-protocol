@@ -35,6 +35,7 @@ Thumbs.db
 
 # Claude Code harness per-session state
 .claude/scheduled_tasks.json
+.claude/scheduled_tasks.lock
 
 # Test coverage
 coverage/

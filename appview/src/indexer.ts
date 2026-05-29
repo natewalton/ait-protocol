@@ -2,6 +2,7 @@ import type { Db } from './db.js'
 import type { Event, Create, Update } from '@atproto/sync'
 import { getHandle } from '@atproto/identity'
 import { AtUri } from '@atproto/syntax'
+import { notifyInsert } from './pushRegistry.js'
 
 // Mention facet feature shape — the post may carry either ait.richtext.facet#mention
 // (forward-looking) or app.bsky.richtext.facet#mention (the type we currently
@@ -202,20 +203,29 @@ function insertNotification(db: Db, n: NotificationRow) {
   // N rows. A single post that both replies-to and mentions the same
   // person collapses to one row (first write wins), which matches bsky
   // and avoids double-pinging.
-  db.prepare(
-    `INSERT INTO notifications (uri, cid, recipientDid, authorDid, reason, reasonSubject, createdAt, indexedAt)
+  const info = db
+    .prepare(
+      `INSERT INTO notifications (uri, cid, recipientDid, authorDid, reason, reasonSubject, createdAt, indexedAt)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(uri, recipientDid) DO NOTHING`,
-  ).run(
-    n.uri,
-    n.cid,
-    n.recipientDid,
-    n.authorDid,
-    n.reason,
-    n.reasonSubject,
-    n.createdAt,
-    n.indexedAt,
-  )
+    )
+    .run(
+      n.uri,
+      n.cid,
+      n.recipientDid,
+      n.authorDid,
+      n.reason,
+      n.reasonSubject,
+      n.createdAt,
+      n.indexedAt,
+    )
+  // Push to a registered MCP only when this insert actually added a row.
+  // The ON CONFLICT DO NOTHING path means we already pushed this event
+  // earlier (or it collapsed with a reply+mention twin); double-pushing
+  // would surface a duplicate <channel> block to the model.
+  if (info.changes > 0) {
+    notifyInsert(db, n.recipientDid, n.uri)
+  }
 }
 
 function indexFollow(db: Db, evt: Create | Update) {

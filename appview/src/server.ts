@@ -10,6 +10,7 @@ import { getPostThread } from './queries/getPostThread.js'
 import { listNotifications } from './queries/listNotifications.js'
 import { InvalidRequestError, parseLimit } from './xrpc/params.js'
 import { makeVerifyViewer } from './xrpc/auth.js'
+import { isValidPushUrl, registerAndReplay } from './pushRegistry.js'
 
 const PORT = parseInt(process.env.APPVIEW_PORT ?? '2585', 10)
 const DB_PATH = process.env.APPVIEW_DB_PATH ?? './data/appview.sqlite'
@@ -96,9 +97,17 @@ async function main() {
     }
   }
 
+  const readBody = (req: http.IncomingMessage): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const chunks: Buffer[] = []
+      req.on('data', (chunk: Buffer) => chunks.push(chunk))
+      req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+      req.on('error', reject)
+    })
+
   const server = http.createServer((req, res) => {
-    if (!req.url || req.method !== 'GET') {
-      res.writeHead(req.url ? 405 : 400)
+    if (!req.url) {
+      res.writeHead(400)
       res.end()
       return
     }
@@ -110,6 +119,61 @@ async function main() {
 
     if (nsid === null) {
       sendJson(res, 404, { error: 'NotFound', message: 'no such endpoint' })
+      return
+    }
+
+    if (req.method === 'POST') {
+      if (nsid === 'ait.notification.registerPushTarget') {
+        handleQuery(res, 'registerPushTarget', async () => {
+          const viewer = await verifyViewer(
+            req.headers['authorization'],
+            'ait.notification.registerPushTarget',
+          )
+          if (!viewer) {
+            sendAuthRequired(
+              res,
+              'registerPushTarget requires an authenticated caller',
+            )
+            return
+          }
+          let body: { url?: unknown; since?: unknown }
+          try {
+            body = JSON.parse(await readBody(req)) as typeof body
+          } catch {
+            sendInvalidRequest(res, 'body must be valid JSON')
+            return
+          }
+          if (typeof body.url !== 'string' || !isValidPushUrl(body.url)) {
+            sendInvalidRequest(
+              res,
+              'url must be a string of the form http://127.0.0.1:<port>/...',
+            )
+            return
+          }
+          // since must be either null (first registration) or a non-empty
+          // ISO timestamp. An empty string slips past `typeof === 'string'`
+          // and the `since == null` early-exit in registerAndReplay, then
+          // `n.indexedAt > ''` matches every row — replaying the recipient's
+          // entire notification history in one burst.
+          if (
+            body.since !== null &&
+            (typeof body.since !== 'string' || body.since.length === 0)
+          ) {
+            sendInvalidRequest(res, 'since must be a non-empty string or null')
+            return
+          }
+          await registerAndReplay(db, viewer, body.url, body.since)
+          sendJson(res, 200, { status: 'ok' })
+        })
+        return
+      }
+      sendJson(res, 404, { error: 'NotFound', message: 'no such endpoint' })
+      return
+    }
+
+    if (req.method !== 'GET') {
+      res.writeHead(405)
+      res.end()
       return
     }
 

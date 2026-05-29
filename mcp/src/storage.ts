@@ -38,6 +38,7 @@
 //     "did": "<plaintext, public protocol id>",
 //     "handle": "<plaintext, public protocol id>",
 //     "createdAt": "<plaintext, diagnostic>",
+//     "lastSeenNotificationAt": "<plaintext ISO ts | null>",
 //     "ciphertext": "<base64 AES-256-GCM ct of { password, accessJwt, refreshJwt }>",
 //     "nonce": "<base64 12 bytes, fresh per write>",
 //     "tag": "<base64 16 bytes, GCM auth tag>"
@@ -193,6 +194,7 @@ interface OnDiskShape {
   did: string
   handle: string
   createdAt: string
+  lastSeenNotificationAt?: string | null
   ciphertext: string
   nonce: string
   tag: string
@@ -283,6 +285,10 @@ export function saveIdentity(identity: Identity): void {
   const uuid = resolveSessionUuid()
   const p = identityPath(uuid)
   fs.mkdirSync(path.dirname(p), { recursive: true, mode: 0o700 })
+  // Preserve the notification cursor across rewrites: saveIdentity is called
+  // both on first join (cursor starts null) and on JWT refresh (cursor must
+  // not regress to null and lose the push-mode advance).
+  const existingCursor = readDiskShape(p)?.lastSeenNotificationAt ?? null
   const envelope = encryptInner(
     {
       password: identity.password,
@@ -295,6 +301,7 @@ export function saveIdentity(identity: Identity): void {
     did: identity.did,
     handle: identity.handle,
     createdAt: new Date().toISOString(),
+    lastSeenNotificationAt: existingCursor,
     ...envelope,
   }
   // Atomic write: tmp + rename. SIGKILL between truncate and final flush on a
@@ -304,6 +311,63 @@ export function saveIdentity(identity: Identity): void {
   // writes from sibling children (shouldn't happen but cheap to defend).
   const tmp = `${p}.tmp.${process.pid}`
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 })
+  fs.renameSync(tmp, p)
+}
+
+// Read the OnDiskShape if present and parseable; null otherwise. Internal
+// helper used by both saveIdentity (to preserve the cursor) and the cursor
+// accessors below.
+function readDiskShape(p: string): OnDiskShape | null {
+  if (!fs.existsSync(p)) return null
+  try {
+    return JSON.parse(fs.readFileSync(p, 'utf-8')) as OnDiskShape
+  } catch {
+    return null
+  }
+}
+
+// Notification cursor: advanced once per channel event emitted in push mode
+// (per specs/notification-push.md). Returns null when no identity file exists
+// yet or the field has never been set.
+export function getLastSeenNotificationAt(): string | null {
+  let uuid: string
+  try {
+    uuid = resolveSessionUuid()
+  } catch {
+    return null
+  }
+  return readDiskShape(identityPath(uuid))?.lastSeenNotificationAt ?? null
+}
+
+// Atomic rewrite of just the cursor field. No-op if the identity file is
+// absent (nothing to attach a cursor to — caller should only call this after
+// identity exists). Monotonic: a same-or-older `at` is dropped so two
+// concurrent push handlers whose awaits resolve out of arrival order can't
+// regress the cursor and cause the next replay to redeliver the newer event.
+// Resolver failures (transient missing transcript, etc.) swallow silently —
+// surfacing a 500 from the push handler would cause the AppView to drop the
+// registration entirely, which is worse than missing one cursor advance.
+// Reuses the same tmp+rename pattern as saveIdentity so a SIGKILL mid-write
+// doesn't leave a partial file.
+export function updateLastSeenNotificationAt(at: string): void {
+  let uuid: string
+  try {
+    uuid = resolveSessionUuid()
+  } catch {
+    return
+  }
+  const p = identityPath(uuid)
+  const existing = readDiskShape(p)
+  if (!existing) return
+  if (
+    existing.lastSeenNotificationAt &&
+    existing.lastSeenNotificationAt >= at
+  ) {
+    return
+  }
+  const updated: OnDiskShape = { ...existing, lastSeenNotificationAt: at }
+  const tmp = `${p}.tmp.${process.pid}`
+  fs.writeFileSync(tmp, JSON.stringify(updated, null, 2), { mode: 0o600 })
   fs.renameSync(tmp, p)
 }
 

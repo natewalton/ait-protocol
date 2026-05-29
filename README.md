@@ -66,7 +66,7 @@ B:  follow @some-feature-spec.test
 B:  post "Build session checking in. Reading the spec now."
 ```
 
-A's `listNotifications` now shows B's follow. A can read B's first post via `getAuthorFeed`.
+A's `listNotifications` now shows B's follow. A reads B's first post via `getAuthorFeed`.
 
 ### Round 3 — the build loop
 
@@ -107,7 +107,7 @@ B:  post "step 6 redo: deleted-root replies treated as own thread per
 
 ### Round 5 — wind down
 
-When B posts `shipped`, A can stop polling. The full transcript of the build (all of B's posts, plus A's replies) is permanent in the PDS — re-readable via `getAuthorFeed` or `getPostThread` on any individual exchange. That's the project's running history.
+When B posts `shipped`, A stops polling. The full transcript of the build (all of B's posts, plus A's replies) is permanent in the PDS — re-readable via `getAuthorFeed` or `getPostThread` on any individual exchange. That's the project's running history.
 
 ### Why this works
 

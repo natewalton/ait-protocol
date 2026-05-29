@@ -216,43 +216,32 @@ try {
   )
 }
 
-// === Round 6 — (e) ADR-0033 production path: cold-start fallback ===
-// Verify the resolver picks the UUID from a transcript file when
-// AIT_MCP_TEST_SESSION_ID is unset. Simulates the Claude Desktop /
-// cold-start case where no env var is propagated but a transcript exists.
-console.log('\nRound 6: cold-start fallback — transcript file, no test override')
+// === Round 6 — (e) ADR-0035 production path: CLAUDE_CODE_SESSION_ID resolver ===
+// Verify the resolver picks the UUID from the harness env var when
+// AIT_MCP_TEST_SESSION_ID is unset. Simulates the Claude Desktop / CLI
+// production path under v2.1.156+ where the harness injects
+// CLAUDE_CODE_SESSION_ID into MCP children at spawn (verified empirically
+// via ps -E against both Desktop and CLI launchers; see ADR-0035).
+console.log('\nRound 6: production path — CLAUDE_CODE_SESSION_ID, no test override')
 {
-  const tmpHome = mkdtempSync(join(tmpdir(), 'ait-cold-home-'))
-  const tmpXdg = mkdtempSync(join(tmpdir(), 'ait-cold-xdg-'))
+  const tmpXdg = mkdtempSync(join(tmpdir(), 'ait-prod-xdg-'))
   // Register cleanup BEFORE the work so a fail() → process.exit(1) inside
-  // the block doesn't strand the tmpdirs.
+  // the block doesn't strand the tmpdir.
   process.on('exit', () => {
-    try { rmSync(tmpHome, { recursive: true, force: true }) } catch {}
     try { rmSync(tmpXdg, { recursive: true, force: true }) } catch {}
   })
 
-  const fakeCwd = join(tmpHome, 'work', 'project')
-  mkdirSync(fakeCwd, { recursive: true })
-  // realpathSync resolves macOS /var/folders → /private/var/folders so the
-  // slug the resolver computes matches the dir we created below.
-  const realCwd = realpathSync(fakeCwd)
-  const slug = realCwd.replace(/\/+$/, '').replaceAll('/', '-').replaceAll('.', '-')
-  const realHome = realpathSync(tmpHome)
-  const projectsDir = join(realHome, '.claude', 'projects', slug)
-  mkdirSync(projectsDir, { recursive: true })
   const fakeUuid = randomUUID()
-  writeFileSync(join(projectsDir, `${fakeUuid}.jsonl`), '')
 
   const env = { ...process.env }
   delete env.AIT_MCP_TEST_SESSION_ID
-  // Defense-in-depth symmetric to rounds 1-5: a future fallback that
-  // restored a CLAUDE_CODE_SESSION_ID read for backwards-compat would
-  // silently use the developer's live conversation UUID and Round 6's
-  // assertion would still appear to pass.
-  delete env.CLAUDE_CODE_SESSION_ID
-  env.HOME = realHome
+  // Defense-in-depth: ADR-0033's transcript fallback was the cause of the
+  // multi-conversation collision motivating ADR-0035. Scrub the inputs
+  // that fallback consumed so any future regression restoring it would
+  // fail this round instead of silently passing.
+  delete env.CLAUDE_PROJECT_DIR
   env.XDG_DATA_HOME = tmpXdg
-  env.CLAUDE_PROJECT_DIR = realCwd
+  env.CLAUDE_CODE_SESSION_ID = fakeUuid
   env.PDS_URL = 'http://localhost:2583'
   env.APPVIEW_DID = 'did:plc:aitappview000000000001'
 
@@ -264,25 +253,25 @@ console.log('\nRound 6: cold-start fallback — transcript file, no test overrid
     ],
     env,
   })
-  const client = new Client({ name: 'persist-cold', version: '0.0.0' })
+  const client = new Client({ name: 'persist-prod', version: '0.0.0' })
   await client.connect(transport)
 
-  const coldHint = `cs${STAMP}`.slice(0, 18)
+  const prodHint = `cs${STAMP}`.slice(0, 18)
   const joinResult = await client.callTool({
     name: 'join',
-    arguments: { handle_hint: coldHint },
+    arguments: { handle_hint: prodHint },
   })
   if (!joinResult.content?.[0]?.text?.match(/Handle:\s+@/)) {
-    fail('(e) cold-start join', `no Handle line: ${JSON.stringify(joinResult).slice(0, 200)}`)
+    fail('(e) env-resolver join', `no Handle line: ${JSON.stringify(joinResult).slice(0, 200)}`)
   }
-  ok('(e) cold-start join', 'join succeeded without test env var')
+  ok('(e) env-resolver join', 'join succeeded with CLAUDE_CODE_SESSION_ID set')
 
   const expectedHash = createHash('sha256').update(fakeUuid).digest('hex').slice(0, 16)
   const expectedPath = join(tmpXdg, 'ait-mcp', `identity-${expectedHash}.json`)
   if (!existsSync(expectedPath)) {
-    fail('(e) cold-start file path', `expected identity file at ${expectedPath}; not found`)
+    fail('(e) env-resolver file path', `expected identity file at ${expectedPath}; not found`)
   }
-  ok('(e) cold-start file path', 'identity file keyed by transcript UUID')
+  ok('(e) env-resolver file path', 'identity file keyed by CLAUDE_CODE_SESSION_ID')
 
   await client.close()
 }

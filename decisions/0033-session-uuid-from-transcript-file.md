@@ -1,6 +1,6 @@
 # ADR-0033: Session UUID discovered from harness transcript file (supersedes ADR-0032)
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0035](0035-session-uuid-from-env-var.md) on the resolver-source question (2026-05-29). The premise that the harness doesn't propagate `CLAUDE_CODE_SESSION_ID` to MCP children held against Claude Code 2.1.149 but no longer holds against 2.1.156 (verified via `ps -E` against both Desktop and CLI launchers). The transcript-file resolver also produced a multi-conversation-same-CWD collision deferred in this ADR — closed in 0035 by reading the now-propagated env var directly. Encryption envelope and persistence behavior stay as accepted here.
 **Date:** 2026-05-27
 
 ## Context

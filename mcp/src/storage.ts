@@ -8,29 +8,28 @@
 // conversation recovers its identity, but a different conversation
 // gets its own.
 //
-// Session UUID resolution (ADR-0033, supersedes 0032's session-key source):
+// Session UUID resolution (ADR-0035, supersedes 0033's transcript fallback):
 //   1. process.env.AIT_MCP_TEST_SESSION_ID — test-only override for
-//      runners without a transcript file (test scripts, direct CLI).
-//   2. Newest-mtime *.jsonl in ~/.claude/projects/<slug>/ whose basename
-//      matches the UUID shape (RFC-4122 36-char hex). Slug = realpathSync
-//      of CLAUDE_PROJECT_DIR with trailing `/` stripped and `/` and `.`
-//      replaced by `-`. The Claude harness writes this file at its own
-//      boot under Claude Desktop 2.1.149 (verified empirically); other
-//      entry points that produce the same artifact resolve through the
-//      same code path.
+//      runners without a harness (test scripts, direct CLI invocations
+//      without Claude Code).
+//   2. process.env.CLAUDE_CODE_SESSION_ID — the Claude Code harness
+//      propagates this to MCP children at spawn time under v2.1.156+
+//      (verified via `ps -E` against both Desktop and CLI launchers).
+//
+// ADR-0033's newest-mtime transcript-file resolver was the right call
+// against v2.1.149 (where the env var was never propagated to MCP
+// children) but produced a multi-conversation-same-CWD collision: two
+// live conversations rooted at the same project dir would race on the
+// newest-mtime probe and the second to start would inherit the first's
+// identity. The harness now propagates the var, so the resolver reads
+// it directly and the collision goes away (each conversation has its
+// own UUID injected at spawn).
 //
 // Resolution runs fresh on every public storage call — no module-level
 // cache. Each public function calls resolveSessionUuid() once at entry
-// and threads the UUID into derivedKey(uuid) / identityPath(uuid), so a
-// mid-call mtime fluctuation can't split the file path from the encryption
-// key. ADR-0032 keyed on the env var CLAUDE_CODE_SESSION_ID; verified
-// empirically false under Claude Desktop 2.1.149 (harness doesn't propagate
-// that var to MCP children, only to per-Bash-tool shells).
-// Spec: specs/transcript-derived-session-key.md.
-//
-// Supersedes ADR-0030's PPID+lstart scheme too (which 0032 already did) —
-// the resolved UUID is stable across harness respawns within one
-// conversation because the transcript filename doesn't change.
+// and threads the UUID into derivedKey(uuid) / identityPath(uuid), so
+// any transient env-var absence between calls within an op can't split
+// the file path from the encryption key.
 //
 // File layout:
 //   $XDG_DATA_HOME/ait-mcp/identity-<sha256(uuid):16>.json
@@ -46,8 +45,7 @@
 //
 // Encryption key: sha256(uuid + ":ait-mcp:v2"), where uuid is the
 // resolved conversation UUID. Derived only from the resolver output —
-// never written to disk. A reader who can read the file but can't see
-// the transcript directory (different Unix user) gets ciphertext only.
+// never written to disk.
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -67,95 +65,31 @@ const STORAGE_DIR = path.join(
 
 const KEY_SALT = ':ait-mcp:v2'
 
+// Conversation UUIDs are 36-char dash-separated lowercase hex (RFC 4122).
+// Lowercase-only because sha256 is case-sensitive: accepting upper would
+// let the same logical UUID derive two different encryption keys.
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
 class MissingSessionIdError extends Error {
   constructor() {
-    const cwd = process.env.CLAUDE_PROJECT_DIR
-    const cwdDiag = cwd
-      ? ` CLAUDE_PROJECT_DIR=${JSON.stringify(cwd)}` +
-        (cwd.startsWith('~') ? ' (literal tilde — likely unexpanded by the caller).' : '.')
-      : ' CLAUDE_PROJECT_DIR is unset.'
     super(
-      'No session UUID resolvable. Neither AIT_MCP_TEST_SESSION_ID is set ' +
-        'nor a Claude transcript file was found at ~/.claude/projects/<slug>/. ' +
-        'Production code paths discover the UUID from the transcript file; ' +
-        'test scripts and non-Claude-Code runners must set ' +
-        `AIT_MCP_TEST_SESSION_ID explicitly.${cwdDiag}`,
+      'No session UUID resolvable. AIT_MCP_TEST_SESSION_ID is not set and ' +
+        "CLAUDE_CODE_SESSION_ID is not in the MCP child's environment. " +
+        'Production code paths get the UUID from the Claude Code harness ' +
+        '(propagated to MCP children at spawn under v2.1.156+ — see ADR-0035). ' +
+        'Test scripts and non-Claude-Code runners must set ' +
+        'AIT_MCP_TEST_SESSION_ID explicitly.',
     )
     this.name = 'MissingSessionIdError'
   }
 }
 
-// Conversation UUIDs are 36-char dash-separated lowercase hex (RFC 4122).
-// Anything that does not match this shape — hidden dotfiles, editor swap
-// files, sidecar artifacts, future Claude tooling — is not a session UUID
-// and must not be used as an encryption key. Lowercase-only because the
-// harness writes lowercase and sha256 is case-sensitive: accepting upper
-// would let the same logical UUID derive two different keys.
-const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-const JSONL_EXT = '.jsonl'
-
-// Compute the harness's per-project directory name under ~/.claude/projects/.
-// Empirical rule (verified against two worktrees): replace each `/` and `.`
-// with `-`. Not invertible — we only need one-way derivation from a known
-// CWD. `realpathSync` normalizes symlinks (macOS `/tmp` → `/private/tmp`,
-// dotfile-managed setups) and strips trailing slashes. Returns null if
-// CLAUDE_PROJECT_DIR is unset or its target does not exist.
-function projectSlug(): string | null {
-  const cwd = process.env.CLAUDE_PROJECT_DIR
-  if (!cwd) return null
-  let real: string
-  try {
-    real = fs.realpathSync(cwd)
-  } catch {
-    return null
-  }
-  return real.replaceAll('/', '-').replaceAll('.', '-')
-}
-
-// Discover the conversation UUID by reading the newest-mtime *.jsonl in
-// the harness's per-project transcript directory whose basename matches
-// the UUID shape. Symlinks are rejected (lstat + isSymbolicLink) so an
-// attacker who can plant a file in the projects dir can't hijack the
-// resolver by pointing a UUID-named symlink at an arbitrary file.
-// Returns null if the directory or any qualifying file is absent.
-function uuidFromTranscript(): string | null {
-  const slug = projectSlug()
-  if (!slug) return null
-  const dir = path.join(os.homedir(), '.claude', 'projects', slug)
-  let entries: string[]
-  try {
-    entries = fs.readdirSync(dir)
-  } catch {
-    return null
-  }
-  let newestUuid: string | null = null
-  let newestMtime = -Infinity
-  for (const name of entries) {
-    if (!name.endsWith(JSONL_EXT)) continue
-    const stem = name.slice(0, -JSONL_EXT.length)
-    if (!UUID_SHAPE.test(stem)) continue
-    let stat: fs.Stats
-    try {
-      stat = fs.lstatSync(path.join(dir, name))
-    } catch {
-      continue
-    }
-    if (!stat.isFile()) continue // also rejects symlinks via lstat
-    if (stat.mtimeMs > newestMtime) {
-      newestMtime = stat.mtimeMs
-      newestUuid = stem
-    }
-  }
-  return newestUuid
-}
-
-// Two-step resolver: test override → transcript file. Resolved fresh per
-// identity call (no module-level memoization) so a wrong first pick can't
-// lock the process to the wrong UUID for its lifetime. Each public storage
-// function calls this once at entry and threads the UUID through. The
-// override is shape-validated the same way the transcript path is — an
-// asymmetric trust gap (transcript validated, override accepted verbatim)
-// would let a malformed test env var silently produce a stable-but-wrong
+// Two-source resolver: test override → harness env var. Resolved fresh per
+// identity call (no module-level memoization) so a transient env-var
+// absence between calls within an op can't lock the process to a wrong
+// UUID. Each public storage function calls this once at entry and threads
+// the UUID through. Both sources are shape-validated; an asymmetric trust
+// gap would let a malformed value silently produce a stable-but-wrong
 // identity file.
 function resolveSessionUuid(): string {
   const rawOverride = process.env.AIT_MCP_TEST_SESSION_ID
@@ -168,10 +102,13 @@ function resolveSessionUuid(): string {
           `(RFC 4122 lowercase 36-char hex). Got: ${JSON.stringify(rawOverride)}.`,
       )
     }
-    // Empty / whitespace-only override → fall through to transcript fallback.
+    // Empty / whitespace-only override → fall through to harness env var.
   }
-  const fromTranscript = uuidFromTranscript()
-  if (fromTranscript) return fromTranscript
+  const fromHarness = process.env.CLAUDE_CODE_SESSION_ID
+  if (fromHarness) {
+    const trimmed = fromHarness.trim()
+    if (UUID_SHAPE.test(trimmed)) return trimmed
+  }
   throw new MissingSessionIdError()
 }
 

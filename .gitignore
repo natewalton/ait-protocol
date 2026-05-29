@@ -33,6 +33,9 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Claude Code harness per-session state
+.claude/scheduled_tasks.json
+
 # Test coverage
 coverage/
 

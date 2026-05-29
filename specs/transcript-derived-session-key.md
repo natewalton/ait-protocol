@@ -2,7 +2,7 @@
 
 Restore `join` for cold-start and Claude Desktop sessions. ADR-0032's hard requirement that `CLAUDE_CODE_SESSION_ID` be present in the MCP child's environment fails in the current Claude Desktop 2.1.149 environment — the harness doesn't propagate the env var to MCP, only to per-Bash-tool shells. This spec replaces the env-var dependency with a lazy lookup against the harness's own per-session transcript filename, with a namespaced test-only override for non-Claude-Code runners. ADR-0033 records the architectural decision.
 
-Status: shipped (3a842eb), then **superseded 2026-05-29** by [ADR-0035](../decisions/0035-session-uuid-from-env-var.md) / `specs/session-uuid-env-var.md` (TODO) on the resolver-source question. The ADR-0033 transcript fallback was the right call against Claude Code 2.1.149's "harness doesn't propagate `CLAUDE_CODE_SESSION_ID` to MCP children" behavior; under 2.1.156 the harness now propagates it (verified via `ps -E` against both Desktop and CLI launchers), so the resolver reads the env var directly. The deferred multi-conversation-same-CWD collision listed under "Deferred from this spec" was the live failure that prompted re-opening the design.
+Status: shipped (3a842eb). Round 1 (env-var rename + transcript-fallback resolver + cold-start test) and Round 2 (review-driven hardening: drop memoization + thread UUID through derivedKey/identityPath, validate UUID shape, normalize CWD via realpathSync, reject symlinks via lstatSync, fix `join` error wrapping, docs hygiene) both landed in the same commit. Build-order section retained as a history record.
 
 ## Goal in one sentence
 

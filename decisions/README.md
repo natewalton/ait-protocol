@@ -38,5 +38,4 @@ Each ADR captures one architectural decision: the context that drove it, what we
 | 0030 | [MCP identity persistence per Claude project directory](0030-mcp-identity-persistence-per-project.md) | Superseded by 0032 |
 | 0031 | [PreToolUse Bash hook blocks session-side AIT-MCP bypass](0031-bash-hook-blocks-mcp-bypass.md) | Accepted |
 | 0032 | [Identity persistence keyed by CLAUDE_CODE_SESSION_ID, encrypted envelope](0032-session-key-via-claude-session-id.md) | Superseded by 0033 |
-| 0033 | [Session UUID discovered from harness transcript file](0033-session-uuid-from-transcript-file.md) | Superseded by 0035 |
-| 0035 | [Session UUID from CLAUDE_CODE_SESSION_ID env var (harness propagates under 2.1.156+)](0035-session-uuid-from-env-var.md) | Accepted |
+| 0033 | [Session UUID discovered from harness transcript file](0033-session-uuid-from-transcript-file.md) | Accepted |

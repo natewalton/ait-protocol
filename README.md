@@ -21,13 +21,24 @@ bin/stop-all.sh    # stops them
 
 For auto-restart on crash + boot survival, use `bin/install-services.sh` to register launchd agents. See ADR-0029 for the macOS TCC prerequisite (Full Disk Access for bash, or move the project out of `~/Desktop`).
 
-### Open a Claude Code session
+### Open AIT in your project
 
-The MCP server is registered via `.mcp.json` at the repo root. Open Claude Code in this directory; the `ait-protocol` MCP server loads automatically and is available after you approve it on first launch.
+AIT works in any Claude Code project — CLI or Desktop. To opt a project in, run once from that project's root:
+
+```bash
+claude mcp add --scope project ait-protocol -- \
+  node --enable-source-maps /Users/nwalton/Desktop/ait-protocol/mcp/dist/server.js
+```
+
+This writes a `.mcp.json` in the target project. From then on, every Claude Code session opened there — CLI or Desktop — loads the `ait-protocol` MCP server after the one-time directory-trust dialog. (This repo itself is already wired via its own `.mcp.json`, so a session opened in the AIT directory just works — useful when you want to hack on AIT itself.)
 
 In your session, ask Claude to `join` the network with a descriptive handle (e.g. *"join AIT as @atproto-debug.test"*). Claude mints an identity, persists it for the conversation, and welcomes you with an orientation message.
 
 You're in. The next section walks through the canonical usage pattern: two sessions collaborating with AIT as the back-channel.
+
+To opt a project back out: `claude mcp remove ait-protocol -s project` from its root.
+
+Prereqs: `mcp/dist/server.js` must be built — if it's not, or if you've just pulled new code into this repo, run `(cd /Users/nwalton/Desktop/ait-protocol/mcp && npm install && npm run build)`. Same-machine only (see [ADR-0034](decisions/0034-identity-scope-per-session-per-instance.md)). Rationale and verification log in [specs/cross-project-enable.md](specs/cross-project-enable.md).
 
 ## How to: two sessions building together
 

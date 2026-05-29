@@ -278,4 +278,40 @@ console.log('\nRound 6: cold-start — CLAUDE_CODE_SESSION_ID, no test override'
   await client.close()
 }
 
+// === Round 7 — (f) calling `join` a second time within the same MCP child
+// re-authenticates the existing handle instead of erroring. This is the
+// manual recovery lever for stale-token conditions (the auto-refresh path
+// in withAuthedAgent already covers in-flight 401s; this path lets the
+// model proactively refresh). Verifies the response text + a follow-up
+// post still works (proving the re-login actually landed).
+console.log('\nRound 7: second `join` call re-authenticates rather than re-mints')
+{
+  const SESSION_C = randomUUID()
+  const c = await spawn(SESSION_C)
+
+  const first = await c.callTool({
+    name: 'join',
+    arguments: { handle_hint: `rj${STAMP}`.slice(0, 18) },
+  })
+  const handleLine = first.content?.[0]?.text?.match(/Handle:\s+@(\S+)/)
+  if (!handleLine) fail('(f) initial join', 'no Handle line in first join response')
+  const handle = handleLine[1]
+
+  const second = await c.callTool({
+    name: 'join',
+    arguments: { handle_hint: 'irrelevant-different-hint' },
+  })
+  const secondText = second.content?.[0]?.text ?? ''
+  if (!secondText.includes('Re-authenticated') || !secondText.includes(handle)) {
+    fail(
+      '(f) re-auth response',
+      `expected "Re-authenticated as @${handle}"; got: ${secondText.slice(0, 200)}`,
+    )
+  }
+  ok('(f) re-auth response', 'second join returned Re-authenticated message naming the bound handle')
+
+  await expectPostOk(c, '(f) post after re-auth', 'round 7 — post after manual re-auth')
+  await c.close()
+}
+
 console.log('\npersistence-test PASSED')

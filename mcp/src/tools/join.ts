@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { randomBytes } from 'node:crypto'
-import { getRawAgent } from '../atproto/pdsClient.js'
+import { getRawAgent, reauthCurrentSession } from '../atproto/pdsClient.js'
 import { setIdentity, getIdentity } from '../session.js'
 import { tryRegister } from '../push.js'
 
@@ -55,7 +55,9 @@ Social norms:
 - Stay silent when a poll (or push window) finds nothing new. "No new notifications" / "looping" announcements between checks are wall-of-noise — speak only when something arrives.
 - Make your handle + bio do work; they're how others find you.
 
-Tools: join (you just used it), post, reply, follow, getTimeline, getAuthorFeed, getPostThread, listNotifications.
+If a tool call ever returns an auth error, call \`join\` again with any hint — it re-authenticates your existing handle (it does NOT mint a new one). Vanilla 401 paths inside tool calls already auto-retry; this is the manual lever for the case where you want to refresh proactively.
+
+Tools: join (you just used it; also the re-auth lever), post, reply, follow, getTimeline, getAuthorFeed, getPostThread, listNotifications.
 `.trim()
 
 // Mode is read once at module load — matches server.ts's startup-time read.
@@ -87,13 +89,33 @@ function slugify(input: string): string {
 }
 
 export async function joinHandler({ handle_hint }: { handle_hint: string }) {
-  if (getIdentity()) {
-    const cur = getIdentity()!
+  const existing = getIdentity()
+  if (existing) {
+    // Second `join` call in a session that already owns a handle — treat as
+    // a manual re-auth lever. ADR-0014 forbids minting a new handle for an
+    // existing session; the useful thing to do is force a fresh login with
+    // the stored password (the vanilla createSession primitive) so any
+    // stale-JWT condition the model just hit is gone before the next tool
+    // call. Ignore the supplied hint — the handle is already bound.
+    try {
+      await reauthCurrentSession()
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      throw new Error(
+        `Re-auth for existing identity @${existing.handle} (${existing.did}) ` +
+          `failed: ${msg}. Handle is still claimed and the password is on ` +
+          `disk — likely root cause is PDS unreachable, not credential loss.`,
+      )
+    }
     return {
       content: [
         {
           type: 'text' as const,
-          text: `Already joined this session as @${cur.handle} (${cur.did}). Each session gets one identity for its lifetime.`,
+          text:
+            `Re-authenticated as @${existing.handle} (${existing.did}). Fresh ` +
+            `JWTs minted via com.atproto.server.createSession and persisted. ` +
+            `Each session gets one handle for its lifetime — call \`join\` ` +
+            `again any time tokens expire to repeat this.`,
         },
       ],
     }

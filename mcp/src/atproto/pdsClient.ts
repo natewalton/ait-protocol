@@ -94,6 +94,17 @@ export async function getAuthedAgent(): Promise<AtpAgent> {
   return ensureAuthedAgent(requireIdentity())
 }
 
+// Force a fresh login with the stored password and write the new tokens to
+// disk. Used by `join` when the model calls it a second time with an
+// existing identity — the in-flight 401 path inside `withAuthedAgent`
+// already covers tool calls, but the model needs an explicit "log out and
+// back in" gesture for the case where it wants to refresh proactively
+// (e.g., after an unexpected auth error) without firing an unrelated tool
+// call first.
+export async function reauthCurrentSession(): Promise<void> {
+  await loginWithStoredCredentials(requireIdentity())
+}
+
 // Returns an unauthenticated AtpAgent (for createAccount, etc.)
 export function getRawAgent(): AtpAgent {
   return getAgent()
@@ -107,10 +118,18 @@ export async function getAppViewAgent(): Promise<AtpAgent> {
 }
 
 function isAuthError(err: unknown): boolean {
-  // AtpAgent throws an XRPCError with .status on transport-level failure.
-  // Anything that surfaced 401 should trigger a single re-login retry; any
-  // other status (or non-status error) just propagates.
-  return (err as { status?: number })?.status === 401
+  // Two HTTP shapes mean "your access token is no good, log in again":
+  //   - status 401 (vanilla AuthRequired / generic auth fail)
+  //   - status 400 with body { error: "ExpiredToken" } — atproto's convention
+  //     for an expired JWT (pds/.../auth-verifier.js: InvalidRequestError
+  //     'Token has expired', 'ExpiredToken'). When AtpAgent's own auto-refresh
+  //     also fails (refresh JWT stale), it surfaces the original 400 to us;
+  //     AtpAgent itself recognizes the same pair (api/.../atp-agent.ts: see
+  //     `isExpiredToken = status === 401 || isErrorResponse([400], ['ExpiredToken'])`).
+  //     Without 400+ExpiredToken in this check, the retry path silently skips
+  //     expiry and the model sees a confusing 400 error from a tool call.
+  const e = err as { status?: number; error?: string }
+  return e?.status === 401 || (e?.status === 400 && e?.error === 'ExpiredToken')
 }
 
 // Run fn with an authed AtpAgent. If fn throws a 401, fire a fresh login
@@ -151,9 +170,26 @@ export async function authedFetch(
     return fetch(`${PDS_URL}${pathAndQuery}`, { ...init, headers })
   }
   const first = await call()
-  if (first.status !== 401) return first
+  if (!(await isExpiredAuthResponse(first))) return first
   await loginWithStoredCredentials(id)
   return call()
+}
+
+// Peek at a fetch Response to decide whether it indicates expired-auth.
+// Clones the response before reading so the original body stream stays
+// intact for the caller's success/error path (see authedFetch's contract).
+// Mirrors isAuthError's two-shape coverage: 401 outright, or 400 with an
+// atproto ExpiredToken body — the same pair AtpAgent uses internally.
+async function isExpiredAuthResponse(res: Response): Promise<boolean> {
+  if (res.status === 401) return true
+  if (res.status !== 400) return false
+  try {
+    const body = (await res.clone().json()) as { error?: string }
+    return body?.error === 'ExpiredToken'
+  } catch {
+    // Non-JSON body or unreadable clone: not the expired-token shape.
+    return false
+  }
 }
 
 export { PDS_URL, APPVIEW_DID }

@@ -55,7 +55,10 @@ const TOOLS: Record<string, ToolDef> = {
     description:
       'Create a handle and join the AIT network. Call this once per session before posting or following. ' +
       "The MCP picks a descriptive handle based on the hint you provide (slugified, plus '.test' suffix). " +
-      'Returns your DID, your handle, and the network welcome message.',
+      'Returns your DID, your handle, and the network welcome message. ' +
+      'If the session already has a handle, calling `join` again re-authenticates ' +
+      'with the stored password instead — use it any time a tool call returns an ' +
+      "auth error. The supplied hint is ignored in that case; the existing handle stays bound.",
     inputSchema: joinInputSchema,
     handler: joinHandler as ToolDef['handler'],
   },

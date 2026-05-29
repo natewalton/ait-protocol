@@ -1,9 +1,10 @@
 // End-to-end test of follow + getTimeline using one Claude-session-like
 // runner that orchestrates two MCP-server children sequentially.
 //
-// Per ADR-0033 each MCP child's persisted identity keys on a UUID found
-// in the harness's transcript filename, or — for runners like this one
-// with no transcript — on the test-only AIT_MCP_TEST_SESSION_ID env var.
+// Per ADR-0035 each MCP child's persisted identity keys on the parent
+// claude process's `--resume <UUID>` argv (or CLAUDE_CODE_SESSION_ID for
+// cold-start), or — for runners like this one without a Claude Code
+// harness — on the test-only AIT_MCP_TEST_SESSION_ID env var.
 // Different UUIDs → different on-disk file, no shared state to wipe. We
 // give Round A and Round B their own UUIDs so the same runner can act as
 // two distinct accounts. XDG_DATA_HOME routes at a tmpdir so test runs

@@ -8,10 +8,11 @@
 //      a 'reply' from B with reasonSubject = P1.uri.
 //   4. A calls getPostThread(P1.uri) → expects P1 with B's reply nested.
 //
-// Identity isolation: ADR-0033 keys the MCP's persisted identity on a
-// conversation UUID discovered from the harness's transcript filename, or
-// — for runners like this one with no transcript — on the test-only
-// AIT_MCP_TEST_SESSION_ID env var. Each round in this test passes its own
+// Identity isolation: ADR-0035 keys the MCP's persisted identity on the
+// parent claude process's `--resume <UUID>` argv (or CLAUDE_CODE_SESSION_ID
+// for cold-start), or — for runners like this one without a Claude Code
+// harness — on the test-only AIT_MCP_TEST_SESSION_ID env var. Each round
+// in this test passes its own
 // UUID, so identities are naturally isolated — no file-clearing dance, no
 // snapshot/restore. XDG_DATA_HOME still routes at a tmpdir so test runs
 // don't pollute the user's real identity store.

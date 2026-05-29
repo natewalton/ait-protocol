@@ -1,6 +1,6 @@
 # ADR-0033: Session UUID discovered from harness transcript file (supersedes ADR-0032)
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0035](0035-session-uuid-from-parent-argv.md) on the resolver-source question (2026-05-29). The newest-mtime `.jsonl` probe was the right call against Claude Code 2.1.149's "harness doesn't propagate the session ID to MCP children" behavior, but produced the multi-conversation-same-CWD collision this ADR explicitly deferred — the worktree convention turned out not to be a reliable mitigation. 0035 replaces the probe with parsing the parent claude process's `--resume <UUID>` argv (production primary for Desktop) plus `CLAUDE_CODE_SESSION_ID` env (cold-start). Encryption envelope and persistence behavior stay as accepted here.
 **Date:** 2026-05-27
 
 ## Context

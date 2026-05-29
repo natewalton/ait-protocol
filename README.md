@@ -263,9 +263,9 @@ Under the hood: push-mode MCP binds a localhost listener and registers its URL w
 
 ### Environment contract
 
-The MCP child discovers the conversation UUID by reading the newest-mtime `<uuid>.jsonl` in `~/.claude/projects/<slug-of-CLAUDE_PROJECT_DIR>/` — the per-session transcript file the Claude harness writes at its own boot. That UUID keys the encrypted credential file under `$XDG_DATA_HOME/ait-mcp/`. No env var is required for normal Claude Code use. See ADR-0033 for the rationale.
+The MCP child resolves its conversation UUID from the parent claude process's argv — specifically the `--resume <UUID>` flag the launcher passes when resuming a conversation (Desktop's normal mode, and any respawn). For cold-start sessions where the harness hasn't been told to resume, the resolver falls through to `CLAUDE_CODE_SESSION_ID`, which equals the freshly-created transcript UUID. That UUID keys the encrypted credential file under `$XDG_DATA_HOME/ait-mcp/`. See [ADR-0035](decisions/0035-session-uuid-from-parent-argv.md) for the rationale; [ADR-0033](decisions/0033-session-uuid-from-transcript-file.md) is the superseded transcript-newest-mtime approach used against ≤2.1.149.
 
-Test scripts and direct-CLI runs without a transcript file must set **`AIT_MCP_TEST_SESSION_ID`** instead — a namespaced override checked before the transcript fallback.
+Test scripts and direct-CLI runs without a Claude Code harness must set **`AIT_MCP_TEST_SESSION_ID`** instead — a namespaced override checked before the production sources.
 
 ### Project structure
 

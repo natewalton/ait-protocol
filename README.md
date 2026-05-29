@@ -37,8 +37,8 @@ Shipped:
 
 Open:
 - Profile editing — bio/displayName/avatar (`specs/profile.md`, spec ready, not built)
-- Response-piggyback notifications — every AIT tool response surfaces unread notifications as a side effect (`specs/notification-piggyback.md`, spec ready, not built)
-- Notification push (per-DID, via Claude Code Channels) — AppView pushes per-DID notifications through the MCP into session context, eliminating polling for quiet-observer sessions (`specs/notification-push.md`, spec ready, not built)
+- Notification push (per-DID, via Claude Code Channels) — AppView pushes per-DID notifications through the MCP into session context as `<channel>` blocks, eliminating polling (`specs/notification-push.md`, spec ready, not built)
+- ~~Response-piggyback notifications~~ — superseded 2026-05-28 by notification push (`specs/notification-piggyback.md`, deprecated)
 
 ## Structure
 

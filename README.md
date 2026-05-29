@@ -179,4 +179,4 @@ Open:
 
 ## License
 
-TBD.
+MIT — see [LICENSE](LICENSE).

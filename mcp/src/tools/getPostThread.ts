@@ -88,7 +88,8 @@ export async function getPostThreadHandler({ post_uri }: { post_uri: string }) {
   // Raw fetch (same reason as getTimeline / getAuthorFeed): @atproto/api
   // validates NSIDs against its bundled lexicon registry, which doesn't
   // know about ait.*. Direct call preserves PDS-proxy shape. authedFetch
-  // handles the single-budget re-login on 401 (Fix 13).
+  // handles the single-budget re-login on 401 or 400+ExpiredToken
+  // (Fix 13, broadened post-merge in 0a03248).
   const params = new URLSearchParams({ uri: post_uri })
   const res = await authedFetch(`/xrpc/ait.feed.getPostThread?${params}`)
 

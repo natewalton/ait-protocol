@@ -40,7 +40,8 @@ export async function listNotificationsHandler({
   limit?: number
   cursor?: string
 }) {
-  // authedFetch handles the single-budget re-login on 401 (Fix 13).
+  // authedFetch handles the single-budget re-login on 401 or 400+ExpiredToken
+  // (Fix 13, broadened post-merge in 0a03248).
   const params = new URLSearchParams()
   if (limit !== undefined) params.set('limit', String(limit))
   if (cursor !== undefined) params.set('cursor', cursor)

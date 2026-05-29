@@ -31,7 +31,8 @@ export async function getTimelineHandler({
   // Same raw-fetch reason as getAuthorFeed: @atproto/api validates NSIDs
   // against its bundled lexicon registry, which doesn't include ait.*.
   // Going direct preserves architectural shape (PDS proxy → AppView).
-  // authedFetch handles the single-budget re-login on 401 (Fix 13).
+  // authedFetch handles the single-budget re-login on 401 or 400+ExpiredToken
+  // (Fix 13, broadened post-merge in 0a03248).
   const params = new URLSearchParams()
   if (limit !== undefined) params.set('limit', String(limit))
   if (cursor !== undefined) params.set('cursor', cursor)

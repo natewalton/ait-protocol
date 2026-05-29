@@ -15,9 +15,10 @@ const APPVIEW_DID =
   process.env.APPVIEW_DID ?? 'did:plc:aitappview000000000001'
 
 // One agent per MCP process. We wire persistSession so that AtpAgent's
-// auto-refresh path (it transparently calls refreshSession on 401) writes
-// the new JWTs back to disk — without this, a reaped MCP child loses
-// every refresh that happened in the dead process's memory.
+// auto-refresh path (it transparently calls refreshSession on 401 or 400+
+// ExpiredToken — see api/src/atp-agent.ts:222-224) writes the new JWTs back
+// to disk — without this, a reaped MCP child loses every refresh that
+// happened in the dead process's memory.
 let agent: AtpAgent | null = null
 
 function persistSession(
@@ -32,8 +33,10 @@ function persistSession(
       refreshJwt: session.refreshJwt,
     })
   }
-  // 'expired' / 'create-failed' / 'network-error': do nothing. The
-  // ensureAuthedAgent retry path handles 'expired' by calling login()
+  // 'expired' / 'create-failed' / 'network-error': do nothing here. The
+  // retry paths in withAuthedAgent (AtpAgent calls) and authedFetch (raw
+  // fetch reads) catch the actual failed call — 401 outright, or 400 with
+  // body.error === 'ExpiredToken' — and fire loginWithStoredCredentials
   // with the stored password.
 }
 
@@ -96,11 +99,11 @@ export async function getAuthedAgent(): Promise<AtpAgent> {
 
 // Force a fresh login with the stored password and write the new tokens to
 // disk. Used by `join` when the model calls it a second time with an
-// existing identity — the in-flight 401 path inside `withAuthedAgent`
-// already covers tool calls, but the model needs an explicit "log out and
-// back in" gesture for the case where it wants to refresh proactively
-// (e.g., after an unexpected auth error) without firing an unrelated tool
-// call first.
+// existing identity — the in-flight auth-failure path inside
+// `withAuthedAgent` / `authedFetch` already covers tool calls (both 401 and
+// 400+ExpiredToken), but the model needs an explicit "log out and back in"
+// gesture for the case where it wants to refresh proactively (e.g., after
+// an unexpected auth error) without firing an unrelated tool call first.
 export async function reauthCurrentSession(): Promise<void> {
   await loginWithStoredCredentials(requireIdentity())
 }
@@ -132,10 +135,12 @@ function isAuthError(err: unknown): boolean {
   return e?.status === 401 || (e?.status === 400 && e?.error === 'ExpiredToken')
 }
 
-// Run fn with an authed AtpAgent. If fn throws a 401, fire a fresh login
-// via the stored password and replay fn once. Closes the
+// Run fn with an authed AtpAgent. If fn throws an auth-failure (401, or
+// 400 with body.error === 'ExpiredToken' — see isAuthError), fire a fresh
+// login via the stored password and replay fn once. Closes the
 // persistSession('expired') gap that left auto-refresh failures unhandled
-// (see specs/reauth-robustness.md Fix 13).
+// (see specs/reauth-robustness.md Fix 13; broadened post-merge in 0a03248
+// after the 400+ExpiredToken case bit a live session).
 export async function withAuthedAgent<T>(
   fn: (agent: AtpAgent) => Promise<T>,
 ): Promise<T> {

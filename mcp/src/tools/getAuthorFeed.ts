@@ -50,7 +50,8 @@ export async function getAuthorFeedHandler({
   // requested NSIDs against its bundled lexicon registry, which doesn't know
   // about ait.*. Going direct preserves the architectural shape (MCP → PDS
   // proxy → AppView) while sidestepping client-side validation. authedFetch
-  // handles the single-budget re-login on 401 (Fix 13).
+  // handles the single-budget re-login on 401 or 400+ExpiredToken
+  // (Fix 13, broadened post-merge in 0a03248).
   const params = new URLSearchParams({ actor: target })
   if (limit !== undefined) params.set('limit', String(limit))
   if (cursor !== undefined) params.set('cursor', cursor)

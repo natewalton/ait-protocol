@@ -77,10 +77,77 @@ export function listNotifications(
   args.push(limit)
 
   const rows = db.prepare(query).all(...args) as NotificationRow[]
-  if (rows.length === 0) return { notifications: [] }
+  const notifications = hydrateNotifications(db, rows)
 
-  // Hydrate the triggering record. reply/mention point at posts;
-  // follow points at follows. Two batched lookups beat N+1.
+  const cursor =
+    rows.length === limit
+      ? encodeCursor(rows[rows.length - 1].createdAt, rows[rows.length - 1].uri)
+      : undefined
+
+  return { cursor, notifications }
+}
+
+// Fetch a single notification by (uri, recipientDid) and hydrate to the view
+// shape. Used by the push registry to POST live events to registered MCPs.
+// Returns null if the row was deleted between insert and lookup, or if the
+// author is inactive — push must agree with listNotifications on what's
+// visible, so the same active-actor filter is applied here.
+export function getNotificationByKey(
+  db: Db,
+  uri: string,
+  recipientDid: string,
+): NotificationView | null {
+  const row = db
+    .prepare(
+      `SELECT n.uri, n.cid, n.recipientDid, n.authorDid, n.reason,
+              n.reasonSubject, n.createdAt, n.indexedAt,
+              a.handle AS authorHandle
+       FROM notifications n
+       LEFT JOIN actors a ON a.did = n.authorDid
+       WHERE n.uri = ? AND n.recipientDid = ?
+         AND (a.active = 1 OR a.active IS NULL)`,
+    )
+    .get(uri, recipientDid) as NotificationRow | undefined
+  if (!row) return null
+  return hydrateNotifications(db, [row])[0] ?? null
+}
+
+// Notifications for `recipientDid` strictly newer than `since`, oldest first.
+// Used by registerPushTarget to replay events the MCP missed while detached.
+// Filter is on indexedAt — the AppView's monotonic write time — so the
+// MCP-side cursor (advanced from view.indexedAt on each push) and the
+// AppView's replay see the same time domain. record.createdAt is
+// sender-supplied wall clock and can be backdated, so using it would
+// silently lose backfilled notifications and re-deliver some already-seen.
+export function getNotificationsSince(
+  db: Db,
+  recipientDid: string,
+  since: string,
+): NotificationView[] {
+  const rows = db
+    .prepare(
+      `SELECT n.uri, n.cid, n.recipientDid, n.authorDid, n.reason,
+              n.reasonSubject, n.createdAt, n.indexedAt,
+              a.handle AS authorHandle
+       FROM notifications n
+       LEFT JOIN actors a ON a.did = n.authorDid
+       WHERE n.recipientDid = ?
+         AND n.indexedAt > ?
+         AND (a.active = 1 OR a.active IS NULL)
+       ORDER BY n.indexedAt ASC, n.uri ASC`,
+    )
+    .all(recipientDid, since) as NotificationRow[]
+  return hydrateNotifications(db, rows)
+}
+
+// Shared hydrator: rows → views with the triggering post/follow record
+// inlined. Two batched lookups beat N+1 even for the single-row callers.
+function hydrateNotifications(
+  db: Db,
+  rows: NotificationRow[],
+): NotificationView[] {
+  if (rows.length === 0) return []
+
   const postUris = rows
     .filter((r) => r.reason === 'reply' || r.reason === 'mention')
     .map((r) => r.uri)
@@ -112,7 +179,7 @@ export function listNotifications(
     for (const f of followRows) followsByUri.set(f.uri, f)
   }
 
-  const notifications: NotificationView[] = rows.map((r) => {
+  return rows.map((r) => {
     let record: unknown
     if (r.reason === 'follow') {
       const f = followsByUri.get(r.uri)
@@ -153,17 +220,10 @@ export function listNotifications(
       author: { did: r.authorDid, handle: r.authorHandle ?? '' },
       reason: r.reason,
       record,
-      isRead: false, // v1 always false, per spec
+      isRead: false,
       indexedAt: r.indexedAt,
     }
     if (r.reasonSubject) view.reasonSubject = r.reasonSubject
     return view
   })
-
-  const cursor =
-    rows.length === limit
-      ? encodeCursor(rows[rows.length - 1].createdAt, rows[rows.length - 1].uri)
-      : undefined
-
-  return { cursor, notifications }
 }

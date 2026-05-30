@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { getIdentity } from '../session.js'
-import { authedFetch } from '../atproto/pdsClient.js'
+import { appViewCall } from '../atproto/pdsClient.js'
 
 export const getAuthorFeedInputSchema = {
   actor: z
@@ -46,24 +46,13 @@ export async function getAuthorFeedHandler({
     )
   }
 
-  // We use raw fetch rather than the AtpAgent because @atproto/api validates
-  // requested NSIDs against its bundled lexicon registry, which doesn't know
-  // about ait.*. Going direct preserves the architectural shape (MCP → PDS
-  // proxy → AppView) while sidestepping client-side validation. authedFetch
-  // handles the single-budget re-login on 401 or 400+ExpiredToken
-  // (Fix 13, broadened post-merge in 0a03248).
-  const params = new URLSearchParams({ actor: target })
-  if (limit !== undefined) params.set('limit', String(limit))
-  if (cursor !== undefined) params.set('cursor', cursor)
+  const params: Record<string, unknown> = { actor: target }
+  if (limit !== undefined) params.limit = limit
+  if (cursor !== undefined) params.cursor = cursor
 
-  const res = await authedFetch(`/xrpc/ait.feed.getAuthorFeed?${params}`)
-
-  if (!res.ok) {
-    const body = await res.text()
-    throw new Error(`getAuthorFeed failed: ${res.status} ${body}`)
-  }
-
-  const data = (await res.json()) as FeedResult
+  const data = await appViewCall<FeedResult>('ait.feed.getAuthorFeed', {
+    params,
+  })
 
   const lines = data.feed.map((item) => {
     const p = item.post

@@ -1,0 +1,38 @@
+{
+  "lexicon": 1,
+  "id": "ait.notification.registerPushTarget",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Register a localhost URL where the AppView will POST notifications for the authenticated caller as they are indexed. If `since` is non-null, the AppView also replays every notification it has stored for this caller with `indexedAt > since` (oldest first) before returning. Re-registration overwrites the prior URL. Spec: specs/notification-push.md.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["url"],
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "Where to POST notifications. Must be of the form http://127.0.0.1:<port>/... (localhost only)."
+            },
+            "since": {
+              "type": "string",
+              "format": "datetime",
+              "description": "ISO timestamp. If provided, the AppView replays every notification for this caller with indexedAt > since before returning. Use the caller's last-seen-notification cursor on respawn; null on first registration."
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["status"],
+          "properties": {
+            "status": { "type": "string", "const": "ok" }
+          }
+        }
+      }
+    }
+  }
+}

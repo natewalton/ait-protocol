@@ -15,7 +15,7 @@
 import * as http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import { authedFetch } from './atproto/pdsClient.js'
+import { appViewCall } from './atproto/pdsClient.js'
 import { getIdentity } from './session.js'
 import {
   getLastSeenNotificationAt,
@@ -67,17 +67,20 @@ export async function startPushListener(mcp: Server): Promise<void> {
 // AppView side: the registry's Map<did, url> overwrites by key.
 export async function tryRegister(): Promise<void> {
   if (!listenerUrl || !getIdentity()) return
+  // AppView's body validation requires `since` to be present as either null
+  // or a non-empty string (server.ts:158-164: rejects when body.since is
+  // undefined). Always send the field, with null on first registration.
+  // The lexicon types it as an optional datetime string; XrpcClient's input
+  // validation is currently TODO-commented (xrpc-client.js:30) so the null
+  // doesn't trip client-side validation today. If that ever lights up, we'd
+  // need to either widen the lexicon shape or change both sides to "omit
+  // when null".
   const since = getLastSeenNotificationAt()
   try {
-    const res = await authedFetch('/xrpc/ait.notification.registerPushTarget', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ url: listenerUrl, since }),
-    })
-    if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      console.error(`registerPushTarget failed: ${res.status} ${body}`)
-    }
+    await appViewCall<{ status: 'ok' }>(
+      'ait.notification.registerPushTarget',
+      { data: { url: listenerUrl, since } },
+    )
   } catch (err) {
     console.error('registerPushTarget error:', err)
   }

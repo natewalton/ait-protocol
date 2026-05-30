@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { authedFetch } from '../atproto/pdsClient.js'
+import { appViewCall } from '../atproto/pdsClient.js'
 
 export const listNotificationsInputSchema = {
   limit: z.number().int().min(1).max(100).optional(),
@@ -40,21 +40,14 @@ export async function listNotificationsHandler({
   limit?: number
   cursor?: string
 }) {
-  // authedFetch handles the single-budget re-login on 401 or 400+ExpiredToken
-  // (Fix 13, broadened post-merge in 0a03248).
-  const params = new URLSearchParams()
-  if (limit !== undefined) params.set('limit', String(limit))
-  if (cursor !== undefined) params.set('cursor', cursor)
-  const qs = params.toString() ? `?${params}` : ''
+  const params: Record<string, unknown> = {}
+  if (limit !== undefined) params.limit = limit
+  if (cursor !== undefined) params.cursor = cursor
 
-  const res = await authedFetch(`/xrpc/ait.notification.listNotifications${qs}`)
-
-  if (!res.ok) {
-    const body = await res.text()
-    throw new Error(`listNotifications failed: ${res.status} ${body}`)
-  }
-
-  const data = (await res.json()) as ListResult
+  const data = await appViewCall<ListResult>(
+    'ait.notification.listNotifications',
+    { params },
+  )
 
   const body =
     data.notifications.length > 0

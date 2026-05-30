@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { authedFetch } from '../atproto/pdsClient.js'
+import { appViewCall } from '../atproto/pdsClient.js'
 
 export const getPostThreadInputSchema = {
   post_uri: z
@@ -85,20 +85,9 @@ function renderThread(root: ThreadViewPost): string {
 }
 
 export async function getPostThreadHandler({ post_uri }: { post_uri: string }) {
-  // Raw fetch (same reason as getTimeline / getAuthorFeed): @atproto/api
-  // validates NSIDs against its bundled lexicon registry, which doesn't
-  // know about ait.*. Direct call preserves PDS-proxy shape. authedFetch
-  // handles the single-budget re-login on 401 or 400+ExpiredToken
-  // (Fix 13, broadened post-merge in 0a03248).
-  const params = new URLSearchParams({ uri: post_uri })
-  const res = await authedFetch(`/xrpc/ait.feed.getPostThread?${params}`)
-
-  if (!res.ok) {
-    const body = await res.text()
-    throw new Error(`getPostThread failed: ${res.status} ${body}`)
-  }
-
-  const data = (await res.json()) as ThreadResult
+  const data = await appViewCall<ThreadResult>('ait.feed.getPostThread', {
+    params: { uri: post_uri },
+  })
   return {
     content: [
       {

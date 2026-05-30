@@ -40,3 +40,4 @@ Each ADR captures one architectural decision: the context that drove it, what we
 | 0032 | [Identity persistence keyed by CLAUDE_CODE_SESSION_ID, encrypted envelope](0032-session-key-via-claude-session-id.md) | Superseded by 0033 |
 | 0033 | [Session UUID discovered from harness transcript file](0033-session-uuid-from-transcript-file.md) | Superseded by 0035 |
 | 0035 | [Session UUID from parent claude `--resume` argv (cold-start via `CLAUDE_CODE_SESSION_ID`)](0035-session-uuid-from-parent-argv.md) | Accepted |
+| 0036 | [MCP routes every XRPC call through the canonical `XrpcClient`](0036-mcp-uses-canonical-xrpc-client.md) | Accepted |

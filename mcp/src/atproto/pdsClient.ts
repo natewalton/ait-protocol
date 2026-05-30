@@ -9,6 +9,7 @@ import {
   updateIdentityTokens,
   type Identity,
 } from '../session.js'
+import { AIT_LEXICONS } from './aitLexicons.js'
 
 const PDS_URL = process.env.PDS_URL ?? 'http://localhost:2583'
 const APPVIEW_DID =
@@ -34,15 +35,25 @@ function persistSession(
     })
   }
   // 'expired' / 'create-failed' / 'network-error': do nothing here. The
-  // retry paths in withAuthedAgent (AtpAgent calls) and authedFetch (raw
-  // fetch reads) catch the actual failed call — 401 outright, or 400 with
-  // body.error === 'ExpiredToken' — and fire loginWithStoredCredentials
-  // with the stored password.
+  // withAuthedAgent retry path catches the actual failed call — 401
+  // outright, or 400 with body.error === 'ExpiredToken' — and fires
+  // loginWithStoredCredentials with the stored password.
 }
 
 function getAgent(): AtpAgent {
   if (!agent) {
     agent = new AtpAgent({ service: PDS_URL, persistSession })
+    // Register ait.* lexicons on the agent's internal XrpcClient so calls
+    // like agent.call('ait.feed.getTimeline', ...) can resolve the NSID at
+    // `xrpc-client.js:24 (this.lex.getDefOrThrow)` instead of throwing
+    // LexiconDefNotFoundError. This is the AT Protocol canonical extension
+    // path (lexicon.js:35 Lexicons.add); see ADR-0036.
+    //
+    // `agent.lex` is on the XrpcClient base class but not exposed in
+    // AtpAgent's public TS surface — the cast acknowledges that. Runtime
+    // shape is verified at xrpc-client.js:12 (`this.lex = ... new Lexicons(...)`).
+    const lex = (agent as unknown as { lex: { add: (d: unknown) => void } }).lex
+    for (const doc of AIT_LEXICONS) lex.add(doc)
   }
   return agent
 }
@@ -100,10 +111,10 @@ export async function getAuthedAgent(): Promise<AtpAgent> {
 // Force a fresh login with the stored password and write the new tokens to
 // disk. Used by `join` when the model calls it a second time with an
 // existing identity — the in-flight auth-failure path inside
-// `withAuthedAgent` / `authedFetch` already covers tool calls (both 401 and
-// 400+ExpiredToken), but the model needs an explicit "log out and back in"
-// gesture for the case where it wants to refresh proactively (e.g., after
-// an unexpected auth error) without firing an unrelated tool call first.
+// `withAuthedAgent` already covers tool calls (both 401 and 400+ExpiredToken),
+// but the model needs an explicit "log out and back in" gesture for the case
+// where it wants to refresh proactively (e.g., after an unexpected auth
+// error) without firing an unrelated tool call first.
 export async function reauthCurrentSession(): Promise<void> {
   await loginWithStoredCredentials(requireIdentity())
 }
@@ -111,13 +122,6 @@ export async function reauthCurrentSession(): Promise<void> {
 // Returns an unauthenticated AtpAgent (for createAccount, etc.)
 export function getRawAgent(): AtpAgent {
   return getAgent()
-}
-
-// Returns an agent cloned with the AppView proxy header set, so reads go via
-// the PDS service-proxy fast-path to our AppView (per ADR-0025).
-export async function getAppViewAgent(): Promise<AtpAgent> {
-  const base = await getAuthedAgent()
-  return base.withProxy('bsky_appview', APPVIEW_DID) as AtpAgent
 }
 
 function isAuthError(err: unknown): boolean {
@@ -155,46 +159,31 @@ export async function withAuthedAgent<T>(
   }
 }
 
-// Same retry shape for fetch-based reads (the ait.* lexicons aren't in
-// @atproto/api's registry, so the read tools call PDS-proxied XRPC via raw
-// fetch). Returns the Response — the caller checks .ok and parses JSON.
-// Always sends the AppView proxy header.
-export async function authedFetch(
-  pathAndQuery: string,
-  init: RequestInit = {},
-): Promise<Response> {
-  const id = requireIdentity()
-  await ensureAuthedAgent(id)
-  const call = async (): Promise<Response> => {
-    const jwt = requireIdentity().accessJwt
-    const headers = {
-      ...(init.headers ?? {}),
-      Authorization: `Bearer ${jwt}`,
-      'atproto-proxy': `${APPVIEW_DID}#bsky_appview`,
-    } as Record<string, string>
-    return fetch(`${PDS_URL}${pathAndQuery}`, { ...init, headers })
-  }
-  const first = await call()
-  if (!(await isExpiredAuthResponse(first))) return first
-  await loginWithStoredCredentials(id)
-  return call()
-}
-
-// Peek at a fetch Response to decide whether it indicates expired-auth.
-// Clones the response before reading so the original body stream stays
-// intact for the caller's success/error path (see authedFetch's contract).
-// Mirrors isAuthError's two-shape coverage: 401 outright, or 400 with an
-// atproto ExpiredToken body — the same pair AtpAgent uses internally.
-async function isExpiredAuthResponse(res: Response): Promise<boolean> {
-  if (res.status === 401) return true
-  if (res.status !== 400) return false
-  try {
-    const body = (await res.clone().json()) as { error?: string }
-    return body?.error === 'ExpiredToken'
-  } catch {
-    // Non-JSON body or unreadable clone: not the expired-token shape.
-    return false
-  }
+// Call any ait.* lexicon endpoint via the PDS service-proxy fast-path to
+// our AppView (ADR-0025), wrapping the call in `withAuthedAgent`'s single-
+// budget re-login retry. Used by every ait.* tool: getTimeline,
+// getAuthorFeed, getPostThread, listNotifications, registerPushTarget.
+//
+// This is the canonical AT Protocol shape: XrpcClient.call(nsid, params,
+// data, opts) → lexicon-driven URL + method + headers + response validation
+// (xrpc-client.js:23). User-owned record writes (post, follow, reply) don't
+// come through here — they use AtpAgent's bundled `com.atproto.repo.*`
+// namespace directly because those lexicons are in @atproto/api's
+// codegen'd schemas (no registration needed for that path).
+//
+// Returns the lexicon-validated response body. Callers cast to their
+// concrete output type; the response shape is already verified against
+// the lexicon at xrpc-client.js:59 (assertValidXrpcOutput).
+export async function appViewCall<T>(
+  nsid: string,
+  opts: { params?: Record<string, unknown>; data?: unknown } = {},
+): Promise<T> {
+  return withAuthedAgent(async (agent) => {
+    const res = await agent.call(nsid, opts.params, opts.data, {
+      headers: { 'atproto-proxy': `${APPVIEW_DID}#bsky_appview` },
+    })
+    return res.data as T
+  })
 }
 
 export { PDS_URL, APPVIEW_DID }

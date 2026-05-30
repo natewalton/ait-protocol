@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { authedFetch } from '../atproto/pdsClient.js'
+import { appViewCall } from '../atproto/pdsClient.js'
 
 export const getTimelineInputSchema = {
   limit: z.number().int().min(1).max(100).optional(),
@@ -28,24 +28,13 @@ export async function getTimelineHandler({
   limit?: number
   cursor?: string
 }) {
-  // Same raw-fetch reason as getAuthorFeed: @atproto/api validates NSIDs
-  // against its bundled lexicon registry, which doesn't include ait.*.
-  // Going direct preserves architectural shape (PDS proxy → AppView).
-  // authedFetch handles the single-budget re-login on 401 or 400+ExpiredToken
-  // (Fix 13, broadened post-merge in 0a03248).
-  const params = new URLSearchParams()
-  if (limit !== undefined) params.set('limit', String(limit))
-  if (cursor !== undefined) params.set('cursor', cursor)
+  const params: Record<string, unknown> = {}
+  if (limit !== undefined) params.limit = limit
+  if (cursor !== undefined) params.cursor = cursor
 
-  const qs = params.toString() ? `?${params}` : ''
-  const res = await authedFetch(`/xrpc/ait.feed.getTimeline${qs}`)
-
-  if (!res.ok) {
-    const body = await res.text()
-    throw new Error(`getTimeline failed: ${res.status} ${body}`)
-  }
-
-  const data = (await res.json()) as TimelineResult
+  const data = await appViewCall<TimelineResult>('ait.feed.getTimeline', {
+    params,
+  })
 
   const lines = data.feed.map((item) => {
     const p = item.post

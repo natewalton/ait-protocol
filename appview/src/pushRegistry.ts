@@ -10,6 +10,7 @@
 // State is in-memory only. AppView restart clears the registry; MCPs
 // re-register on their next tool call or scheduled heartbeat.
 
+import type { IdResolver } from '@atproto/identity'
 import type { Db } from './db.js'
 import {
   getNotificationByKey,
@@ -41,6 +42,7 @@ export function isValidPushUrl(raw: string): boolean {
 // observable only via the registry state afterward.
 export async function registerAndReplay(
   db: Db,
+  idResolver: IdResolver,
   did: string,
   url: string,
   since: string | null,
@@ -49,7 +51,7 @@ export async function registerAndReplay(
 
   if (since == null) return
 
-  const backlog = getNotificationsSince(db, did, since)
+  const backlog = await getNotificationsSince(db, idResolver, did, since)
   for (const view of backlog) {
     const ok = await postNotification(url, view)
     if (!ok) {
@@ -61,17 +63,31 @@ export async function registerAndReplay(
 
 // Fire-and-forget push for a single freshly-inserted notification. Called
 // from the indexer right after insertNotification's row write. Cheap no-op
-// if the recipient has no live registration. On POST failure, drops the
-// registration so subsequent events for the same DID don't retry into a
-// dead URL.
-export function notifyInsert(db: Db, recipientDid: string, uri: string): void {
+// if the recipient has no live registration. On POST failure (or a thrown
+// hydration error — getNotificationByKey now hits IdResolver and can
+// reject), drops the registration so subsequent events for the same DID
+// don't retry into a dead URL.
+export function notifyInsert(
+  db: Db,
+  idResolver: IdResolver,
+  recipientDid: string,
+  uri: string,
+): void {
   const url = registry.get(recipientDid)
   if (!url) return
-  const view = getNotificationByKey(db, uri, recipientDid)
-  if (!view) return
-  void postNotification(url, view).then((ok) => {
-    if (!ok) registry.delete(recipientDid)
-  })
+  void (async () => {
+    try {
+      const view = await getNotificationByKey(db, idResolver, uri, recipientDid)
+      if (!view) return
+      const ok = await postNotification(url, view)
+      if (!ok) registry.delete(recipientDid)
+    } catch (err) {
+      console.error(
+        `notifyInsert ${recipientDid} ${uri}: ${err instanceof Error ? err.message : err}`,
+      )
+      registry.delete(recipientDid)
+    }
+  })()
 }
 
 // Test helpers — keep the registry inspectable from the smoke tests without

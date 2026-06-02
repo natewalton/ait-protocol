@@ -81,7 +81,7 @@ Same shape in [`appview/src/queries/listNotifications.ts:124-130`](../appview/sr
      : undefined,
    ```
 
-4. One-time backfill script (`appview/scripts/backfill-reply-cids.ts`) for posts that already have URIs but no CIDs: fetch each reply's parent via `agent.com.atproto.repo.getRecord` against the local PDS, populate the columns. Pattern mirrors [`backfill-handles.ts`](../appview/scripts/backfill-handles.ts).
+4. One-time backfill script (`appview/scripts/backfill-reply-cids.ts`) for posts that already have URIs but no CIDs: fetch each reply's parent via `agent.com.atproto.repo.getRecord` against the local PDS, populate the columns. Idempotent insert-or-skip per row.
 
 ### Fix 2 — Walk thread ancestors in `getPostThread`
 
@@ -376,5 +376,5 @@ Each fix lands with an assertion in the existing smoke scripts ([`mcp/scripts/sm
 
 - All fixes preserve the four-layer topology (PLC / PDS / AppView / MCP) and the end-client parity rule (ADR-0006). Nothing here adds an MCP god-mode surface.
 - Fix 7 is the only fix that meaningfully changes a trust boundary: the AppView stops trusting the network path and starts trusting the cryptographic signature. The firehose's `unauthenticatedCommits: true` posture is independent and stays — that's a "trust this one PDS's record stream" decision, separate from "trust the JWT this XRPC caller waved at me."
-- Fix 1's schema migration is the only one that requires touching existing rows. The backfill script handles legacy data; same pattern as [`backfill-handles.ts`](../appview/scripts/backfill-handles.ts).
+- Fix 1's schema migration is the only one that requires touching existing rows. The backfill script handles legacy data; same idempotent insert-or-skip pattern.
 - The combined effect: every endpoint that returns a `record` field now emits a record that round-trips its own lexicon; every endpoint that takes a viewer can prove who the viewer is; every paginated read is total.

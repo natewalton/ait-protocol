@@ -1,8 +1,13 @@
+import type { IdResolver } from '@atproto/identity'
 import type { Db } from '../db.js'
 import { decodeCursor, encodeCursor } from './cursor.js'
+import { hydrateHandle } from './hydrateActor.js'
 
+// ADR-0038: handle→DID resolution moved up to the handler. The query
+// itself only ever sees a DID — keeps the SQL clean and the lexicon-shape
+// independent of the schema.
 export interface AuthorFeedParams {
-  actor: string // DID or handle
+  did: string
   limit?: number
   cursor?: string
 }
@@ -20,26 +25,19 @@ export interface AuthorFeedResult {
   }>
 }
 
-export function getAuthorFeed(db: Db, params: AuthorFeedParams): AuthorFeedResult {
+export async function getAuthorFeed(
+  db: Db,
+  idResolver: IdResolver,
+  params: AuthorFeedParams,
+): Promise<AuthorFeedResult> {
   const limit = Math.min(Math.max(params.limit ?? 50, 1), 100)
+  const did = params.did
 
-  // Resolve actor (handle or DID) → DID
-  let did: string
-  if (params.actor.startsWith('did:')) {
-    did = params.actor
-  } else {
-    const row = db
-      .prepare('SELECT did FROM actors WHERE handle = ?')
-      .get(params.actor) as { did: string } | undefined
-    if (!row) return { feed: [] }
-    did = row.did
-  }
-
+  // active=0 is observable here even after dropping handle: the actors
+  // row still tracks active/status from #account events.
   const actor = db
-    .prepare('SELECT did, handle, active FROM actors WHERE did = ?')
-    .get(did) as
-    | { did: string; handle: string | null; active: number | null }
-    | undefined
+    .prepare('SELECT active FROM actors WHERE did = ?')
+    .get(did) as { active: number | null } | undefined
   if (actor && actor.active === 0) return { feed: [] }
 
   let query =
@@ -63,11 +61,15 @@ export function getAuthorFeed(db: Db, params: AuthorFeedParams): AuthorFeedResul
     indexedAt: string
   }>
 
+  // Single author — one hydrate is enough; the MemoryCache makes the
+  // second-and-later calls trivial.
+  const handle = await hydrateHandle(idResolver, did)
+
   const feed = rows.map((r) => ({
     post: {
       uri: r.uri,
       cid: r.cid,
-      author: { did: r.did, handle: actor?.handle ?? '' },
+      author: { did: r.did, handle },
       record: {
         $type: 'ait.feed.post',
         text: r.text,

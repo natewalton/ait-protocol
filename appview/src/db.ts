@@ -9,13 +9,10 @@ export function openDb(dbPath: string) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS actors (
       did       TEXT PRIMARY KEY,
-      handle    TEXT,
       active    INTEGER NOT NULL DEFAULT 1,
       status    TEXT,
       indexedAt TEXT NOT NULL
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS actors_by_handle
-      ON actors(handle) WHERE handle IS NOT NULL;
     CREATE TABLE IF NOT EXISTS posts (
       uri             TEXT PRIMARY KEY,
       cid             TEXT NOT NULL,
@@ -69,7 +66,22 @@ export function openDb(dbPath: string) {
     active: 'INTEGER NOT NULL DEFAULT 1',
     status: 'TEXT',
   })
+  dropHandleColumn(db)
   return db
+}
+
+// One-shot migration. Pre-spec `actors` carried a `handle` column maintained
+// from #identity events; ADR-0038 removes it because the AppView can't
+// always honor that claim after a cold restart. Idempotent — checks
+// table_info first, no-ops if already dropped. SQLite 3.35+ (shipped by
+// better-sqlite3 ≥11) supports ALTER TABLE … DROP COLUMN directly.
+function dropHandleColumn(db: Database.Database) {
+  const cols = db.pragma('table_info(actors)') as Array<{ name: string }>
+  if (!cols.some((c) => c.name === 'handle')) return
+  db.exec(`
+    DROP INDEX IF EXISTS actors_by_handle;
+    ALTER TABLE actors DROP COLUMN handle;
+  `)
 }
 
 function addMissingColumns(

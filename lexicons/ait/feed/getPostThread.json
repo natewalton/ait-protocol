@@ -5,6 +5,9 @@
     "main": {
       "type": "query",
       "description": "Get the full thread for a post: its ancestors back to the root and all of its descendants. Mirrors app.bsky.feed.getPostThread with a minimal output shape. No auth required — threads are public.",
+      "errors": [
+        { "name": "NotFound", "description": "The requested post is not indexed by this AppView." }
+      ],
       "parameters": {
         "type": "params",
         "required": ["uri"],

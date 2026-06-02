@@ -10,6 +10,7 @@
         "schema": {
           "type": "object",
           "required": ["url"],
+          "nullable": ["since"],
           "properties": {
             "url": {
               "type": "string",

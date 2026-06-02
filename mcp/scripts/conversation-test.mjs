@@ -204,11 +204,16 @@ await expectStatus(
   400,
 )
 
-// Fix 8: extra-suffix path must not match the route via prefix.
+// Fix 8: extra-suffix path must not match the route via prefix. The canonical
+// xrpc-server replies 501 MethodNotImplemented for any unknown NSID under
+// /xrpc/* (server.js's catchall → `next(new MethodNotImplementedError())`).
+// The hand-rolled server used to reply 404 NotFound here; ADR-0037 documents
+// that wire-shape change as one of the consequences of moving to canonical
+// dispatch.
 await expectStatus(
-  'fix8: /xrpc/ait.feed.getAuthorFeedExtra → 404',
+  'fix8: /xrpc/ait.feed.getAuthorFeedExtra → 501',
   `${APPVIEW_URL}/xrpc/ait.feed.getAuthorFeedExtra?actor=${encodeURIComponent(idA.did)}`,
-  404,
+  501,
 )
 
 // Fix 9: parser accepts at-uri fragments (records can't carry one, but the

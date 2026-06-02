@@ -1,6 +1,6 @@
 import type { Db } from './db.js'
 import type { Event, Create, Update } from '@atproto/sync'
-import { getHandle } from '@atproto/identity'
+import type { DidCache, IdResolver } from '@atproto/identity'
 import { AtUri } from '@atproto/syntax'
 import { notifyInsert } from './pushRegistry.js'
 
@@ -26,12 +26,24 @@ interface Facet {
   features?: FacetFeature[]
 }
 
-export function handleEvent(db: Db, evt: Event) {
+// idResolver is threaded through for push hydration: every freshly
+// inserted notification fires notifyInsert, which calls
+// getNotificationByKey, which needs the resolver to hydrate the author
+// handle. idCache is the same instance held inside idResolver — passed
+// separately because DidCache is the only typed public surface for
+// `clearEntry` (the resolver's internal cache field isn't part of the
+// public TS surface).
+export async function handleEvent(
+  db: Db,
+  evt: Event,
+  idResolver?: IdResolver,
+  idCache?: DidCache,
+): Promise<void> {
   if (evt.event === 'create' || evt.event === 'update') {
     if (evt.collection === 'ait.feed.post') {
-      indexPost(db, evt)
+      indexPost(db, evt, idResolver)
     } else if (evt.collection === 'ait.graph.follow') {
-      indexFollow(db, evt)
+      indexFollow(db, evt, idResolver)
     }
     return
   }
@@ -63,22 +75,11 @@ export function handleEvent(db: Db, evt: Event) {
     return
   }
   if (evt.event === 'identity') {
-    // We run @atproto/sync with `unauthenticatedHandles: true` because
-    // verifyHandle requires DNS / .well-known resolution that doesn't exist
-    // for our .test handles — so parseIdentity always returns evt.handle =
-    // undefined. The handle is still in evt.didDocument (PLC has the binding
-    // via alsoKnownAs); pull it from there via the canonical helper.
-    const handle = evt.handle ?? (evt.didDocument ? getHandle(evt.didDocument) : undefined)
-    // `handle.invalid` is the canonical sentinel for a broken DID↔handle
-    // binding (per the #identity lexicon). Treat it as no-handle: don't
-    // write it as if it were a real handle, but also don't clear an
-    // existing valid handle on the row.
-    if (handle && handle !== 'handle.invalid') {
-      db.prepare(
-        `INSERT INTO actors (did, handle, indexedAt) VALUES (?, ?, ?)
-         ON CONFLICT(did) DO UPDATE SET handle = excluded.handle, indexedAt = excluded.indexedAt`,
-      ).run(evt.did, handle, new Date().toISOString())
-    }
+    // ADR-0038: identity state is not maintained in SQLite — it's resolved
+    // lazily via IdResolver. An #identity event is a *signal* that the
+    // upstream identity layer's view of this DID has changed, so we drop
+    // the cached PLC doc; the next query for this DID resolves fresh.
+    await idCache?.clearEntry(evt.did)
     return
   }
 }
@@ -92,7 +93,7 @@ function repoDidFromUri(uri: string): string | null {
   }
 }
 
-function indexPost(db: Db, evt: Create | Update) {
+function indexPost(db: Db, evt: Create | Update, idResolver?: IdResolver) {
   const record = evt.record as {
     text?: string
     facets?: Facet[]
@@ -143,7 +144,7 @@ function indexPost(db: Db, evt: Create | Update) {
   if (replyParentUri) {
     const parentAuthor = repoDidFromUri(replyParentUri)
     if (parentAuthor && parentAuthor !== evt.did) {
-      insertNotification(db, {
+      insertNotification(db, idResolver, {
         uri,
         cid,
         recipientDid: parentAuthor,
@@ -173,7 +174,7 @@ function indexPost(db: Db, evt: Create | Update) {
       }
     }
     for (const recipient of mentioned) {
-      insertNotification(db, {
+      insertNotification(db, idResolver, {
         uri,
         cid,
         recipientDid: recipient,
@@ -198,7 +199,11 @@ interface NotificationRow {
   indexedAt: string
 }
 
-function insertNotification(db: Db, n: NotificationRow) {
+function insertNotification(
+  db: Db,
+  idResolver: IdResolver | undefined,
+  n: NotificationRow,
+) {
   // PK is (uri, recipientDid) — N mentioned recipients on one post produce
   // N rows. A single post that both replies-to and mentions the same
   // person collapses to one row (first write wins), which matches bsky
@@ -223,12 +228,12 @@ function insertNotification(db: Db, n: NotificationRow) {
   // The ON CONFLICT DO NOTHING path means we already pushed this event
   // earlier (or it collapsed with a reply+mention twin); double-pushing
   // would surface a duplicate <channel> block to the model.
-  if (info.changes > 0) {
-    notifyInsert(db, n.recipientDid, n.uri)
+  if (info.changes > 0 && idResolver) {
+    notifyInsert(db, idResolver, n.recipientDid, n.uri)
   }
 }
 
-function indexFollow(db: Db, evt: Create | Update) {
+function indexFollow(db: Db, evt: Create | Update, idResolver?: IdResolver) {
   const record = evt.record as { subject?: string; createdAt?: string }
   if (!record.subject) return // malformed; skip
   const now = new Date().toISOString()
@@ -256,7 +261,7 @@ function indexFollow(db: Db, evt: Create | Update) {
   // already rejected by the follow tool, but guard here too in case a
   // record sneaks in via a different write path.
   if (record.subject !== evt.did) {
-    insertNotification(db, {
+    insertNotification(db, idResolver, {
       uri,
       cid,
       recipientDid: record.subject,

@@ -1,5 +1,7 @@
+import type { IdResolver } from '@atproto/identity'
 import type { Db } from '../db.js'
 import { decodeCursor, encodeCursor } from './cursor.js'
+import { hydrateHandles } from './hydrateActor.js'
 
 export interface TimelineParams {
   viewer: string // DID
@@ -20,15 +22,17 @@ export interface TimelineResult {
   }>
 }
 
-export function getTimeline(db: Db, params: TimelineParams): TimelineResult {
+export async function getTimeline(
+  db: Db,
+  idResolver: IdResolver,
+  params: TimelineParams,
+): Promise<TimelineResult> {
   const limit = Math.min(Math.max(params.limit ?? 50, 1), 100)
 
-  // Posts authored by accounts the viewer follows, reverse-chrono.
-  // Join posts -> follows (where follows.did = viewer, follows.subject = posts.did)
-  // and posts -> actors (left join, since handle may be null).
+  // ADR-0038: the LEFT JOIN actors stays in place to gate on `a.active`,
+  // but `a.handle` is gone — handles come from hydrateActors below.
   let query = `
-    SELECT p.uri, p.cid, p.did, p.text, p.facets, p.createdAt, p.indexedAt,
-           a.handle
+    SELECT p.uri, p.cid, p.did, p.text, p.facets, p.createdAt, p.indexedAt
     FROM posts p
     JOIN follows f ON f.subject = p.did AND f.did = ?
     LEFT JOIN actors a ON a.did = p.did
@@ -51,14 +55,18 @@ export function getTimeline(db: Db, params: TimelineParams): TimelineResult {
     facets: string | null
     createdAt: string
     indexedAt: string
-    handle: string | null
   }>
+
+  const handles = await hydrateHandles(
+    idResolver,
+    rows.map((r) => r.did),
+  )
 
   const feed = rows.map((r) => ({
     post: {
       uri: r.uri,
       cid: r.cid,
-      author: { did: r.did, handle: r.handle ?? '' },
+      author: { did: r.did, handle: handles.get(r.did)! },
       record: {
         $type: 'ait.feed.post',
         text: r.text,

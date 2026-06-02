@@ -23,11 +23,30 @@ const db = openDb(join(tmp, 'test.sqlite'))
 const DID_A = 'did:plc:alice'
 const DID_AUTHOR = 'did:plc:bob'
 
-function seedActor(did, handle) {
+// Stub idResolver. ADR-0038 push hydration calls
+// idResolver.did.resolveAtprotoData(did) to fill in author.handle on each
+// pushed NotificationView. We're offline (no PLC reachable for the
+// placeholder DIDs above), so return a canned handle keyed by DID.
+const HANDLES = {
+  [DID_A]: 'alice.test',
+  [DID_AUTHOR]: 'bob.test',
+}
+const idResolver = {
+  did: {
+    resolveAtprotoData: async (did) => ({
+      did,
+      handle: HANDLES[did] ?? 'unknown.test',
+      signingKey: '',
+      pds: '',
+    }),
+  },
+}
+
+function seedActor(did) {
   db.prepare(
-    `INSERT INTO actors (did, handle, active, indexedAt) VALUES (?, ?, 1, ?)
-     ON CONFLICT(did) DO UPDATE SET handle = excluded.handle`,
-  ).run(did, handle, '2026-05-29T00:00:00.000Z')
+    `INSERT INTO actors (did, active, indexedAt) VALUES (?, 1, ?)
+     ON CONFLICT(did) DO NOTHING`,
+  ).run(did, '2026-05-29T00:00:00.000Z')
 }
 function seedPost(uri, did, text, createdAt) {
   db.prepare(
@@ -42,8 +61,8 @@ function seedNotification(uri, recipientDid, authorDid, createdAt) {
   ).run(uri, `cid-${uri}`, recipientDid, authorDid, uri, createdAt, createdAt)
 }
 
-seedActor(DID_AUTHOR, 'bob.test')
-seedActor(DID_A, 'alice.test')
+seedActor(DID_AUTHOR)
+seedActor(DID_A)
 
 // Tiny mock MCP listener. Records every POST body; can be set to fail on demand.
 let received = []
@@ -93,7 +112,7 @@ seedNotification('at://b/p/3', DID_A, DID_AUTHOR, '2026-05-29T12:00:00.000Z')
 
 received = []
 registry._clear()
-await registry.registerAndReplay(db, DID_A, URL_OK, '2026-05-29T10:30:00.000Z')
+await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, '2026-05-29T10:30:00.000Z')
 check('(b) replay delivered exactly 2 events', received.length === 2)
 check('(b) oldest first', received[0]?.uri === 'at://b/p/2' && received[1]?.uri === 'at://b/p/3')
 check('(b) registration still live', registry._registeredUrl(DID_A) === URL_OK)
@@ -101,7 +120,7 @@ check('(b) registration still live', registry._registeredUrl(DID_A) === URL_OK)
 // (c) since=null skips replay
 received = []
 registry._clear()
-await registry.registerAndReplay(db, DID_A, URL_OK, null)
+await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, null)
 check('(c) since=null delivers 0 events', received.length === 0)
 check('(c) registration live', registry._registeredUrl(DID_A) === URL_OK)
 
@@ -109,7 +128,7 @@ check('(c) registration live', registry._registeredUrl(DID_A) === URL_OK)
 received = []
 registry._clear()
 failNext = true
-await registry.registerAndReplay(db, DID_A, URL_OK, '2026-05-29T09:00:00.000Z')
+await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, '2026-05-29T09:00:00.000Z')
 failNext = false
 check('(d) replay attempted at least one POST', received.length >= 1)
 check('(d) registration removed after failure', registry._registeredUrl(DID_A) === undefined)
@@ -117,10 +136,10 @@ check('(d) registration removed after failure', registry._registeredUrl(DID_A) =
 // (e) notifyInsert pushes the freshly-inserted row
 received = []
 registry._clear()
-await registry.registerAndReplay(db, DID_A, URL_OK, null)
+await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, null)
 seedPost('at://b/p/4', DID_AUTHOR, 'four', '2026-05-29T13:00:00.000Z')
 seedNotification('at://b/p/4', DID_A, DID_AUTHOR, '2026-05-29T13:00:00.000Z')
-registry.notifyInsert(db, DID_A, 'at://b/p/4')
+registry.notifyInsert(db, idResolver, DID_A, 'at://b/p/4')
 await delay(100)
 check('(e) live push delivered 1 event', received.length === 1)
 check('(e) live push has expected uri', received[0]?.uri === 'at://b/p/4')
@@ -128,9 +147,9 @@ check('(e) live push has expected uri', received[0]?.uri === 'at://b/p/4')
 // (f) notifyInsert POST failure removes registration
 received = []
 registry._clear()
-await registry.registerAndReplay(db, DID_A, URL_OK, null)
+await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, null)
 failNext = true
-registry.notifyInsert(db, DID_A, 'at://b/p/4')
+registry.notifyInsert(db, idResolver, DID_A, 'at://b/p/4')
 await delay(100)
 failNext = false
 check('(f) live push attempted', received.length === 1)

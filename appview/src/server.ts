@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import { Firehose, MemoryRunner, type Event } from '@atproto/sync'
-import { IdResolver } from '@atproto/identity'
+import { IdResolver, MemoryCache } from '@atproto/identity'
 import {
   AuthRequiredError,
   InvalidRequestError,
@@ -16,12 +16,14 @@ import { getAuthorFeed } from './queries/getAuthorFeed.js'
 import { getTimeline } from './queries/getTimeline.js'
 import { getPostThread } from './queries/getPostThread.js'
 import { listNotifications } from './queries/listNotifications.js'
+import { resolveHandleViaPds } from './queries/resolveHandle.js'
 import { makeVerifyViewer } from './xrpc/auth.js'
 import { isValidPushUrl, registerAndReplay } from './pushRegistry.js'
 
 const PORT = parseInt(process.env.APPVIEW_PORT ?? '2585', 10)
 const DB_PATH = process.env.APPVIEW_DB_PATH ?? './data/appview.sqlite'
 const PDS_WS_URL = process.env.APPVIEW_PDS_WS_URL ?? 'ws://localhost:2583'
+const PDS_URL = process.env.APPVIEW_PDS_URL ?? 'http://localhost:2583'
 const PLC_URL = process.env.APPVIEW_PLC_URL ?? 'http://localhost:2582'
 const APPVIEW_DID = process.env.APPVIEW_DID
 if (!APPVIEW_DID) {
@@ -31,7 +33,13 @@ if (!APPVIEW_DID) {
 async function main() {
   const db = openDb(DB_PATH)
 
-  const idResolver = new IdResolver({ plcUrl: PLC_URL })
+  // ADR-0038: handle hydration moves from a maintained `actors.handle`
+  // column to a lazy `IdResolver` lookup at query time. The MemoryCache
+  // makes the steady-state case a hash-map hit; first-touch DIDs pay one
+  // PLC roundtrip. The same cache also accelerates JWT signature
+  // verification through `resolveAtprotoKey` for free.
+  const idCache = new MemoryCache()
+  const idResolver = new IdResolver({ plcUrl: PLC_URL, didCache: idCache })
   const verifyViewer = makeVerifyViewer(idResolver, APPVIEW_DID!)
 
   // Always subscribe from seq 0. Without a cursor, @atproto/sync's
@@ -52,7 +60,11 @@ async function main() {
     runner,
     handleEvent: async (evt: Event) => {
       try {
-        handleEvent(db, evt)
+        // idResolver carries the cache for #identity invalidation AND is
+        // needed for hydrating notification pushes; idCache passed
+        // explicitly because the resolver's internal cache field isn't
+        // part of the typed public surface.
+        await handleEvent(db, evt, idResolver, idCache)
       } catch (err) {
         console.error('indexer error:', err)
       }
@@ -104,7 +116,21 @@ async function main() {
     const actor = ctx.params.actor as string
     const limit = ctx.params.limit as number | undefined
     const cursor = ctx.params.cursor as string | undefined
-    const body = getAuthorFeed(db, { actor, limit, cursor })
+    // Handle→DID resolution lives at the handler boundary (ADR-0038): the
+    // PDS is canonical for .test handles and the lexicon takes
+    // at-identifier per ADR-0028's "stay canonical" rule. The query itself
+    // only ever sees a DID.
+    let did: string
+    if (actor.startsWith('did:')) {
+      did = actor
+    } else {
+      const resolved = await resolveHandleViaPds(PDS_URL, actor)
+      if (!resolved) {
+        return { encoding: 'application/json', body: { feed: [] } }
+      }
+      did = resolved
+    }
+    const body = await getAuthorFeed(db, idResolver, { did, limit, cursor })
     return { encoding: 'application/json', body }
   }
 
@@ -112,13 +138,13 @@ async function main() {
     const viewer = (ctx.auth as ViewerAuth).credentials.did
     const limit = ctx.params.limit as number | undefined
     const cursor = ctx.params.cursor as string | undefined
-    const body = getTimeline(db, { viewer, limit, cursor })
+    const body = await getTimeline(db, idResolver, { viewer, limit, cursor })
     return { encoding: 'application/json', body }
   }
 
   const getPostThreadHandler: XRPCHandler = async (ctx) => {
     const uri = ctx.params.uri as string
-    const result = getPostThread(db, { uri })
+    const result = await getPostThread(db, idResolver, { uri })
     if (!result) {
       // Canonical bsky-style "not found in this AppView": InvalidRequestError
       // carries a customErrorName which surfaces as the body's `error` field.
@@ -139,7 +165,7 @@ async function main() {
     const viewer = (ctx.auth as ViewerAuth).credentials.did
     const limit = ctx.params.limit as number | undefined
     const cursor = ctx.params.cursor as string | undefined
-    const body = listNotifications(db, { viewer, limit, cursor })
+    const body = await listNotifications(db, idResolver, { viewer, limit, cursor })
     return { encoding: 'application/json', body }
   }
 
@@ -162,7 +188,7 @@ async function main() {
     // undefined (omitted) or null collapses to null for registerAndReplay —
     // both mean "no backlog replay".
     const since = (input?.since as string | null | undefined) ?? null
-    await registerAndReplay(db, viewer, url, since)
+    await registerAndReplay(db, idResolver, viewer, url, since)
     return { encoding: 'application/json', body: { status: 'ok' as const } }
   }
 

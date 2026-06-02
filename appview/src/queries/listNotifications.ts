@@ -1,5 +1,7 @@
+import type { IdResolver } from '@atproto/identity'
 import type { Db } from '../db.js'
 import { decodeCursor, encodeCursor } from './cursor.js'
+import { hydrateHandles } from './hydrateActor.js'
 
 export interface ListNotificationsParams {
   viewer: string // DID
@@ -32,7 +34,6 @@ interface NotificationRow {
   reasonSubject: string | null
   createdAt: string
   indexedAt: string
-  authorHandle: string | null
 }
 
 interface PostRow {
@@ -52,20 +53,30 @@ interface FollowRow {
   createdAt: string
 }
 
-export function listNotifications(
+// ADR-0038: drop `a.handle` from each SELECT; keep the LEFT JOIN actors
+// solely as the gate for `a.active`. Handles are added by hydrateNotifications.
+const NOTIF_SELECT_COLS = `
+  n.uri, n.cid, n.recipientDid, n.authorDid, n.reason,
+  n.reasonSubject, n.createdAt, n.indexedAt
+`
+const NOTIF_FROM_WITH_ACTIVE = `
+  FROM notifications n
+  LEFT JOIN actors a ON a.did = n.authorDid
+`
+const ACTIVE_FILTER = '(a.active = 1 OR a.active IS NULL)'
+
+export async function listNotifications(
   db: Db,
+  idResolver: IdResolver,
   params: ListNotificationsParams,
-): ListNotificationsResult {
+): Promise<ListNotificationsResult> {
   const limit = Math.min(Math.max(params.limit ?? 50, 1), 100)
 
   let query = `
-    SELECT n.uri, n.cid, n.recipientDid, n.authorDid, n.reason,
-           n.reasonSubject, n.createdAt, n.indexedAt,
-           a.handle AS authorHandle
-    FROM notifications n
-    LEFT JOIN actors a ON a.did = n.authorDid
+    SELECT ${NOTIF_SELECT_COLS}
+    ${NOTIF_FROM_WITH_ACTIVE}
     WHERE n.recipientDid = ?
-      AND (a.active = 1 OR a.active IS NULL)
+      AND ${ACTIVE_FILTER}
   `
   const args: (string | number)[] = [params.viewer]
   if (params.cursor) {
@@ -77,7 +88,7 @@ export function listNotifications(
   args.push(limit)
 
   const rows = db.prepare(query).all(...args) as NotificationRow[]
-  const notifications = hydrateNotifications(db, rows)
+  const notifications = await hydrateNotifications(db, idResolver, rows)
 
   const cursor =
     rows.length === limit
@@ -92,24 +103,23 @@ export function listNotifications(
 // Returns null if the row was deleted between insert and lookup, or if the
 // author is inactive — push must agree with listNotifications on what's
 // visible, so the same active-actor filter is applied here.
-export function getNotificationByKey(
+export async function getNotificationByKey(
   db: Db,
+  idResolver: IdResolver,
   uri: string,
   recipientDid: string,
-): NotificationView | null {
+): Promise<NotificationView | null> {
   const row = db
     .prepare(
-      `SELECT n.uri, n.cid, n.recipientDid, n.authorDid, n.reason,
-              n.reasonSubject, n.createdAt, n.indexedAt,
-              a.handle AS authorHandle
-       FROM notifications n
-       LEFT JOIN actors a ON a.did = n.authorDid
+      `SELECT ${NOTIF_SELECT_COLS}
+       ${NOTIF_FROM_WITH_ACTIVE}
        WHERE n.uri = ? AND n.recipientDid = ?
-         AND (a.active = 1 OR a.active IS NULL)`,
+         AND ${ACTIVE_FILTER}`,
     )
     .get(uri, recipientDid) as NotificationRow | undefined
   if (!row) return null
-  return hydrateNotifications(db, [row])[0] ?? null
+  const views = await hydrateNotifications(db, idResolver, [row])
+  return views[0] ?? null
 }
 
 // Notifications for `recipientDid` strictly newer than `since`, oldest first.
@@ -119,33 +129,34 @@ export function getNotificationByKey(
 // AppView's replay see the same time domain. record.createdAt is
 // sender-supplied wall clock and can be backdated, so using it would
 // silently lose backfilled notifications and re-deliver some already-seen.
-export function getNotificationsSince(
+export async function getNotificationsSince(
   db: Db,
+  idResolver: IdResolver,
   recipientDid: string,
   since: string,
-): NotificationView[] {
+): Promise<NotificationView[]> {
   const rows = db
     .prepare(
-      `SELECT n.uri, n.cid, n.recipientDid, n.authorDid, n.reason,
-              n.reasonSubject, n.createdAt, n.indexedAt,
-              a.handle AS authorHandle
-       FROM notifications n
-       LEFT JOIN actors a ON a.did = n.authorDid
+      `SELECT ${NOTIF_SELECT_COLS}
+       ${NOTIF_FROM_WITH_ACTIVE}
        WHERE n.recipientDid = ?
          AND n.indexedAt > ?
-         AND (a.active = 1 OR a.active IS NULL)
+         AND ${ACTIVE_FILTER}
        ORDER BY n.indexedAt ASC, n.uri ASC`,
     )
     .all(recipientDid, since) as NotificationRow[]
-  return hydrateNotifications(db, rows)
+  return hydrateNotifications(db, idResolver, rows)
 }
 
 // Shared hydrator: rows → views with the triggering post/follow record
-// inlined. Two batched lookups beat N+1 even for the single-row callers.
-function hydrateNotifications(
+// inlined and the author handle resolved via IdResolver. Two batched
+// SQL lookups + one batched identity hydrate beat N+1 even for the
+// single-row callers.
+async function hydrateNotifications(
   db: Db,
+  idResolver: IdResolver,
   rows: NotificationRow[],
-): NotificationView[] {
+): Promise<NotificationView[]> {
   if (rows.length === 0) return []
 
   const postUris = rows
@@ -178,6 +189,11 @@ function hydrateNotifications(
       .all(...followUris) as FollowRow[]
     for (const f of followRows) followsByUri.set(f.uri, f)
   }
+
+  const handles = await hydrateHandles(
+    idResolver,
+    rows.map((r) => r.authorDid),
+  )
 
   return rows.map((r) => {
     let record: unknown
@@ -217,7 +233,7 @@ function hydrateNotifications(
     const view: NotificationView = {
       uri: r.uri,
       cid: r.cid,
-      author: { did: r.authorDid, handle: r.authorHandle ?? '' },
+      author: { did: r.authorDid, handle: handles.get(r.authorDid)! },
       reason: r.reason,
       record,
       isRead: false,

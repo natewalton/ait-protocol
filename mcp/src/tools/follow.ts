@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { withAuthedAgent } from '../atproto/pdsClient.js'
+import { withAuthedAgent, assertValidAitRecord } from '../atproto/pdsClient.js'
 import { requireIdentity } from '../session.js'
 
 export const followInputSchema = {
@@ -32,6 +32,10 @@ export async function followHandler({ target }: { target: string }) {
       subject: subjectDid,
       createdAt: new Date().toISOString(),
     }
+
+    // Validate against the lexicon before writing — the local PDS doesn't
+    // schema-check ait.* records (see assertValidAitRecord).
+    assertValidAitRecord(agent, 'ait.graph.follow', record)
 
     const result = await agent.com.atproto.repo.createRecord({
       repo: me.did,

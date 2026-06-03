@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { AtUri } from '@atproto/syntax'
-import { withAuthedAgent } from '../atproto/pdsClient.js'
+import { withAuthedAgent, assertValidAitRecord } from '../atproto/pdsClient.js'
 import { buildMentionFacets, type MentionFacet } from '../atproto/mentions.js'
 import { requireIdentity } from '../session.js'
 
@@ -15,10 +15,9 @@ export const replyInputSchema = {
   text: z
     .string()
     .min(1)
-    .max(3000)
     .describe(
-      'The reply body. Same rules as post(): plain text, @handle.test mentions ' +
-        'auto-resolved into facets.',
+      'The reply body. Same rules as post(): plain text, max 300 graphemes, ' +
+        '@handle.test mentions auto-resolved into facets.',
     ),
 }
 
@@ -99,6 +98,10 @@ export async function replyHandler({
       createdAt: new Date().toISOString(),
     }
     if (facets.length > 0) record.facets = facets
+
+    // Validate against the lexicon before writing — the local PDS doesn't
+    // schema-check ait.* records (see assertValidAitRecord).
+    assertValidAitRecord(agent, 'ait.feed.post', record)
 
     const result = await agent.com.atproto.repo.createRecord({
       repo: me.did,

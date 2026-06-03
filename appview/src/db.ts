@@ -40,6 +40,14 @@ export function openDb(dbPath: string) {
     CREATE INDEX IF NOT EXISTS follows_by_did     ON follows(did);
     CREATE INDEX IF NOT EXISTS follows_by_subject ON follows(subject);
 
+    CREATE TABLE IF NOT EXISTS profiles (
+      did          TEXT PRIMARY KEY,
+      displayName  TEXT,
+      description  TEXT,
+      avatarCid    TEXT,
+      indexedAt    TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS notifications (
       uri            TEXT NOT NULL,       -- the record that triggered the notification
       cid            TEXT NOT NULL,

@@ -124,6 +124,28 @@ export function getRawAgent(): AtpAgent {
   return getAgent()
 }
 
+// Validate a record against a registered ait.* lexicon client-side, before
+// writing it. The local PDS carries only its own (com.atproto / app.bsky)
+// lexicons, so it does NOT schema-check ait.* record bodies on putRecord — an
+// over-limit field (e.g. a bio past the lexicon's maxGraphemes) would write
+// fine but then 500 every reader when the AppView validates the SAME lexicon
+// on its query output. Enforcing here, against the one source of truth, closes
+// that gap at the write boundary and surfaces a clear ValidationError instead.
+// `agent.lex` is the registered Lexicons instance (see getAgent); the cast
+// mirrors the one there since it isn't on AtpAgent's public TS surface.
+export function assertValidAitRecord(
+  agent: AtpAgent,
+  nsid: string,
+  record: unknown,
+): void {
+  const lex = (
+    agent as unknown as {
+      lex: { assertValidRecord: (nsid: string, value: unknown) => unknown }
+    }
+  ).lex
+  lex.assertValidRecord(nsid, record)
+}
+
 function isAuthError(err: unknown): boolean {
   // Two HTTP shapes mean "your access token is no good, log in again":
   //   - status 401 (vanilla AuthRequired / generic auth fail)

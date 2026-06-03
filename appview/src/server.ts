@@ -13,10 +13,11 @@ import { AIT_LEXICONS } from './aitLexicons.js'
 import { openDb } from './db.js'
 import { handleEvent } from './indexer.js'
 import { getAuthorFeed } from './queries/getAuthorFeed.js'
+import { getProfile } from './queries/getProfile.js'
 import { getTimeline } from './queries/getTimeline.js'
 import { getPostThread } from './queries/getPostThread.js'
 import { listNotifications } from './queries/listNotifications.js'
-import { resolveHandleViaPds } from './queries/resolveHandle.js'
+import { resolveActorToDid } from './queries/resolveHandle.js'
 import { makeVerifyViewer } from './xrpc/auth.js'
 import { isValidPushUrl, registerAndReplay } from './pushRegistry.js'
 
@@ -73,7 +74,7 @@ async function main() {
       const cause = (err as Error & { cause?: unknown }).cause
       console.error('firehose error:', err.message, cause instanceof Error ? cause.message : cause)
     },
-    filterCollections: ['ait.feed.post', 'ait.graph.follow'],
+    filterCollections: ['ait.feed.post', 'ait.graph.follow', 'ait.actor.profile'],
     unauthenticatedCommits: true,
     unauthenticatedHandles: true,
   })
@@ -112,26 +113,32 @@ async function main() {
 
   type ViewerAuth = { credentials: { did: string } }
 
+  // Handle→DID resolution lives at the handler boundary (ADR-0038): the PDS is
+  // canonical for .test handles and the lexicon takes at-identifier per
+  // ADR-0028's "stay canonical" rule. The queries only ever see a DID.
   const getAuthorFeedHandler: XRPCHandler = async (ctx) => {
     const actor = ctx.params.actor as string
     const limit = ctx.params.limit as number | undefined
     const cursor = ctx.params.cursor as string | undefined
-    // Handle→DID resolution lives at the handler boundary (ADR-0038): the
-    // PDS is canonical for .test handles and the lexicon takes
-    // at-identifier per ADR-0028's "stay canonical" rule. The query itself
-    // only ever sees a DID.
-    let did: string
-    if (actor.startsWith('did:')) {
-      did = actor
-    } else {
-      const resolved = await resolveHandleViaPds(PDS_URL, actor)
-      if (!resolved) {
-        return { encoding: 'application/json', body: { feed: [] } }
-      }
-      did = resolved
+    const did = await resolveActorToDid(PDS_URL, actor)
+    if (!did) {
+      return { encoding: 'application/json', body: { feed: [] } }
     }
     const body = await getAuthorFeed(db, idResolver, { did, limit, cursor })
     return { encoding: 'application/json', body }
+  }
+
+  const getProfileHandler: XRPCHandler = async (ctx) => {
+    const actor = ctx.params.actor as string
+    // An unresolvable handle is ProfileNotFound (declared in the lexicon). A
+    // DID that resolves to no identity surfaces from getProfile as a 5xx,
+    // matching getAuthorFeed/getTimeline — we don't mask resolver outages.
+    const did = await resolveActorToDid(PDS_URL, actor)
+    if (!did) {
+      throw new InvalidRequestError('profile not found', 'ProfileNotFound')
+    }
+    const profile = await getProfile(db, idResolver, { did, pdsUrl: PDS_URL })
+    return { encoding: 'application/json', body: profile }
   }
 
   const getTimelineHandler: XRPCHandler = async (ctx) => {
@@ -193,6 +200,10 @@ async function main() {
   }
 
   xrpc.method('ait.feed.getAuthorFeed', getAuthorFeedHandler)
+  xrpc.method('ait.actor.getProfile', {
+    auth: viewerAuth,
+    handler: getProfileHandler,
+  })
   xrpc.method('ait.feed.getTimeline', {
     auth: viewerAuth,
     handler: getTimelineHandler,

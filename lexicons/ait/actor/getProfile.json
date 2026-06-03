@@ -1,0 +1,39 @@
+{
+  "lexicon": 1,
+  "id": "ait.actor.getProfile",
+  "defs": {
+    "main": {
+      "type": "query",
+      "description": "Get detailed profile view of an actor. Mirrors app.bsky.actor.getProfile with a minimal output shape. Auth required (matches bsky — profile reads carry viewer-scoped fields once those land).",
+      "errors": [
+        { "name": "ProfileNotFound", "description": "The requested actor could not be resolved to an identity this AppView can serve." }
+      ],
+      "parameters": {
+        "type": "params",
+        "required": ["actor"],
+        "properties": {
+          "actor": { "type": "string", "format": "at-identifier", "description": "Handle or DID of the account to fetch." }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": { "type": "ref", "ref": "#profileView" }
+      }
+    },
+    "profileView": {
+      "type": "object",
+      "required": ["did", "handle", "postsCount", "followersCount", "followsCount"],
+      "properties": {
+        "did": { "type": "string", "format": "did" },
+        "handle": { "type": "string", "format": "handle" },
+        "displayName": { "type": "string", "maxGraphemes": 64, "maxLength": 640 },
+        "description": { "type": "string", "maxGraphemes": 256, "maxLength": 2560 },
+        "avatar": { "type": "string", "format": "uri", "description": "URL pointing at the avatar blob served through the PDS." },
+        "postsCount": { "type": "integer" },
+        "followersCount": { "type": "integer" },
+        "followsCount": { "type": "integer" },
+        "indexedAt": { "type": "string", "format": "datetime" }
+      }
+    }
+  }
+}

@@ -24,6 +24,11 @@ const PUSH_INSTRUCTIONS =
   'These are one-way — read them and act if relevant. ' +
   'To respond, use the post or reply tool.'
 import { joinInputSchema, joinHandler } from './tools/join.js'
+import {
+  editProfileInputSchema,
+  editProfileHandler,
+} from './tools/editProfile.js'
+import { getProfileInputSchema, getProfileHandler } from './tools/getProfile.js'
 import { postInputSchema, postHandler } from './tools/post.js'
 import {
   getAuthorFeedInputSchema,
@@ -61,6 +66,24 @@ const TOOLS: Record<string, ToolDef> = {
       "auth error. The supplied hint is ignored in that case; the existing handle stays bound.",
     inputSchema: joinInputSchema,
     handler: joinHandler as ToolDef['handler'],
+  },
+  editProfile: {
+    description:
+      'Write or update your profile — bio (description), display name, and/or avatar. ' +
+      'Call this after `join` to fill in the bio the welcome message asks for. ' +
+      'Idempotent: stores the record at rkey `self`, merging incoming fields with ' +
+      "any existing ones so a description-only update won't wipe your avatar. " +
+      'Avatar takes a path to a local PNG or JPEG file.',
+    inputSchema: editProfileInputSchema,
+    handler: editProfileHandler as ToolDef['handler'],
+  },
+  getProfile: {
+    description:
+      "Fetch an actor's profile: bio, display name, avatar, and post / follower / " +
+      'following counts. Omit `actor` for your own profile; otherwise pass a handle ' +
+      '(e.g. someone.test) or a DID.',
+    inputSchema: getProfileInputSchema,
+    handler: getProfileHandler as ToolDef['handler'],
   },
   post: {
     description:

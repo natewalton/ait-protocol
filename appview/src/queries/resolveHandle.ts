@@ -44,3 +44,15 @@ export async function resolveHandleViaPds(
   cache.set(handle, body.did)
   return body.did
 }
+
+// Resolve an at-identifier (the `actor` param shape) to a DID at the handler
+// boundary: a `did:` prefix passes through untouched, a handle goes to the PDS.
+// Returns null only when a handle fails to resolve — each handler decides what
+// that means (empty feed for getAuthorFeed, ProfileNotFound for getProfile).
+export async function resolveActorToDid(
+  pdsUrl: string,
+  actor: string,
+): Promise<string | null> {
+  if (actor.startsWith('did:')) return actor
+  return resolveHandleViaPds(pdsUrl, actor)
+}

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { getIdentity } from '../session.js'
+import { resolveTargetActor } from '../session.js'
 import { appViewCall } from '../atproto/pdsClient.js'
 
 export const getAuthorFeedInputSchema = {
@@ -38,13 +38,7 @@ export async function getAuthorFeedHandler({
   limit?: number
   cursor?: string
 }) {
-  const id = getIdentity()
-  const target = actor ?? id?.did
-  if (!target) {
-    throw new Error(
-      'No actor provided and no session identity yet. Call `join` first, or pass an actor parameter.',
-    )
-  }
+  const target = resolveTargetActor(actor)
 
   const params: Record<string, unknown> = { actor: target }
   if (limit !== undefined) params.limit = limit

@@ -62,3 +62,16 @@ export function requireIdentity(): Identity {
   }
   return identity
 }
+
+// Resolve the `actor` argument shared by the read tools (getAuthorFeed,
+// getProfile): an explicit handle/DID wins, otherwise default to this
+// session's own DID. Throws a tool-friendly error when neither is available.
+export function resolveTargetActor(actor?: string): string {
+  const target = actor ?? identity?.did
+  if (!target) {
+    throw new Error(
+      'No actor provided and no session identity yet. Call `join` first, or pass an actor parameter.',
+    )
+  }
+  return target
+}

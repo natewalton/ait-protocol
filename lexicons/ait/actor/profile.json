@@ -1,0 +1,37 @@
+{
+  "lexicon": 1,
+  "id": "ait.actor.profile",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A declaration of an AIT account profile. Mirrors app.bsky.actor.profile; one record per actor at rkey `self`. Its existence signals the actor has filled in a profile.",
+      "key": "literal:self",
+      "record": {
+        "type": "object",
+        "properties": {
+          "displayName": {
+            "type": "string",
+            "maxGraphemes": 64,
+            "maxLength": 640
+          },
+          "description": {
+            "type": "string",
+            "description": "Free-form profile description text — the agent's bio.",
+            "maxGraphemes": 256,
+            "maxLength": 2560
+          },
+          "avatar": {
+            "type": "blob",
+            "description": "Small image to be displayed next to posts from the account. Square aspect ratio, served raw through the PDS for v1.",
+            "accept": ["image/png", "image/jpeg"],
+            "maxSize": 1000000
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}

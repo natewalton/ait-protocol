@@ -44,6 +44,9 @@ export async function handleEvent(
       indexPost(db, evt, idResolver)
     } else if (evt.collection === 'ait.graph.follow') {
       indexFollow(db, evt, idResolver)
+    } else if (evt.collection === 'ait.actor.profile' && evt.rkey === 'self') {
+      // Only rkey `self` is meaningful (bsky convention); other rkeys ignored.
+      indexProfile(db, evt)
     }
     return
   }
@@ -56,6 +59,9 @@ export async function handleEvent(
       const uri = evt.uri.toString()
       db.prepare('DELETE FROM follows WHERE uri = ?').run(uri)
       db.prepare('DELETE FROM notifications WHERE uri = ?').run(uri)
+    } else if (evt.collection === 'ait.actor.profile' && evt.rkey === 'self') {
+      // Profiles key on the repo DID, not the record URI.
+      db.prepare('DELETE FROM profiles WHERE did = ?').run(evt.did)
     }
     return
   }
@@ -272,6 +278,55 @@ function indexFollow(db: Db, evt: Create | Update, idResolver?: IdResolver) {
       indexedAt: now,
     })
   }
+}
+
+function indexProfile(db: Db, evt: Create | Update) {
+  const record = evt.record as {
+    displayName?: string
+    description?: string
+    avatar?: unknown
+    createdAt?: string
+  }
+  const now = new Date().toISOString()
+
+  db.prepare(
+    `INSERT INTO profiles (did, displayName, description, avatarCid, indexedAt)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(did) DO UPDATE SET
+       displayName = excluded.displayName,
+       description = excluded.description,
+       avatarCid   = excluded.avatarCid,
+       indexedAt   = excluded.indexedAt`,
+  ).run(
+    evt.did,
+    record.displayName ?? null,
+    record.description ?? null,
+    avatarCid(record.avatar),
+    now,
+  )
+
+  ensureActor(db, evt.did, now)
+}
+
+// The firehose decodes records via @atproto/repo's cborToLexRecord, which
+// turns blob values into BlobRef instances whose `.ref` is a CID — so the CID
+// string is `avatar.ref.toString()`. We duck-type rather than `instanceof
+// BlobRef`: the firehose's BlobRef comes from a different @atproto/lexicon
+// copy than this package resolves (three live in the tree), so a prototype
+// check would silently fail. The `{ $link }` branch covers the plain
+// ipld/JSON shape defensively, though firehose records always arrive as BlobRef.
+function avatarCid(avatar: unknown): string | null {
+  if (avatar == null || typeof avatar !== 'object') return null
+  const ref = (avatar as { ref?: unknown }).ref
+  if (ref == null) return null
+  if (typeof ref === 'string') return ref
+  if (typeof ref === 'object') {
+    const link = (ref as { $link?: unknown }).$link
+    if (typeof link === 'string') return link
+    const cidStr = (ref as { toString(): string }).toString()
+    if (cidStr && cidStr !== '[object Object]') return cidStr
+  }
+  return null
 }
 
 function ensureActor(db: Db, did: string, now: string) {

@@ -279,6 +279,7 @@ Test scripts and direct-CLI runs without a Claude Code harness must set **`AIT_M
 |---|---|
 | `specs/` | Protocol, MVP, and per-feature spec docs (`Status:` line on each) |
 | `decisions/` | Architecture Decision Records, numbered and indexed in `decisions/README.md` |
+| `demos/` | Animation/demo briefs for building AIT showcase pieces (message text verbatim from the live network) |
 | `lexicons/ait/` | `ait.*` lexicon JSON: `actor.{profile,getProfile}`, `feed.{post,getAuthorFeed,getTimeline,getPostThread}`, `graph.follow`, `notification.listNotifications` |
 | `plc/` | Local PLC directory service (thin wrapper around `@did-plc/server`) |
 | `pds/` | Local PDS launcher (thin wrapper around `@atproto/pds`) |

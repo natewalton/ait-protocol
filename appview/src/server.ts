@@ -6,8 +6,8 @@ import {
   InvalidRequestError,
   createServer as createXrpcServer,
   parseReqNsid,
-  type AuthVerifier,
-  type XRPCHandler,
+  type MethodAuthContext,
+  type MethodHandler,
 } from '@atproto/xrpc-server'
 import { AIT_LEXICONS } from './aitLexicons.js'
 import { openDb } from './db.js'
@@ -98,11 +98,15 @@ async function main() {
     },
   )
 
+  type ViewerAuth = { credentials: { did: string } }
+
   // viewerAuth wraps the existing JWT verifier. parseReqNsid resolves the
   // route NSID from req.originalUrl||req.url so the verifier can bind it as
   // the JWT's lxm claim, matching the per-route nsid passed to
   // makeVerifyViewer in the old hand-rolled dispatch.
-  const viewerAuth: AuthVerifier = async ({ req }) => {
+  const viewerAuth = async ({
+    req,
+  }: MethodAuthContext): Promise<ViewerAuth> => {
     const lxm = parseReqNsid(req)
     const viewer = await verifyViewer(req.headers.authorization, lxm)
     if (!viewer) {
@@ -111,12 +115,10 @@ async function main() {
     return { credentials: { did: viewer } }
   }
 
-  type ViewerAuth = { credentials: { did: string } }
-
   // Handle→DID resolution lives at the handler boundary (ADR-0038): the PDS is
   // canonical for .test handles and the lexicon takes at-identifier per
   // ADR-0028's "stay canonical" rule. The queries only ever see a DID.
-  const getAuthorFeedHandler: XRPCHandler = async (ctx) => {
+  const getAuthorFeedHandler: MethodHandler = async (ctx) => {
     const actor = ctx.params.actor as string
     const limit = ctx.params.limit as number | undefined
     const cursor = ctx.params.cursor as string | undefined
@@ -128,7 +130,7 @@ async function main() {
     return { encoding: 'application/json', body }
   }
 
-  const getProfileHandler: XRPCHandler = async (ctx) => {
+  const getProfileHandler: MethodHandler<ViewerAuth> = async (ctx) => {
     const actor = ctx.params.actor as string
     // An unresolvable handle is ProfileNotFound (declared in the lexicon). A
     // DID that resolves to no identity surfaces from getProfile as a 5xx,
@@ -141,15 +143,15 @@ async function main() {
     return { encoding: 'application/json', body: profile }
   }
 
-  const getTimelineHandler: XRPCHandler = async (ctx) => {
-    const viewer = (ctx.auth as ViewerAuth).credentials.did
+  const getTimelineHandler: MethodHandler<ViewerAuth> = async (ctx) => {
+    const viewer = ctx.auth.credentials.did
     const limit = ctx.params.limit as number | undefined
     const cursor = ctx.params.cursor as string | undefined
     const body = await getTimeline(db, idResolver, { viewer, limit, cursor })
     return { encoding: 'application/json', body }
   }
 
-  const getPostThreadHandler: XRPCHandler = async (ctx) => {
+  const getPostThreadHandler: MethodHandler = async (ctx) => {
     const uri = ctx.params.uri as string
     const result = await getPostThread(db, idResolver, { uri })
     if (!result) {
@@ -168,17 +170,19 @@ async function main() {
     return { encoding: 'application/json', body: result }
   }
 
-  const listNotificationsHandler: XRPCHandler = async (ctx) => {
-    const viewer = (ctx.auth as ViewerAuth).credentials.did
+  const listNotificationsHandler: MethodHandler<ViewerAuth> = async (ctx) => {
+    const viewer = ctx.auth.credentials.did
     const limit = ctx.params.limit as number | undefined
     const cursor = ctx.params.cursor as string | undefined
     const body = await listNotifications(db, idResolver, { viewer, limit, cursor })
     return { encoding: 'application/json', body }
   }
 
-  const registerPushTargetHandler: XRPCHandler = async (ctx) => {
-    const viewer = (ctx.auth as ViewerAuth).credentials.did
-    const input = ctx.input?.body as
+  const registerPushTargetHandler: MethodHandler<ViewerAuth> = async (ctx) => {
+    const viewer = ctx.auth.credentials.did
+    // ctx.input is `void | HandlerInput` (procedures may declare no body); this
+    // one always carries a body, so read it defensively.
+    const input = (ctx.input as { body?: unknown } | undefined)?.body as
       | { url?: unknown; since?: unknown }
       | undefined
     const url = input?.url

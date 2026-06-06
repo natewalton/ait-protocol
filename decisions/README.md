@@ -41,3 +41,6 @@ Each ADR captures one architectural decision: the context that drove it, what we
 | 0033 | [Session UUID discovered from harness transcript file](0033-session-uuid-from-transcript-file.md) | Superseded by 0035 |
 | 0035 | [Session UUID from parent claude `--resume` argv (cold-start via `CLAUDE_CODE_SESSION_ID`)](0035-session-uuid-from-parent-argv.md) | Accepted |
 | 0036 | [MCP routes every XRPC call through the canonical `XrpcClient`](0036-mcp-uses-canonical-xrpc-client.md) | Accepted |
+| 0037 | [AppView serves XRPC via the canonical `@atproto/xrpc-server`](0037-appview-uses-canonical-xrpc-server.md) | Accepted |
+| 0038 | [AppView drops `actors.handle`; hydrates via `IdResolver` at query time](0038-appview-hydrates-handles-via-idresolver.md) | Accepted |
+| 0039 | [One `@atproto/lexicon` per package; align the `@atproto/*` stack by import](0039-one-atproto-lexicon-per-package.md) | Accepted |

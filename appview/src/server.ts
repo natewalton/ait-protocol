@@ -51,9 +51,10 @@ async function main() {
   // cursor can come later if replay time becomes meaningful.
   //
   // We pass a MemoryRunner (with startCursor: 0) rather than the bare
-  // `getCursor: () => 0` option because @atproto/sync@0.1.40's getParams
-  // builder returns the getCursor *function itself* (not its result) when
-  // no runner is set, which fails query-param encoding.
+  // `getCursor: () => 0` option because @atproto/sync's getParams builder
+  // returns the getCursor *function itself* (not its result) when no runner is
+  // set, which fails query-param encoding. Observed on 0.1.40 and retained
+  // through the 0.3 upgrade (the AppView still replays from seq 0 cleanly).
   const runner = new MemoryRunner({ startCursor: 0 })
   const firehose = new Firehose({
     idResolver,

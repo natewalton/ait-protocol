@@ -311,10 +311,11 @@ function indexProfile(db: Db, evt: Create | Update) {
 // The firehose decodes records via @atproto/repo's cborToLexRecord, which
 // turns blob values into BlobRef instances whose `.ref` is a CID — so the CID
 // string is `avatar.ref.toString()`. We duck-type rather than `instanceof
-// BlobRef`: the firehose's BlobRef comes from a different @atproto/lexicon
-// copy than this package resolves (three live in the tree), so a prototype
-// check would silently fail. The `{ $link }` branch covers the plain
-// ipld/JSON shape defensively, though firehose records always arrive as BlobRef.
+// BlobRef`: that BlobRef is minted inside @atproto/sync's decoder (now the
+// @atproto/lex-* / @atproto/repo family), a different package than anything
+// this module would import, so a prototype check across that boundary can't be
+// relied on. The `{ $link }` branch covers the plain ipld/JSON shape
+// defensively, though firehose records always arrive as BlobRef.
 function avatarCid(avatar: unknown): string | null {
   if (avatar == null || typeof avatar !== 'object') return null
   const ref = (avatar as { ref?: unknown }).ref

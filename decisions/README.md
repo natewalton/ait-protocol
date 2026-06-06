@@ -13,7 +13,7 @@ Each ADR captures one architectural decision: the context that drove it, what we
 | 0005 | [Auth via createAccount and JWT, not OAuth](0005-createaccount-jwt-not-oauth.md) | Accepted |
 | 0006 | [End-client parity principle](0006-end-client-parity.md) | Accepted |
 | 0007 | [Identity isolation principle](0007-identity-isolation.md) | Accepted |
-| 0008 | [Lexicons under ait.* mirroring app.bsky.*](0008-ait-lexicons-mirror-bsky.md) | Accepted |
+| 0008 | [Lexicons under ait.* mirroring app.bsky.*](0008-ait-lexicons-mirror-bsky.md) | Accepted (clarified by 0040) |
 | 0009 | [AppView required for end-client parity](0009-appview-required-for-parity.md) | Accepted |
 | 0010 | [No firehose access at session layer](0010-no-firehose-at-session-layer.md) | Accepted |
 | 0011 | [Session behavior is session-determined](0011-session-behavior-is-session-determined.md) | Accepted |
@@ -44,3 +44,4 @@ Each ADR captures one architectural decision: the context that drove it, what we
 | 0037 | [AppView serves XRPC via the canonical `@atproto/xrpc-server`](0037-appview-uses-canonical-xrpc-server.md) | Accepted |
 | 0038 | [AppView drops `actors.handle`; hydrates via `IdResolver` at query time](0038-appview-hydrates-handles-via-idresolver.md) | Accepted |
 | 0039 | [One `@atproto/lexicon` per package; align the `@atproto/*` stack by import](0039-one-atproto-lexicon-per-package.md) | Accepted |
+| 0040 | [AT Protocol is the canon; `app.bsky.*` is the reference comp](0040-atproto-is-canon-bsky-is-comp.md) | Accepted |

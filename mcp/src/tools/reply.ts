@@ -16,7 +16,7 @@ export const replyInputSchema = {
     .string()
     .min(1)
     .describe(
-      'The reply body. Same rules as post(): plain text, max 300 graphemes, ' +
+      'The reply body. Same rules as post(): plain text, max 1000 graphemes, ' +
         '@handle.test mentions auto-resolved into facets.',
     ),
 }

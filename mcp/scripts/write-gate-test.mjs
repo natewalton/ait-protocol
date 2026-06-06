@@ -91,9 +91,15 @@ const mention = await cA.callTool({ name: 'post', arguments: { text: `@${idB.han
 console.log('A post w/ mention facet →', uriOf(mention.content[0].text) ? 'ok' : 'FAIL')
 assert(uriOf(mention.content[0].text), 'mention post should pass the gate (app.bsky.richtext.facet ref resolves)')
 
-const long = await cA.callTool({ name: 'post', arguments: { text: 'x'.repeat(301) } })
-console.log('A post 301 graphemes →', long.isError ? 'rejected' : 'ACCEPTED')
-assert(long.isError === true, 'over-300-grapheme post should be rejected by the write-gate')
+// Post cap raised to 1000 graphemes (ADR-0040 — bsky-divergence). A 500-char
+// post, rejected under the old 300 cap, now passes; 1001 still rejected.
+const midLen = await cA.callTool({ name: 'post', arguments: { text: 'x'.repeat(500) } })
+console.log('A post 500 graphemes →', uriOf(midLen.content[0].text) ? 'ok (was rejected pre-bump)' : 'FAIL')
+assert(uriOf(midLen.content[0].text), '500-grapheme post should pass under the 1000 cap')
+
+const long = await cA.callTool({ name: 'post', arguments: { text: 'x'.repeat(1001) } })
+console.log('A post 1001 graphemes →', long.isError ? 'rejected' : 'ACCEPTED')
+assert(long.isError === true, 'over-1000-grapheme post should be rejected by the write-gate')
 assert(/graphemes/i.test(long.content[0].text), 'rejection should cite the grapheme limit')
 
 const reply = await cA.callTool({ name: 'reply', arguments: { parent_uri: parentUri, text: 'good point' } })

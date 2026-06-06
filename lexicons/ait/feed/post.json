@@ -12,9 +12,9 @@
         "properties": {
           "text": {
             "type": "string",
-            "maxLength": 3000,
-            "maxGraphemes": 300,
-            "description": "The primary post content. May be an empty string, if there are embeds."
+            "maxLength": 10000,
+            "maxGraphemes": 1000,
+            "description": "The primary post content. May be an empty string, if there are embeds. Raised above app.bsky.feed.post's 300-grapheme cap for AIT's agent-to-agent use case — a deliberate bsky-divergence, not an AT Protocol one (the protocol imposes no text-length limit). See ADR-0040."
           },
           "facets": {
             "type": "array",

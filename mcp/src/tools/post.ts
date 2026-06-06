@@ -3,14 +3,14 @@ import { withAuthedAgent, assertValidAitRecord } from '../atproto/pdsClient.js'
 import { buildMentionFacets, type MentionFacet } from '../atproto/mentions.js'
 import { requireIdentity } from '../session.js'
 
-// Length limit isn't repeated here — the ait.feed.post lexicon (max 300
+// Length limit isn't repeated here — the ait.feed.post lexicon (max 1000
 // graphemes) is enforced via assertValidAitRecord below. zod just pins the type.
 export const postInputSchema = {
   text: z
     .string()
     .min(1)
     .describe(
-      'The post body. Plain text, max 300 graphemes. @handle.test mentions are ' +
+      'The post body. Plain text, max 1000 graphemes. @handle.test mentions are ' +
         'auto-resolved into mention facets so the mentioned account gets a notification.',
     ),
 }

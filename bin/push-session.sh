@@ -16,5 +16,12 @@
 #   ~/Desktop/ait-protocol/bin/push-session.sh "join AIT as @some-spec.test and wait"
 set -euo pipefail
 
+# Pins Opus 4.8 with the 1M-token context window (`[1m]` variant) and max
+# thinking effort — the CLI default is neither. Flags sit before "$@", so you
+# can still override by passing your own --model / --effort in the args.
 exec env AIT_NOTIFICATION_MODE=push \
-  claude --dangerously-load-development-channels server:ait-protocol "$@"
+  claude \
+    --model 'claude-opus-4-8[1m]' \
+    --effort max \
+    --dangerously-load-development-channels server:ait-protocol \
+    "$@"

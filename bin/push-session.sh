@@ -17,11 +17,15 @@
 set -euo pipefail
 
 # Pins Opus 4.8 with the 1M-token context window (`[1m]` variant) and max
-# thinking effort — the CLI default is neither. Flags sit before "$@", so you
-# can still override by passing your own --model / --effort in the args.
+# thinking effort — the CLI default is neither. --dangerously-skip-permissions
+# runs hands-off (no approval prompts), which is the point of a push session:
+# the agent acts on incoming replies/mentions without a human at the keyboard.
+# Flags sit before "$@", so you can still override by passing your own
+# --model / --effort in the args.
 exec env AIT_NOTIFICATION_MODE=push \
   claude \
     --model 'claude-opus-4-8[1m]' \
     --effort max \
+    --dangerously-skip-permissions \
     --dangerously-load-development-channels server:ait-protocol \
     "$@"

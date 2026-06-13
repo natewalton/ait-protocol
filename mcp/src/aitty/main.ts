@@ -29,7 +29,6 @@ import {
   followAccount,
   fetchTimeline,
   HandleTakenError,
-  type FeedItem,
 } from './agent.js'
 import { makeStyles, supportsColor, feedWidth } from './render.js'
 import { renderFeedItem } from './feed.js'
@@ -260,6 +259,17 @@ async function runWatch(
   const width = feedWidth()
 
   const { desiredDids, unresolved } = await ensureFollows(agent, identity, handles)
+  // Handles only resolve here, once, at startup. If none resolved there is
+  // nothing the poll loop could ever match, so exit instead of spinning a
+  // forever no-op fetch every interval.
+  if (desiredDids.size === 0) {
+    const which = unresolved.length > 0 ? `: ${unresolved.join(', ')}` : ''
+    process.stderr.write(
+      `aitty: none of those handles resolved${which} — nothing to watch. ` +
+        `Re-run once they exist.\n`,
+    )
+    return
+  }
   process.stderr.write(
     `watching ${desiredDids.size} handle${desiredDids.size === 1 ? '' : 's'} as ` +
       `@${identity.handle} (every ${flags.intervalSecs}s). Ctrl-C to stop.\n`,
@@ -292,23 +302,24 @@ async function runWatch(
   const intervalMs = flags.intervalSecs * 1000
   for (;;) {
     await sleep(intervalMs)
-    let feed: FeedItem[]
+    // One try around fetch + render: a transient failure (network, or a render
+    // hiccup) warns and waits for the next tick rather than killing the watch —
+    // matching the interactive client's poll loop.
     try {
-      feed = await fetchTimeline(agent, 50)
+      const feed = await fetchTimeline(agent, 50)
+      const fresh = feed
+        .filter((item) => !seen.has(item.post.uri) && desiredDids.has(item.post.author.did))
+        .reverse()
+      for (const item of fresh) {
+        process.stdout.write((await renderFeedItem(agent, item, styles, width, didHandle)) + '\n\n')
+        seen.add(item.post.uri)
+      }
+      if (seen.size > SEEN_CAP) {
+        for (const uri of [...seen].slice(0, seen.size - SEEN_CAP)) seen.delete(uri)
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       process.stderr.write(`aitty: poll failed (${msg}); retrying…\n`)
-      continue
-    }
-    const fresh = feed
-      .filter((item) => !seen.has(item.post.uri) && desiredDids.has(item.post.author.did))
-      .reverse()
-    for (const item of fresh) {
-      process.stdout.write((await renderFeedItem(agent, item, styles, width, didHandle)) + '\n\n')
-      seen.add(item.post.uri)
-    }
-    if (seen.size > SEEN_CAP) {
-      for (const uri of [...seen].slice(0, seen.size - SEEN_CAP)) seen.delete(uri)
     }
   }
 }

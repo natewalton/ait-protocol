@@ -10,19 +10,18 @@
 // No firehose, no admin, no cross-DID listRecords (ADR-0006, ADR-0010).
 
 import { AtpAgent } from '@atproto/api'
-import { AtUri } from '@atproto/syntax'
-import { AIT_LEXICONS } from '../atproto/aitLexicons.js'
+import {
+  PDS_URL,
+  registerAitLexicons,
+  assertValidAitRecord,
+  appviewProxyHeaders,
+  parseAtUri,
+  buildReplyRef,
+  type StrongRef,
+} from '../atproto/aitClient.js'
 import { buildMentionFacets, type MentionFacet } from '../atproto/mentions.js'
 
-const PDS_URL = process.env.PDS_URL ?? 'http://localhost:2583'
-const APPVIEW_DID = process.env.APPVIEW_DID ?? 'did:plc:aitappview000000000001'
-
-// Strong-ref shape carried by ait.feed.post's `reply` field (lexicon
-// ait.feed.post#replyRef → com.atproto.repo.strongRef).
-export interface StrongRef {
-  uri: string
-  cid: string
-}
+export type { StrongRef }
 
 export interface PostRecord {
   text?: string
@@ -47,11 +46,7 @@ interface TimelineResponse {
 
 export function makeAgent(): AtpAgent {
   const agent = new AtpAgent({ service: PDS_URL })
-  // Register ait.* lexicons on the agent's internal Lexicons so custom NSIDs
-  // resolve — same cast/pattern as pdsClient.ts:getAgent (agent.lex isn't on
-  // AtpAgent's public TS surface).
-  const lex = (agent as unknown as { lex: { add: (d: unknown) => void } }).lex
-  for (const doc of AIT_LEXICONS) lex.add(doc)
+  registerAitLexicons(agent) // shared with the MCP server (aitClient.ts)
   return agent
 }
 
@@ -115,24 +110,25 @@ export async function unfollowAccount(
   myDid: string,
   followUri: string,
 ): Promise<void> {
-  const rkey = new AtUri(followUri).rkey
+  const parsed = parseAtUri(followUri)
+  if (!parsed) throw new Error(`invalid follow uri: ${followUri}`)
   await agent.com.atproto.repo.deleteRecord({
     repo: myDid,
     collection: 'ait.graph.follow',
-    rkey,
+    rkey: parsed.rkey,
   })
 }
 
 // All ait.* reads go through the PDS service-proxy fast-path to the AppView
-// (ADR-0025), the same header pdsClient.ts:appViewCall uses. Returns the
-// lexicon-validated response body.
+// (ADR-0025) via the shared appviewProxyHeaders — the same header the MCP
+// server's appViewCall uses. Returns the lexicon-validated response body.
 async function proxyCall<T>(
   agent: AtpAgent,
   nsid: string,
   params: Record<string, unknown>,
 ): Promise<T> {
   const res = await agent.call(nsid, params, undefined, {
-    headers: { 'atproto-proxy': `${APPVIEW_DID}#bsky_appview` },
+    headers: appviewProxyHeaders(),
   })
   return res.data as T
 }
@@ -186,22 +182,6 @@ type PostWriteRecord = {
   createdAt: string
 }
 
-// Validate an ait.* record against the registered lexicon before writing. The
-// local PDS doesn't schema-check ait.* bodies, so an over-limit field would
-// write fine and then 500 every reader when the AppView validates the same
-// lexicon on its query output. Replicated here (rather than imported from
-// pdsClient.ts:assertValidAitRecord) so aitty stays free of the session/
-// storage-coupled pdsClient module — see the spec's Reuse note. `agent.lex` is
-// the registered Lexicons instance (makeAgent); the cast mirrors the one there.
-function assertValidRecord(agent: AtpAgent, nsid: string, record: unknown): void {
-  const lex = (
-    agent as unknown as {
-      lex: { assertValidRecord: (nsid: string, value: unknown) => unknown }
-    }
-  ).lex
-  lex.assertValidRecord(nsid, record)
-}
-
 // Publish a post to aitty's own feed.
 export async function createPost(
   agent: AtpAgent,
@@ -215,7 +195,7 @@ export async function createPost(
     createdAt: new Date().toISOString(),
   }
   if (facets.length > 0) record.facets = facets
-  assertValidRecord(agent, 'ait.feed.post', record)
+  assertValidAitRecord(agent, 'ait.feed.post', record)
   const res = await agent.com.atproto.repo.createRecord({
     repo: myDid,
     collection: 'ait.feed.post',
@@ -224,53 +204,39 @@ export async function createPost(
   return { uri: res.data.uri, cid: res.data.cid }
 }
 
-// Reply to a post. Threads off the original root (parent.reply.root ?? parent),
-// with the parent's CID fetched via getRecord — bsky semantics, mirroring
-// mcp/src/tools/reply.ts. Returns the root uri so callers can show the thread.
+// Reply to a post. Threading (root/parent) and the parent-CID fetch are the
+// shared buildReplyRef — the same path the MCP reply tool uses. Returns the
+// root uri so callers can show the thread.
 export async function createReply(
   agent: AtpAgent,
   myDid: string,
   parentUri: string,
   text: string,
 ): Promise<WriteResult & { root: string }> {
-  let u: AtUri
-  try {
-    u = new AtUri(parentUri)
-  } catch {
+  const parsed = parseAtUri(parentUri)
+  if (!parsed) {
     throw new Error(`parent_uri is not a valid at-uri: ${parentUri}`)
   }
-  if (!u.host || !u.collection || !u.rkey) {
-    throw new Error(`parent_uri is not a valid at-uri: ${parentUri}`)
+  if (parsed.collection !== 'ait.feed.post') {
+    throw new Error(`Can only reply to ait.feed.post records; got ${parsed.collection}.`)
   }
-  if (u.collection !== 'ait.feed.post') {
-    throw new Error(`Can only reply to ait.feed.post records; got ${u.collection}.`)
-  }
-  const parentRes = await agent.com.atproto.repo.getRecord({
-    repo: u.host,
-    collection: u.collection,
-    rkey: u.rkey,
-  })
-  const parentRecord = parentRes.data.value as {
-    reply?: { root?: StrongRef; parent?: StrongRef }
-  }
-  const parentRef: StrongRef = { uri: parentRes.data.uri, cid: parentRes.data.cid! }
-  const rootRef: StrongRef = parentRecord.reply?.root ?? parentRef
+  const { root, parent } = await buildReplyRef(agent, parsed)
 
   const facets = await buildMentionFacets(agent, text)
   const record: PostWriteRecord = {
     $type: 'ait.feed.post',
     text,
-    reply: { root: rootRef, parent: parentRef },
+    reply: { root, parent },
     createdAt: new Date().toISOString(),
   }
   if (facets.length > 0) record.facets = facets
-  assertValidRecord(agent, 'ait.feed.post', record)
+  assertValidAitRecord(agent, 'ait.feed.post', record)
   const res = await agent.com.atproto.repo.createRecord({
     repo: myDid,
     collection: 'ait.feed.post',
     record,
   })
-  return { uri: res.data.uri, cid: res.data.cid, root: rootRef.uri }
+  return { uri: res.data.uri, cid: res.data.cid, root: root.uri }
 }
 
 // --- Reads: author feed, thread, profile, notifications ---------------------

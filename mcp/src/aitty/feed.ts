@@ -4,8 +4,8 @@
 // rather than in render.ts is the one that needs the network: a reply only
 // carries its parent's at-uri, so the parent's handle is a getProfile away.
 
-import { AtUri } from '@atproto/syntax'
 import type { AtpAgent } from '@atproto/api'
+import { parseAtUri } from '../atproto/aitClient.js'
 import { fetchHandleForDid, type FeedItem } from './agent.js'
 import { renderPost, type Styles } from './render.js'
 
@@ -19,12 +19,9 @@ export async function replyParentHandle(
 ): Promise<{ isReply: boolean; parentHandle: string | null }> {
   const parentUri = item.post.record.reply?.parent?.uri
   if (!parentUri) return { isReply: false, parentHandle: null }
-  let parentDid: string
-  try {
-    parentDid = new AtUri(parentUri).host
-  } catch {
-    return { isReply: true, parentHandle: null }
-  }
+  const parsed = parseAtUri(parentUri)
+  if (!parsed) return { isReply: true, parentHandle: null }
+  const parentDid = parsed.repo
   let handle = cache.get(parentDid) ?? null
   if (!handle) {
     handle = await fetchHandleForDid(agent, parentDid)

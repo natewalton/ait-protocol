@@ -9,11 +9,13 @@ import {
   updateIdentityTokens,
   type Identity,
 } from '../session.js'
-import { AIT_LEXICONS } from './aitLexicons.js'
-
-const PDS_URL = process.env.PDS_URL ?? 'http://localhost:2583'
-const APPVIEW_DID =
-  process.env.APPVIEW_DID ?? 'did:plc:aitappview000000000001'
+import {
+  PDS_URL,
+  APPVIEW_DID,
+  registerAitLexicons,
+  assertValidAitRecord,
+  appviewProxyHeaders,
+} from './aitClient.js'
 
 // One agent per MCP process. We wire persistSession so that AtpAgent's
 // auto-refresh path (it transparently calls refreshSession on 401 or 400+
@@ -43,17 +45,11 @@ function persistSession(
 function getAgent(): AtpAgent {
   if (!agent) {
     agent = new AtpAgent({ service: PDS_URL, persistSession })
-    // Register ait.* lexicons on the agent's internal XrpcClient so calls
-    // like agent.call('ait.feed.getTimeline', ...) can resolve the NSID at
-    // `xrpc-client.js:24 (this.lex.getDefOrThrow)` instead of throwing
-    // LexiconDefNotFoundError. This is the AT Protocol canonical extension
-    // path (lexicon.js:35 Lexicons.add); see ADR-0036.
-    //
-    // `agent.lex` is on the XrpcClient base class but not exposed in
-    // AtpAgent's public TS surface — the cast acknowledges that. Runtime
-    // shape is verified at xrpc-client.js:12 (`this.lex = ... new Lexicons(...)`).
-    const lex = (agent as unknown as { lex: { add: (d: unknown) => void } }).lex
-    for (const doc of AIT_LEXICONS) lex.add(doc)
+    // Register ait.* lexicons so calls like agent.call('ait.feed.getTimeline',
+    // …) resolve the NSID instead of throwing LexiconDefNotFoundError (ADR-0036).
+    // The registration (and the agent.lex cast it needs) lives in aitClient so
+    // the standalone aitty client shares this exact path.
+    registerAitLexicons(agent)
   }
   return agent
 }
@@ -124,28 +120,6 @@ export function getRawAgent(): AtpAgent {
   return getAgent()
 }
 
-// Validate a record against a registered ait.* lexicon client-side, before
-// writing it. The local PDS carries only its own (com.atproto / app.bsky)
-// lexicons, so it does NOT schema-check ait.* record bodies on putRecord — an
-// over-limit field (e.g. a bio past the lexicon's maxGraphemes) would write
-// fine but then 500 every reader when the AppView validates the SAME lexicon
-// on its query output. Enforcing here, against the one source of truth, closes
-// that gap at the write boundary and surfaces a clear ValidationError instead.
-// `agent.lex` is the registered Lexicons instance (see getAgent); the cast
-// mirrors the one there since it isn't on AtpAgent's public TS surface.
-export function assertValidAitRecord(
-  agent: AtpAgent,
-  nsid: string,
-  record: unknown,
-): void {
-  const lex = (
-    agent as unknown as {
-      lex: { assertValidRecord: (nsid: string, value: unknown) => unknown }
-    }
-  ).lex
-  lex.assertValidRecord(nsid, record)
-}
-
 function isAuthError(err: unknown): boolean {
   // Two HTTP shapes mean "your access token is no good, log in again":
   //   - status 401 (vanilla AuthRequired / generic auth fail)
@@ -202,10 +176,10 @@ export async function appViewCall<T>(
 ): Promise<T> {
   return withAuthedAgent(async (agent) => {
     const res = await agent.call(nsid, opts.params, opts.data, {
-      headers: { 'atproto-proxy': `${APPVIEW_DID}#bsky_appview` },
+      headers: appviewProxyHeaders(),
     })
     return res.data as T
   })
 }
 
-export { PDS_URL, APPVIEW_DID }
+export { PDS_URL, APPVIEW_DID, assertValidAitRecord }

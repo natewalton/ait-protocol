@@ -11,10 +11,11 @@
 
 import * as readline from 'node:readline'
 import type { AtpAgent } from '@atproto/api'
-import { fetchTimeline, type FeedItem } from './agent.js'
+import type { FeedItem } from './agent.js'
 import type { WatcherIdentity } from './identity.js'
 import { makeStyles, feedWidth, supportsColor } from './render.js'
 import { renderFeedItem } from './feed.js'
+import { emitBacklog, pollFeed, BACKLOG, SEEN_CAP } from './stream.js'
 import {
   actionPost,
   actionReply,
@@ -25,8 +26,6 @@ import {
   actionThread,
 } from './commands.js'
 
-const BACKLOG = 12 // posts shown as context on startup
-const SEEN_CAP = 2000 // bound the dedupe set's memory
 const INDEX_CAP = 1000 // bound the n→uri map (old numbers have scrolled away)
 
 export interface InteractiveOpts {
@@ -84,36 +83,14 @@ export async function runInteractive(
     const n = ++counter
     index.set(n, item.post.uri)
     if (index.size > INDEX_CAP) index.delete(n - INDEX_CAP)
-    seen.add(item.post.uri)
     const body = await renderFeedItem(agent, item, styles, width, didHandle)
     printAbovePrompt(`[${n}] ${body}`)
   }
 
-  function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms))
-  }
-
-  // getTimeline is reverse-chrono; print fresh items oldest-first. The home
-  // timeline already scopes to who you follow, so there's no set filter here
-  // (that's the watch subcommand's job).
-  async function pollLoop(): Promise<void> {
-    for (;;) {
-      await sleep(intervalMs)
-      // One try around fetch + render: a transient failure (network, or a write
-      // that races a tear-down) warns and waits for the next tick rather than
-      // rejecting out of this fire-and-forgotten loop.
-      try {
-        const feed = await fetchTimeline(agent, 50)
-        const fresh = feed.filter((i) => !seen.has(i.post.uri)).reverse()
-        for (const item of fresh) await emit(item)
-        if (seen.size > SEEN_CAP) {
-          for (const uri of [...seen].slice(0, seen.size - SEEN_CAP)) seen.delete(uri)
-        }
-      } catch (err) {
-        warn(`(poll failed: ${err instanceof Error ? err.message : String(err)}; retrying)`)
-      }
-    }
-  }
+  // The shared feed engine owns the poll loop, dedupe (`seen`), and backlog;
+  // interactive just numbers each post. The home timeline already scopes to who
+  // you follow, so no filter here (that's the watch subcommand's job).
+  const hooks = { onItem: emit, onError: warn }
 
   async function handleCommand(raw: string): Promise<void> {
     const line = raw.trim()
@@ -180,21 +157,12 @@ export async function runInteractive(
       (isTTY ? 'type "help" for commands, "quit" to exit.\n\n' : '(piped: streaming)\n\n'),
   )
 
-  // Startup backlog: most recent BACKLOG posts, oldest-first, numbered. A
-  // transient failure here is non-fatal — the poll loop catches up.
-  try {
-    const initial = await fetchTimeline(agent, BACKLOG)
-    for (const item of initial.slice().reverse()) await emit(item)
-  } catch (err) {
-    process.stderr.write(
-      `aitty: initial fetch failed (${err instanceof Error ? err.message : String(err)}); ` +
-        'will catch up on next poll\n',
-    )
-  }
+  // Startup backlog (numbered), via the shared engine.
+  await emitBacklog(agent, seen, BACKLOG, hooks)
 
   // Non-TTY: no prompt, just stream (so `| cat` and piping work).
   if (!isTTY) {
-    await pollLoop()
+    await pollFeed(agent, seen, intervalMs, SEEN_CAP, hooks)
     return
   }
 
@@ -224,7 +192,7 @@ export async function runInteractive(
   rl.prompt()
   // Concurrent with the command loop; never resolves. A throw that escapes the
   // loop's own try shouldn't become a silent unhandled rejection.
-  void pollLoop().catch((err) => {
+  void pollFeed(agent, seen, intervalMs, SEEN_CAP, hooks).catch((err) => {
     process.stderr.write(
       `aitty: poll loop stopped (${err instanceof Error ? err.message : String(err)})\n`,
     )

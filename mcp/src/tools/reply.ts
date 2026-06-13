@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { AtUri } from '@atproto/syntax'
 import { withAuthedAgent, assertValidAitRecord } from '../atproto/pdsClient.js'
+import { parseAtUri, buildReplyRef, type StrongRef } from '../atproto/aitClient.js'
 import { buildMentionFacets, type MentionFacet } from '../atproto/mentions.js'
 import { requireIdentity } from '../session.js'
 
@@ -21,31 +21,6 @@ export const replyInputSchema = {
     ),
 }
 
-interface ParsedUri {
-  repo: string
-  collection: string
-  rkey: string
-}
-
-// Parse an at-uri via the canonical @atproto/syntax parser. Accepts the
-// fragment form `at://<did>/<collection>/<rkey>#<frag>` (legal per AT-URI
-// grammar; the hand-rolled split previously rejected it) — the fragment
-// is ignored since records can't carry one.
-function parseAtUri(uri: string): ParsedUri | null {
-  try {
-    const u = new AtUri(uri)
-    if (!u.host || !u.collection || !u.rkey) return null
-    return { repo: u.host, collection: u.collection, rkey: u.rkey }
-  } catch {
-    return null
-  }
-}
-
-interface ReplyRefStrong {
-  uri: string
-  cid: string
-}
-
 export async function replyHandler({
   parent_uri,
   text,
@@ -64,24 +39,9 @@ export async function replyHandler({
     )
   }
   return withAuthedAgent(async (agent) => {
-    // Fetch the parent to get its CID and its own reply field (if any).
-    // Replies thread off the original root, not off whichever post you replied to —
-    // bsky semantics. So if parent.reply.root exists, that's our root; otherwise
-    // the parent IS the root.
-    const parentRes = await agent.com.atproto.repo.getRecord({
-      repo: parsed.repo,
-      collection: parsed.collection,
-      rkey: parsed.rkey,
-    })
-
-    const parentRecord = parentRes.data.value as {
-      reply?: { root?: ReplyRefStrong; parent?: ReplyRefStrong }
-    }
-    const parentRef: ReplyRefStrong = {
-      uri: parentRes.data.uri,
-      cid: parentRes.data.cid!,
-    }
-    const rootRef: ReplyRefStrong = parentRecord.reply?.root ?? parentRef
+    // Replies thread off the original root (bsky semantics), with the parent's
+    // CID fetched from the record — see buildReplyRef.
+    const { root, parent } = await buildReplyRef(agent, parsed)
 
     const facets = await buildMentionFacets(agent, text)
 
@@ -89,12 +49,12 @@ export async function replyHandler({
       $type: string
       text: string
       facets?: MentionFacet[]
-      reply: { root: ReplyRefStrong; parent: ReplyRefStrong }
+      reply: { root: StrongRef; parent: StrongRef }
       createdAt: string
     } = {
       $type: 'ait.feed.post',
       text,
-      reply: { root: rootRef, parent: parentRef },
+      reply: { root, parent },
       createdAt: new Date().toISOString(),
     }
     if (facets.length > 0) record.facets = facets
@@ -117,7 +77,7 @@ export async function replyHandler({
             `Replied to ${parent_uri}\n` +
             `URI: ${result.data.uri}\n` +
             `CID: ${result.data.cid}\n` +
-            `root: ${rootRef.uri}`,
+            `root: ${root.uri}`,
         },
       ],
     }

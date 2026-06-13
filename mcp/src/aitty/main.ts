@@ -27,12 +27,13 @@ import {
   loginWatcher,
   resolveHandleToDid,
   followAccount,
-  fetchTimeline,
   HandleTakenError,
+  type FeedItem,
 } from './agent.js'
 import { makeStyles, supportsColor, feedWidth } from './render.js'
 import { renderFeedItem } from './feed.js'
 import { runInteractive } from './interactive.js'
+import { emitBacklog, pollFeed, BACKLOG, SEEN_CAP } from './stream.js'
 import {
   actionPost,
   actionReply,
@@ -47,9 +48,6 @@ import {
 
 const DEFAULT_HANDLE = 'terminal-observer'
 const DEFAULT_INTERVAL_SECS = 3
-const BACKLOG = 12 // posts shown as context on startup (watch)
-const SEEN_CAP = 2000 // bound the watch dedupe set's memory
-
 interface Flags {
   handle?: string
   password?: string
@@ -92,10 +90,6 @@ function requireValue(argv: string[], i: number, flag: string): string {
 function fail(msg: string): never {
   process.stderr.write(`aitty: ${msg}\n`)
   process.exit(1)
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 const HELP = `
@@ -284,44 +278,22 @@ async function runWatch(
     process.exit(0)
   })
 
+  // Stream via the shared engine: scope to the watched set and plain-print each
+  // post (no prompt, no numbering — that's the interactive client's job).
   const seen = new Set<string>()
   const didHandle = new Map<string, string>()
-
-  try {
-    const initial = await fetchTimeline(agent, BACKLOG)
-    for (const item of initial.slice().reverse()) {
-      if (!desiredDids.has(item.post.author.did)) continue
-      process.stdout.write((await renderFeedItem(agent, item, styles, width, didHandle)) + '\n\n')
-      seen.add(item.post.uri)
-    }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    process.stderr.write(`aitty: initial fetch failed (${msg}); will catch up on next poll\n`)
+  const hooks = {
+    filter: (item: FeedItem) => desiredDids.has(item.post.author.did),
+    onItem: async (item: FeedItem) => {
+      process.stdout.write(
+        (await renderFeedItem(agent, item, styles, width, didHandle)) + '\n\n',
+      )
+    },
+    onError: (msg: string) => process.stderr.write(`aitty: ${msg}\n`),
   }
 
-  const intervalMs = flags.intervalSecs * 1000
-  for (;;) {
-    await sleep(intervalMs)
-    // One try around fetch + render: a transient failure (network, or a render
-    // hiccup) warns and waits for the next tick rather than killing the watch —
-    // matching the interactive client's poll loop.
-    try {
-      const feed = await fetchTimeline(agent, 50)
-      const fresh = feed
-        .filter((item) => !seen.has(item.post.uri) && desiredDids.has(item.post.author.did))
-        .reverse()
-      for (const item of fresh) {
-        process.stdout.write((await renderFeedItem(agent, item, styles, width, didHandle)) + '\n\n')
-        seen.add(item.post.uri)
-      }
-      if (seen.size > SEEN_CAP) {
-        for (const uri of [...seen].slice(0, seen.size - SEEN_CAP)) seen.delete(uri)
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      process.stderr.write(`aitty: poll failed (${msg}); retrying…\n`)
-    }
-  }
+  await emitBacklog(agent, seen, BACKLOG, hooks)
+  await pollFeed(agent, seen, flags.intervalSecs * 1000, SEEN_CAP, hooks)
 }
 
 function runLogout(): void {

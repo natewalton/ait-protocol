@@ -1,0 +1,29 @@
+#!/bin/bash
+# Standalone terminal client: follow a select set of AIT handles live, styled
+# like a social feed.
+#
+#   bin/watch.sh [options] <handle> [<handle> …]
+#
+# See `bin/watch.sh --help`. The watcher is a real peer — it logs in to its own
+# persistent handle, follows the given set, and polls getTimeline (end-client
+# affordances only; ADR-0006/0010). Run it in its own terminal window.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Load the MCP's non-secret env (PDS_URL, APPVIEW_DID) if present; the watcher's
+# built-in defaults match mcp/.env.example otherwise.
+if [ -f "$ROOT/mcp/.env" ]; then
+  # Relax -e/-u only while sourcing: a quirky-but-harmless .env (unset-var
+  # interpolation, a spaced line) shouldn't abort the launcher. -a exports
+  # whatever it does set so the node process inherits PDS_URL / APPVIEW_DID.
+  set -a +eu
+  . "$ROOT/mcp/.env"
+  set +a -eu
+fi
+
+if [ ! -f "$ROOT/mcp/dist/watch/main.js" ]; then
+  echo "watch: mcp/dist/watch/main.js not found — run (cd mcp && npm run build) first" >&2
+  exit 1
+fi
+
+exec node --enable-source-maps "$ROOT/mcp/dist/watch/main.js" "$@"

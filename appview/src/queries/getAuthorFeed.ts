@@ -2,6 +2,7 @@ import type { IdResolver } from '@atproto/identity'
 import type { Db } from '../db.js'
 import { decodeCursor, encodeCursor } from './cursor.js'
 import { hydrateHandle } from './hydrateActor.js'
+import { replyRefFromRow } from './replyRef.js'
 
 // ADR-0038: handle→DID resolution moved up to the handler. The query
 // itself only ever sees a DID — keeps the SQL clean and the lexicon-shape
@@ -41,7 +42,9 @@ export async function getAuthorFeed(
   if (actor && actor.active === 0) return { feed: [] }
 
   let query =
-    'SELECT uri, cid, did, text, facets, createdAt, indexedAt FROM posts WHERE did = ?'
+    'SELECT uri, cid, did, text, facets, ' +
+    'replyRootUri, replyParentUri, replyRootCid, replyParentCid, ' +
+    'createdAt, indexedAt FROM posts WHERE did = ?'
   const args: (string | number)[] = [did]
   if (params.cursor) {
     const c = decodeCursor(params.cursor)
@@ -57,6 +60,10 @@ export async function getAuthorFeed(
     did: string
     text: string
     facets: string | null
+    replyRootUri: string | null
+    replyParentUri: string | null
+    replyRootCid: string | null
+    replyParentCid: string | null
     createdAt: string
     indexedAt: string
   }>
@@ -74,6 +81,7 @@ export async function getAuthorFeed(
         $type: 'ait.feed.post',
         text: r.text,
         facets: r.facets ? JSON.parse(r.facets) : undefined,
+        reply: replyRefFromRow(r),
         createdAt: r.createdAt,
       },
       indexedAt: r.indexedAt,

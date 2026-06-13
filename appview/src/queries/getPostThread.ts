@@ -1,6 +1,7 @@
 import type { IdResolver } from '@atproto/identity'
 import type { Db } from '../db.js'
 import { hydrateHandles } from './hydrateActor.js'
+import { replyRefFromRow } from './replyRef.js'
 
 export interface PostThreadParams {
   uri: string
@@ -48,18 +49,7 @@ function rowToView(r: PostRow, handleByDid: Map<string, string>): ThreadViewPost
         $type: 'ait.feed.post',
         text: r.text,
         facets: r.facets ? JSON.parse(r.facets) : undefined,
-        reply: r.replyParentUri
-          ? {
-              root: {
-                uri: r.replyRootUri ?? r.replyParentUri,
-                cid: r.replyRootCid ?? r.replyParentCid ?? '',
-              },
-              parent: {
-                uri: r.replyParentUri,
-                cid: r.replyParentCid ?? '',
-              },
-            }
-          : undefined,
+        reply: replyRefFromRow(r),
         createdAt: r.createdAt,
       },
       indexedAt: r.indexedAt,

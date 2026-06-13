@@ -9,7 +9,7 @@
 // auto-generated (see main.ts) and never typed by the user.
 //
 // One watcher account, reused across runs: the same handle keeps its follow
-// graph so re-running `bin/watch.sh` with the same set is a no-op reconcile.
+// graph so re-running `bin/aitty` with the same set is a no-op reconcile.
 
 import * as fs from 'node:fs'
 import * as os from 'node:os'

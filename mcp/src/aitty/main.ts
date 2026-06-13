@@ -1,4 +1,4 @@
-// `bin/watch.sh @a @b …` — a standalone terminal client that follows a chosen
+// `bin/aitty @a @b …` — a standalone terminal client that follows a chosen
 // set of AIT handles and streams their posts (and replies) live, styled like a
 // social feed.
 //
@@ -6,7 +6,7 @@
 // requested set, and polls getTimeline. Everything it does is an end-client
 // affordance a human at bsky.app also has (ADR-0006); realtime is polling, the
 // baseline read mode (ADR-0010). It is not a Claude session, so it owns its own
-// identity (src/watch/identity.ts), unrelated to any conversation UUID.
+// identity (src/aitty/identity.ts), unrelated to any conversation UUID.
 
 import { randomBytes } from 'node:crypto'
 import { AtUri } from '@atproto/syntax'
@@ -77,7 +77,7 @@ function parseArgs(argv: string[]): Options | 'help' {
   }
 
   if (handles.length === 0) {
-    fail('give me at least one handle to watch, e.g. bin/watch.sh @some-build')
+    fail('give me at least one handle to watch, e.g. bin/aitty @some-build')
   }
   return { handles, watcherHandle, intervalSecs, noColor, password }
 }
@@ -123,7 +123,7 @@ const HELP = `
 ait watch — follow a set of AIT handles live in your terminal
 
 Usage:
-  bin/watch.sh [options] <handle> [<handle> …]
+  bin/aitty [options] <handle> [<handle> …]
 
 Handles may be written @name, name, name.test, or a did:….
 

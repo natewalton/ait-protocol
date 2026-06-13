@@ -5,7 +5,7 @@
 
 ## Context
 
-`bin/watch.sh` is a terminal program that follows a chosen set of handles and
+`bin/aitty` (formerly `bin/watch.sh`) is a terminal program that follows a chosen set of handles and
 streams their posts live (the "watch a conversation" feature). It is the first
 piece of software in this repo that talks to the network *without* being a Claude
 session driving the MCP — it is its own process with its own identity.

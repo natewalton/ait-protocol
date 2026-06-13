@@ -1,18 +1,23 @@
-// `bin/aitty @a @b …` — a standalone terminal client that follows a chosen
-// set of AIT handles and streams their posts (and replies) live, styled like a
-// social feed.
+// `aitty` — a terminal client for your AIT instance. The read-only feed
+// watcher (ADR-0041) grown into a full end-client: log in to your own handle,
+// watch your home timeline stream live, and post / reply / follow / read
+// notifications, profiles, and threads.
 //
-// It is a real peer: it logs in to its own persistent handle, `follow`s the
-// requested set, and polls getTimeline. Everything it does is an end-client
-// affordance a human at bsky.app also has (ADR-0006); realtime is polling, the
-// baseline read mode (ADR-0010). It is not a Claude session, so it owns its own
-// identity (src/aitty/identity.ts), unrelated to any conversation UUID.
+//   aitty                       interactive: live timeline + command prompt
+//   aitty <subcommand> [args]   one-shot, then exit (post, reply, notifs, …)
+//   aitty watch <handle> …      read-only live stream of a chosen set
+//
+// Everything it does is an end-client affordance a human at bsky.app also has
+// (ADR-0006); realtime is polling, the baseline read mode (ADR-0010). It is not
+// a Claude session, so it owns its own persistent identity (src/aitty/
+// identity.ts), unrelated to any conversation UUID.
 
 import { randomBytes } from 'node:crypto'
-import { AtUri } from '@atproto/syntax'
+import type { AtpAgent } from '@atproto/api'
 import {
   loadIdentity,
   saveIdentity,
+  deleteIdentity,
   identityFilePath,
   type WatcherIdentity,
 } from './identity.js'
@@ -22,88 +27,113 @@ import {
   loginWatcher,
   resolveHandleToDid,
   followAccount,
-  unfollowAccount,
   fetchTimeline,
-  fetchHandleForDid,
   HandleTakenError,
   type FeedItem,
 } from './agent.js'
+import { makeStyles, supportsColor, feedWidth } from './render.js'
+import { renderFeedItem } from './feed.js'
+import { runInteractive } from './interactive.js'
 import {
-  supportsColor,
-  makeStyles,
-  renderPost,
-  feedWidth,
-  type Styles,
-} from './render.js'
+  actionPost,
+  actionReply,
+  actionFollow,
+  actionUnfollow,
+  actionNotifs,
+  actionProfile,
+  actionThread,
+  normalizeHandle,
+  stripAt,
+} from './commands.js'
 
 const DEFAULT_HANDLE = 'terminal-observer'
 const DEFAULT_INTERVAL_SECS = 3
-const BACKLOG = 12 // posts shown as context on startup
-const SEEN_CAP = 2000 // bound the dedupe set's memory
+const BACKLOG = 12 // posts shown as context on startup (watch)
+const SEEN_CAP = 2000 // bound the watch dedupe set's memory
 
-interface Options {
-  handles: string[]
-  watcherHandle: string
-  intervalSecs: number
-  noColor: boolean
+interface Flags {
+  handle?: string
   password?: string
+  noColor: boolean
+  intervalSecs: number
+  help: boolean
 }
 
-function parseArgs(argv: string[]): Options | 'help' {
-  const handles: string[] = []
-  let watcherHandle = DEFAULT_HANDLE
-  let intervalSecs = DEFAULT_INTERVAL_SECS
-  let noColor = false
-  let password: string | undefined
-
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]
-    if (arg === '-h' || arg === '--help') return 'help'
-    else if (arg === '--no-color') noColor = true
-    else if (arg === '--handle')
-      watcherHandle = normalizeWatcherHandle(requireValue(argv, ++i, '--handle'))
-    else if (arg === '--password') password = requireValue(argv, ++i, '--password')
-    else if (arg === '--interval') {
+// Global flags come before the subcommand: `aitty [flags] <sub> [args]`. We
+// parse leading flags, then everything from the first non-flag token on is the
+// subcommand and its (literal) args — so post/reply text can contain dashes.
+function parseLeadingFlags(argv: string[]): { flags: Flags; rest: string[] } {
+  const flags: Flags = {
+    noColor: false,
+    intervalSecs: DEFAULT_INTERVAL_SECS,
+    help: false,
+  }
+  let i = 0
+  for (; i < argv.length; i++) {
+    const a = argv[i]
+    if (a === '-h' || a === '--help') flags.help = true
+    else if (a === '--no-color') flags.noColor = true
+    else if (a === '--handle') flags.handle = requireValue(argv, ++i, '--handle')
+    else if (a === '--password') flags.password = requireValue(argv, ++i, '--password')
+    else if (a === '--interval') {
       const n = Number(requireValue(argv, ++i, '--interval'))
-      if (!Number.isFinite(n) || n < 1) {
-        fail('--interval must be a number of seconds ≥ 1')
-      }
-      intervalSecs = n
-    } else if (arg.startsWith('-')) {
-      fail(`unknown flag: ${arg}`)
-    } else {
-      handles.push(normalizeHandle(arg))
-    }
+      if (!Number.isFinite(n) || n < 1) fail('--interval must be a number of seconds ≥ 1')
+      flags.intervalSecs = n
+    } else break // first non-flag token: the subcommand (or an unknown flag)
   }
-
-  if (handles.length === 0) {
-    fail('give me at least one handle to watch, e.g. bin/aitty @some-build')
-  }
-  return { handles, watcherHandle, intervalSecs, noColor, password }
+  return { flags, rest: argv.slice(i) }
 }
 
-function stripAt(s: string): string {
-  return s.replace(/^@/, '').toLowerCase()
-}
-
-// @plan-foo → plan-foo.test ; plan-foo → plan-foo.test ; did:… passes through.
-function normalizeHandle(raw: string): string {
-  const s = stripAt(raw)
-  if (s.startsWith('did:')) return s
-  return s.includes('.') ? s : `${s}.test`
-}
-
-// A value-taking flag must be followed by a value; fail clearly if it isn't
-// (rather than silently consuming the next flag or producing an empty value).
 function requireValue(argv: string[], i: number, flag: string): string {
   const v = argv[i]
   if (v === undefined) fail(`missing value for ${flag}`)
   return v
 }
 
-// The watcher's own handle is a slug; ensureIdentity appends `.test`. Strip an
-// accidental `@`/`.test` and reject DIDs or invalid slugs up front, so we never
-// try to create a double-suffixed (`foo.test.test`) or malformed handle.
+function fail(msg: string): never {
+  process.stderr.write(`aitty: ${msg}\n`)
+  process.exit(1)
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+const HELP = `
+aitty — a terminal client for your AIT instance
+
+Usage:
+  aitty [options]                       interactive: live timeline + prompt
+  aitty <subcommand> [args]             one-shot, then exit
+
+Subcommands:
+  post <text>                           compose a post
+  reply <at-uri> <text>                 reply to a post
+  follow <handle>                       follow an account
+  unfollow <handle>                     unfollow an account
+  notifs                                replies / mentions / follows on you
+  profile [handle]                      bio, counts, recent posts (default: you)
+  thread <at-uri>                       a post and its replies
+  watch <handle> [<handle> …]           read-only live stream of a chosen set
+  logout                                forget the stored login
+  help                                  this message
+
+Options (before the subcommand):
+  --handle <slug>     name your handle on first run (default: ${DEFAULT_HANDLE})
+  --interval <secs>   poll cadence for live views (default: ${DEFAULT_INTERVAL_SECS})
+  --no-color          disable ANSI styling (also honors NO_COLOR / non-TTY)
+  --password <pw>     pin the account password at creation (default: random)
+  -h, --help          this message
+
+Handles may be written @name, name, name.test, or a did:….
+aitty logs in to one persistent handle (stored 0600 under
+$XDG_DATA_HOME/ait-watcher/) and uses only end-client affordances — the same
+surface a human at bsky.app has (ADR-0006); realtime is polling (ADR-0010).
+`.trim()
+
+// The watcher's own handle is a slug; we append `.test`. Strip an accidental
+// `@`/`.test` and reject DIDs or invalid slugs up front, so we never try to
+// create a double-suffixed (`foo.test.test`) or malformed handle.
 function normalizeWatcherHandle(raw: string): string {
   const slug = stripAt(raw).replace(/\.test$/, '')
   if (!/^[a-z0-9-]{3,18}$/.test(slug)) {
@@ -114,40 +144,15 @@ function normalizeWatcherHandle(raw: string): string {
   return slug
 }
 
-function fail(msg: string): never {
-  process.stderr.write(`watch: ${msg}\n`)
-  process.exit(1)
-}
-
-const HELP = `
-ait watch — follow a set of AIT handles live in your terminal
-
-Usage:
-  bin/aitty [options] <handle> [<handle> …]
-
-Handles may be written @name, name, name.test, or a did:….
-
-Options:
-  --handle <name>     the watcher's own handle (default: ${DEFAULT_HANDLE})
-  --interval <secs>   poll cadence in seconds (default: ${DEFAULT_INTERVAL_SECS})
-  --no-color          disable ANSI styling (also honors NO_COLOR / non-TTY)
-  --password <pw>     pin the account password at creation (default: random)
-  -h, --help          show this help
-
-The watcher logs in to its own persistent handle, follows the given set, and
-streams their posts and replies. It appears as a follower to the watched
-handles. Re-running with a different set reconciles the follows.
-`.trim()
-
-async function ensureIdentity(
-  agent: ReturnType<typeof makeAgent>,
-  opts: Options,
-): Promise<WatcherIdentity> {
+// Load the stored identity, or mint a new account on first run. The account is
+// shared by every mode (interactive, watch, one-shots) — one client, one handle.
+async function ensureIdentity(agent: AtpAgent, flags: Flags): Promise<WatcherIdentity> {
   const existing = loadIdentity()
   if (existing) return existing
 
-  const handle = `${opts.watcherHandle}.test`
-  const password = opts.password ?? randomBytes(16).toString('hex')
+  const slug = normalizeWatcherHandle(flags.handle ?? DEFAULT_HANDLE)
+  const handle = `${slug}.test`
+  const password = flags.password ?? randomBytes(16).toString('hex')
   try {
     const acct = await createWatcherAccount(agent, handle, password)
     const identity: WatcherIdentity = {
@@ -162,12 +167,11 @@ async function ensureIdentity(
     return identity
   } catch (err) {
     if (err instanceof HandleTakenError) {
-      const slug = opts.watcherHandle
       const rand = randomBytes(2).toString('hex')
       process.stderr.write(
-        `watch: handle @${handle} is taken or invalid.\n` +
+        `aitty: handle @${handle} is taken or invalid.\n` +
           `Re-run with --handle set to one of:\n` +
-          [`${slug}-watch`, `${slug}-obs`, `${slug}-2`, `${slug}-${rand}`]
+          [`${slug}-1`, `${slug}-cli`, `${slug}-${rand}`]
             .map((s) => `  --handle ${s}`)
             .join('\n') +
           '\n',
@@ -183,36 +187,36 @@ async function ensureIdentity(
 // identity file is lost or moved to another machine.
 function announceNewAccount(identity: WatcherIdentity): void {
   process.stderr.write(
-    `\nCreated watcher account:\n` +
+    `\nCreated account:\n` +
       `  handle:   @${identity.handle}\n` +
       `  password: ${identity.password}\n` +
       `  stored:   ${identityFilePath()} (mode 0600)\n` +
-      `Save these — the handle can never be re-minted. Reuse it by re-running watch.\n\n`,
+      `Save these — the handle can never be re-minted. Reuse it by re-running aitty.\n\n`,
   )
 }
 
-interface ReconcileResult {
-  followed: number
-  unresolved: string[]
-  // DIDs the requested set resolved to. The feed is filtered to these so the
-  // watcher shows exactly the set even while the AppView is still indexing a
-  // just-written follow/unfollow (or if the follow graph drifted).
-  desiredDids: Set<string>
+async function bootstrap(flags: Flags): Promise<{ agent: AtpAgent; identity: WatcherIdentity }> {
+  const agent = makeAgent()
+  const identity = await ensureIdentity(agent, flags)
+  await loginWatcher(agent, identity.handle, identity.password)
+  return { agent, identity }
 }
 
-async function reconcileFollows(
-  agent: ReturnType<typeof makeAgent>,
+// Ensure we follow each requested handle (so its posts reach getTimeline) and
+// return the DIDs to filter the displayed feed to. Monotonic: it never
+// unfollows — the follow graph is shared with the interactive client, so a
+// focused `watch` must not drop follows the user made on purpose. The feed is
+// filtered to `desiredDids` so `watch` still shows exactly its set.
+async function ensureFollows(
+  agent: AtpAgent,
   identity: WatcherIdentity,
   requested: string[],
-): Promise<ReconcileResult> {
-  const requestedSet = new Set(requested)
+): Promise<{ desiredDids: Set<string>; unresolved: string[] }> {
   const desiredDids = new Set<string>()
   const unresolved: string[] = []
-
   for (const handle of requested) {
-    // Resolve to a DID. If resolve hiccups but we already follow this handle,
-    // reuse the stored DID so a transient failure doesn't hide its posts; only
-    // a genuinely-unknown handle (never joined) counts as unresolved.
+    // Resolve to a DID; if resolve hiccups but we already follow this handle,
+    // reuse the stored DID so a transient failure doesn't hide its posts.
     let did: string | undefined
     try {
       did = await resolveHandleToDid(agent, handle)
@@ -224,11 +228,9 @@ async function reconcileFollows(
       continue
     }
     if (did === identity.did) continue // never follow self
-    if (desiredDids.has(did)) continue // same account given twice (handle + did)
+    if (desiredDids.has(did)) continue // same account given twice
     desiredDids.add(did)
 
-    // Follow if not already tracked. A transient follow error is logged and
-    // skipped (retried next run), not fatal — matching the poll loop's tolerance.
     if (!identity.follows[handle]) {
       try {
         const followUri = await followAccount(agent, identity.did, did)
@@ -236,102 +238,34 @@ async function reconcileFollows(
         saveIdentity(identity)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
-        process.stderr.write(`watch: could not follow ${handle} (${msg}); will retry next run\n`)
+        process.stderr.write(`aitty: could not follow ${handle} (${msg}); will retry next run\n`)
       }
     }
   }
-
-  // Unfollow handles the user actually dropped. Gate on requestedSet, NOT on
-  // resolution: a requested handle that merely failed to resolve this run stays
-  // requested, so a transient hiccup never unfollows an account still wanted.
-  for (const handle of Object.keys(identity.follows)) {
-    if (requestedSet.has(handle)) continue
-    try {
-      await unfollowAccount(agent, identity.did, identity.follows[handle].followUri)
-    } catch {
-      // Record already gone server-side — drop it locally regardless.
-    }
-    delete identity.follows[handle]
-    saveIdentity(identity)
-  }
-
-  return { followed: desiredDids.size, unresolved, desiredDids }
+  return { desiredDids, unresolved }
 }
 
-// Resolve the handle a reply points at, caching DID→handle. Seeded from every
-// author we see, so most lookups are free; getProfile is the fallback.
-async function replyParentHandle(
-  agent: ReturnType<typeof makeAgent>,
-  item: FeedItem,
-  cache: Map<string, string>,
-): Promise<{ isReply: boolean; parentHandle: string | null }> {
-  const parentUri = item.post.record.reply?.parent?.uri
-  if (!parentUri) return { isReply: false, parentHandle: null }
-  let parentDid: string
-  try {
-    parentDid = new AtUri(parentUri).host
-  } catch {
-    return { isReply: true, parentHandle: null }
-  }
-  let handle = cache.get(parentDid) ?? null
-  if (!handle) {
-    handle = await fetchHandleForDid(agent, parentDid)
-    if (handle) cache.set(parentDid, handle)
-  }
-  return { isReply: true, parentHandle: handle }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-async function printItem(
-  agent: ReturnType<typeof makeAgent>,
-  item: FeedItem,
-  styles: Styles,
-  width: number,
-  didHandle: Map<string, string>,
+// `aitty watch <handles>` — the read-only stream of a chosen set, styled like a
+// feed. The original watcher behavior, now a subcommand.
+async function runWatch(
+  agent: AtpAgent,
+  identity: WatcherIdentity,
+  rawHandles: string[],
+  flags: Flags,
 ): Promise<void> {
-  didHandle.set(item.post.author.did, item.post.author.handle)
-  const { isReply, parentHandle } = await replyParentHandle(agent, item, didHandle)
-  const text = renderPost(item, {
-    styles,
-    now: Date.now(),
-    width,
-    isReply,
-    parentHandle,
-  })
-  process.stdout.write(text + '\n\n')
-}
-
-async function main(): Promise<void> {
-  const parsed = parseArgs(process.argv.slice(2))
-  if (parsed === 'help') {
-    process.stdout.write(HELP + '\n')
-    return
-  }
-  const opts = parsed
-
-  const styles = makeStyles(supportsColor(opts.noColor))
+  // Caller (the watch dispatch) has already validated rawHandles is non-empty
+  // and flag-free.
+  const handles = rawHandles.map(normalizeHandle)
+  const styles = makeStyles(supportsColor(flags.noColor))
   const width = feedWidth()
 
-  const agent = makeAgent()
-  const identity = await ensureIdentity(agent, opts)
-  await loginWatcher(agent, identity.handle, identity.password)
-
-  const { followed, unresolved, desiredDids } = await reconcileFollows(
-    agent,
-    identity,
-    opts.handles,
-  )
+  const { desiredDids, unresolved } = await ensureFollows(agent, identity, handles)
   process.stderr.write(
-    `Watching ${followed} handle${followed === 1 ? '' : 's'} as @${identity.handle} ` +
-      `(every ${opts.intervalSecs}s). Ctrl-C to stop.\n`,
+    `watching ${desiredDids.size} handle${desiredDids.size === 1 ? '' : 's'} as ` +
+      `@${identity.handle} (every ${flags.intervalSecs}s). Ctrl-C to stop.\n`,
   )
   if (unresolved.length > 0) {
-    process.stderr.write(
-      `Not found yet (will pick up on a later run): ${unresolved.join(', ')}\n`,
-    )
+    process.stderr.write(`not found yet (will pick up on a later run): ${unresolved.join(', ')}\n`)
   }
   process.stderr.write('\n')
 
@@ -343,22 +277,19 @@ async function main(): Promise<void> {
   const seen = new Set<string>()
   const didHandle = new Map<string, string>()
 
-  // Startup backlog: show the most recent BACKLOG posts oldest-first as context.
-  // A transient failure here is non-fatal — fall through to the resilient poll loop.
   try {
     const initial = await fetchTimeline(agent, BACKLOG)
     for (const item of initial.slice().reverse()) {
       if (!desiredDids.has(item.post.author.did)) continue
-      await printItem(agent, item, styles, width, didHandle)
+      process.stdout.write((await renderFeedItem(agent, item, styles, width, didHandle)) + '\n\n')
       seen.add(item.post.uri)
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    process.stderr.write(`watch: initial fetch failed (${msg}); will catch up on next poll\n`)
+    process.stderr.write(`aitty: initial fetch failed (${msg}); will catch up on next poll\n`)
   }
 
-  // Poll loop. getTimeline is reverse-chrono; print fresh items oldest-first.
-  const intervalMs = opts.intervalSecs * 1000
+  const intervalMs = flags.intervalSecs * 1000
   for (;;) {
     await sleep(intervalMs)
     let feed: FeedItem[]
@@ -366,25 +297,158 @@ async function main(): Promise<void> {
       feed = await fetchTimeline(agent, 50)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      process.stderr.write(`watch: poll failed (${msg}); retrying…\n`)
+      process.stderr.write(`aitty: poll failed (${msg}); retrying…\n`)
       continue
     }
     const fresh = feed
       .filter((item) => !seen.has(item.post.uri) && desiredDids.has(item.post.author.did))
       .reverse()
     for (const item of fresh) {
-      await printItem(agent, item, styles, width, didHandle)
+      process.stdout.write((await renderFeedItem(agent, item, styles, width, didHandle)) + '\n\n')
       seen.add(item.post.uri)
     }
-    // Bound the dedupe set (Set preserves insertion order → drop the oldest).
     if (seen.size > SEEN_CAP) {
       for (const uri of [...seen].slice(0, seen.size - SEEN_CAP)) seen.delete(uri)
     }
   }
 }
 
+function runLogout(): void {
+  const id = loadIdentity()
+  const removed = deleteIdentity()
+  if (!removed) {
+    process.stderr.write('aitty: not logged in (no identity file)\n')
+    return
+  }
+  process.stderr.write(
+    `logged out${id ? ` @${id.handle}` : ''} — removed ${identityFilePath()}.\n` +
+      `The handle can never be re-minted (ADR-0014); a new run creates a new one.\n`,
+  )
+}
+
+// Print a one-shot action's result to stdout (a trailing newline; honors
+// NO_COLOR / non-TTY via supportsColor).
+function emitLine(text: string): void {
+  process.stdout.write(text + '\n')
+}
+
+async function main(): Promise<void> {
+  // A downstream consumer that closes the pipe early (`aitty … | head`) makes
+  // the next stdout write raise EPIPE; exit cleanly rather than crash with a
+  // stack trace. Covers the live loops (interactive, watch) and one-shots.
+  process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EPIPE') process.exit(0)
+  })
+
+  const { flags, rest } = parseLeadingFlags(process.argv.slice(2))
+  if (flags.help) {
+    process.stdout.write(HELP + '\n')
+    return
+  }
+
+  const sub = rest[0]
+  const args = rest.slice(1)
+
+  // No subcommand → interactive client.
+  if (sub === undefined) {
+    const { agent, identity } = await bootstrap(flags)
+    await runInteractive(agent, identity, {
+      noColor: flags.noColor,
+      intervalSecs: flags.intervalSecs,
+    })
+    return
+  }
+
+  // A leftover flag here means the user put it after the subcommand.
+  if (sub.startsWith('-')) {
+    fail(`unknown flag: ${sub} (global flags go before the subcommand)`)
+  }
+
+  if (sub === 'help') {
+    process.stdout.write(HELP + '\n')
+    return
+  }
+  if (sub === 'logout') {
+    runLogout()
+    return
+  }
+  if (sub === 'watch') {
+    // Validate before bootstrap so a typo doesn't mint an account first.
+    if (args.length === 0) {
+      fail('usage: aitty watch <handle> [<handle> …]')
+    }
+    // Global flags go before the subcommand; a `-`-prefixed token here would
+    // otherwise be silently turned into the bogus handle `--foo.test`.
+    const stray = args.find((h) => h.startsWith('-'))
+    if (stray) {
+      fail(`unexpected flag after subcommand: ${stray} (put global flags first, e.g. aitty --no-color watch …)`)
+    }
+    const { agent, identity } = await bootstrap(flags)
+    await runWatch(agent, identity, args, flags)
+    return
+  }
+
+  // The remaining subcommands are one-shots: bootstrap, act, exit.
+  const styles = makeStyles(supportsColor(flags.noColor))
+  const width = feedWidth()
+
+  switch (sub) {
+    case 'post': {
+      const text = args.join(' ').trim()
+      if (!text) fail('usage: aitty post <text>')
+      const { agent, identity } = await bootstrap(flags)
+      emitLine(await actionPost(agent, identity, text))
+      return
+    }
+    case 'reply': {
+      const uri = args[0]
+      const text = args.slice(1).join(' ').trim()
+      if (!uri || !text) fail('usage: aitty reply <at-uri> <text>')
+      const { agent, identity } = await bootstrap(flags)
+      emitLine(await actionReply(agent, identity, uri, text))
+      return
+    }
+    case 'follow':
+    case 'unfollow': {
+      const target = args[0]
+      if (!target) fail(`usage: aitty ${sub} <handle>`)
+      const { agent, identity } = await bootstrap(flags)
+      emitLine(
+        sub === 'follow'
+          ? await actionFollow(agent, identity, target)
+          : await actionUnfollow(agent, identity, target),
+      )
+      return
+    }
+    case 'notifs': {
+      const { agent } = await bootstrap(flags)
+      emitLine(await actionNotifs(agent, styles))
+      return
+    }
+    case 'profile': {
+      const { agent, identity } = await bootstrap(flags)
+      emitLine(await actionProfile(agent, args[0] || identity.handle, styles, width))
+      return
+    }
+    case 'thread': {
+      const uri = args[0]
+      if (!uri) fail('usage: aitty thread <at-uri>')
+      const { agent } = await bootstrap(flags)
+      emitLine(await actionThread(agent, uri, styles, width))
+      return
+    }
+    default:
+      // Old muscle memory: `bin/watch.sh @handle` watched. Hint the new form.
+      fail(
+        `unknown subcommand: ${sub}\n` +
+          `Did you mean: aitty watch ${rest.join(' ')}\n` +
+          `Run "aitty help" for the list.`,
+      )
+  }
+}
+
 main().catch((err) => {
   const msg = err instanceof Error ? err.message : String(err)
-  process.stderr.write(`watch: ${msg}\n`)
+  process.stderr.write(`aitty: ${msg}\n`)
   process.exit(1)
 })

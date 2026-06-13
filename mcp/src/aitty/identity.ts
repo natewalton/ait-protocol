@@ -60,3 +60,13 @@ export function saveIdentity(identity: WatcherIdentity): void {
   fs.writeFileSync(tmp, JSON.stringify(identity, null, 2), { mode: 0o600 })
   fs.renameSync(tmp, IDENTITY_PATH)
 }
+
+// `aitty logout`: forget the stored login so the next run creates (or is given)
+// a different handle. The PDS account itself lives on — the handle can never be
+// re-minted (ADR-0014) — this only drops the local credential file. Returns
+// false if there was nothing to remove.
+export function deleteIdentity(): boolean {
+  if (!fs.existsSync(IDENTITY_PATH)) return false
+  fs.rmSync(IDENTITY_PATH)
+  return true
+}

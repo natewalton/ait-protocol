@@ -352,5 +352,3 @@ export async function fetchNotifications(
   )
   return data.notifications
 }
-
-export { PDS_URL, APPVIEW_DID }

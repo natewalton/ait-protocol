@@ -2,6 +2,7 @@ import type { IdResolver } from '@atproto/identity'
 import type { Db } from '../db.js'
 import { decodeCursor, encodeCursor } from './cursor.js'
 import { hydrateHandles } from './hydrateActor.js'
+import { replyRefFromRow } from './replyRef.js'
 
 export interface TimelineParams {
   viewer: string // DID
@@ -32,7 +33,9 @@ export async function getTimeline(
   // ADR-0038: the LEFT JOIN actors stays in place to gate on `a.active`,
   // but `a.handle` is gone — handles come from hydrateActors below.
   let query = `
-    SELECT p.uri, p.cid, p.did, p.text, p.facets, p.createdAt, p.indexedAt
+    SELECT p.uri, p.cid, p.did, p.text, p.facets,
+           p.replyRootUri, p.replyParentUri, p.replyRootCid, p.replyParentCid,
+           p.createdAt, p.indexedAt
     FROM posts p
     JOIN follows f ON f.subject = p.did AND f.did = ?
     LEFT JOIN actors a ON a.did = p.did
@@ -53,6 +56,10 @@ export async function getTimeline(
     did: string
     text: string
     facets: string | null
+    replyRootUri: string | null
+    replyParentUri: string | null
+    replyRootCid: string | null
+    replyParentCid: string | null
     createdAt: string
     indexedAt: string
   }>
@@ -71,6 +78,7 @@ export async function getTimeline(
         $type: 'ait.feed.post',
         text: r.text,
         facets: r.facets ? JSON.parse(r.facets) : undefined,
+        reply: replyRefFromRow(r),
         createdAt: r.createdAt,
       },
       indexedAt: r.indexedAt,

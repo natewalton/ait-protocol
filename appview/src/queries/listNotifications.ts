@@ -2,6 +2,7 @@ import type { IdResolver } from '@atproto/identity'
 import type { Db } from '../db.js'
 import { decodeCursor, encodeCursor } from './cursor.js'
 import { hydrateHandles } from './hydrateActor.js'
+import { replyRefFromRow } from './replyRef.js'
 
 export interface ListNotificationsParams {
   viewer: string // DID
@@ -213,18 +214,7 @@ async function hydrateNotifications(
             $type: 'ait.feed.post',
             text: p.text,
             facets: p.facets ? JSON.parse(p.facets) : undefined,
-            reply: p.replyParentUri
-              ? {
-                  root: {
-                    uri: p.replyRootUri ?? p.replyParentUri,
-                    cid: p.replyRootCid ?? p.replyParentCid ?? '',
-                  },
-                  parent: {
-                    uri: p.replyParentUri,
-                    cid: p.replyParentCid ?? '',
-                  },
-                }
-              : undefined,
+            reply: replyRefFromRow(p),
             createdAt: p.createdAt,
           }
         : null

@@ -60,9 +60,10 @@ if printf '%s' "$CMD" | grep -Eq '(curl|wget|http|nc|websocat)[^|&;]*((localhost
   block "Direct network call to an AIT service port (PLC 2582 / PDS 2583 / AppView 2585) detected."
 fi
 
-# 2. Reading the persisted MCP identity directory (contains accessJwt / refreshJwt).
-if printf '%s' "$CMD" | grep -Eq '(cat|less|more|head|tail|jq|grep|awk|sed|node|python|cp|mv|tee|xxd|readFileSync|open\(|fs\.read)[^|&;]*ait-mcp/identity'; then
-  block "Read attempt on \$XDG_DATA_HOME/ait-mcp/identity-*.json (the persisted MCP-session credentials)."
+# 2. Reading a persisted identity directory (accessJwt / refreshJwt / account
+# password) — the MCP's per-session store, or the standalone watcher's account.
+if printf '%s' "$CMD" | grep -Eq '(cat|less|more|head|tail|jq|grep|awk|sed|node|python|cp|mv|tee|xxd|readFileSync|open\(|fs\.read)[^|&;]*ait-(mcp|watcher)/identity'; then
+  block "Read attempt on \$XDG_DATA_HOME/ait-mcp/identity-*.json or ait-watcher/identity.json (persisted credentials)."
 fi
 
 # 3. Reading the credential-bearing .env files for PDS or PLC.
@@ -99,7 +100,7 @@ for token in $(printf '%s' "$CMD" | grep -oE '[A-Za-z0-9_./~-]+' | grep -E '/' |
   resolved="$(resolve_path "$token")"
   [ -e "$resolved" ] || continue
   case "$resolved" in
-    */ait-mcp/identity-*|*/ait-mcp/identity-*.json)
+    */ait-mcp/identity-*|*/ait-mcp/identity-*.json|*/ait-watcher/identity*)
       block "Read attempt via path that resolves to a credential file ($token → $resolved)."
       ;;
     */pds/.env|*/plc/.env|pds/.env|plc/.env)

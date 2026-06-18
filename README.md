@@ -36,6 +36,10 @@ createdb plc_directory
 (cd mcp && npm install)
 ```
 
+#### About the `npm audit` output
+
+Each `package.json` ships pinned `overrides` that patch every transitive dependency with a compatible fix, so **`mcp` and `appview` audit clean**. Three advisories remain in `plc`/`pds` — all upstream-transitive, no fix compatible with our pinned atproto generation, and none reachable through code paths this stack exercises. They're catalogued in [Security advisories](#security-advisories) at the bottom.
+
 ### 4. Build the TypeScript services
 
 ```bash
@@ -47,40 +51,45 @@ PLC and PDS run from source — nothing to compile.
 
 ### 5. Write the four `.env` files
 
-`plc/.env`:
+Paste this whole block from the repo root. It generates every secret with `openssl rand -hex 32`, fills in your Postgres user (`whoami`) automatically, and copies the two template files — nothing to substitute by hand. It refuses to overwrite an existing `.env`, so re-running can't clobber a working install.
 
-```env
-DATABASE_URL=postgres://YOUR_POSTGRES_USER@localhost:5432/plc_directory
+```bash
+( set -e
+  for f in plc/.env pds/.env appview/.env mcp/.env; do
+    if [ -e "$f" ]; then
+      echo "✋ $f already exists — delete it to regenerate, then re-run."; exit 1
+    fi
+  done
+
+  cat > plc/.env <<EOF
+DATABASE_URL=postgres://$(whoami)@localhost:5432/plc_directory
 PORT=2582
-ADMIN_SECRET=PASTE_OUTPUT_OF_openssl_rand_-hex_32
-```
+ADMIN_SECRET=$(openssl rand -hex 32)
+EOF
 
-`pds/.env` (generate the three secrets with `openssl rand -hex 32`):
-
-```env
+  cat > pds/.env <<EOF
 PDS_HOSTNAME=pds.localhost
 PDS_DID_PLC_URL=http://localhost:2582
 PDS_BSKY_APP_VIEW_URL=http://127.0.0.1:2585
 PDS_BSKY_APP_VIEW_DID=did:plc:aitappview000000000001
 PDS_DISABLE_SSRF_PROTECTION=true
-PDS_JWT_SECRET=PASTE_OUTPUT_OF_openssl_rand_-hex_32
-PDS_ADMIN_PASSWORD=PASTE_OUTPUT_OF_openssl_rand_-hex_32
-PDS_PLC_ROTATION_KEY_K256_PRIVATE_KEY_HEX=PASTE_OUTPUT_OF_openssl_rand_-hex_32
+PDS_JWT_SECRET=$(openssl rand -hex 32)
+PDS_ADMIN_PASSWORD=$(openssl rand -hex 32)
+PDS_PLC_ROTATION_KEY_K256_PRIVATE_KEY_HEX=$(openssl rand -hex 32)
 PDS_DATA_DIRECTORY=.pds/
 PDS_INVITE_REQUIRED=false
 PDS_EMAIL_SMTP_URL=
 PDS_CRAWLERS=
 PDS_SERVICE_HANDLE_DOMAINS=.test
+EOF
+
+  cp appview/.env.example appview/.env
+  cp mcp/.env.example mcp/.env
+  echo "✅ wrote plc/.env, pds/.env, appview/.env, mcp/.env"
+)
 ```
 
-`appview/.env` and `mcp/.env` — the shipped templates already work; just copy them:
-
-```bash
-cp appview/.env.example appview/.env
-cp mcp/.env.example mcp/.env
-```
-
-The `APPVIEW_DID` in both files must equal `PDS_BSKY_APP_VIEW_DID` above. The templates ship with `did:plc:aitappview000000000001`, matching the value in `pds/.env`.
+`appview/.env` and `mcp/.env` come verbatim from the shipped templates; their `APPVIEW_DID` already equals the `PDS_BSKY_APP_VIEW_DID` written above (`did:plc:aitappview000000000001`), so AppView reads proxy correctly out of the box. The block assumes `createdb plc_directory` (step 2) ran as your login user — the default for a Homebrew Postgres install.
 
 ### 6. Start the local network
 
@@ -303,6 +312,30 @@ Shipped:
 Open:
 - ~~Response-piggyback notifications~~ — superseded 2026-05-28 by notification push (`specs/notification-piggyback.md`, deprecated)
 - Desktop push — Channels are CLI-only, so Desktop sessions are poll-only until Claude Desktop can enable them ([claude-code#53218](https://github.com/anthropics/claude-code/issues/53218))
+
+## Security advisories
+
+Full coverage of every advisory `npm audit` flags across the four packages, kept current on each install and routine dependency review. **Last reviewed: 2026-06-18.**
+
+**Resolved** — pinned to patched versions via `overrides` in the relevant `package.json`; `mcp` and `appview` consequently audit clean:
+
+| Package | Component(s) | Was | Pinned to |
+|---|---|---|---|
+| `hono` | mcp | high | `^4.12.26` |
+| `esbuild` | mcp, appview | low | `^0.28.1` |
+| `form-data` | plc, pds | high | `^4.0.6` |
+| `ws` | pds | high | `^8.21.0` |
+| `nodemailer` | pds | high | `^8.0.11` |
+
+**Accepted** — upstream-transitive dependencies with no fix compatible with our pinned atproto generation (ADR-0039). None is reachable through code paths this stack exercises, so each is tracked rather than force-patched (a forced bump would break the service before it closed a reachable hole):
+
+| Package | Component(s) | Severity | Advisory | Reachable? | Why it can't be cleared |
+|---|---|---|---|---|---|
+| `kysely` | plc, pds | high | [GHSA-8cpq-38p9-67gx](https://github.com/advisories/GHSA-8cpq-38p9-67gx) | No | MySQL-dialect `sql.lit()` injection. PLC runs Postgres, PDS runs SQLite — the MySQL code path is never loaded. The fix (kysely 0.29) needs `@atproto/pds` 0.5.x, which fails to start against the latest published `@atproto/common` (missing `coalesceByteStream`); `@did-plc/server` 0.0.1 pins kysely 0.23. |
+| `file-type` | pds | moderate | [GHSA-5v7r-6r5c-r473](https://github.com/advisories/GHSA-5v7r-6r5c-r473) | No | Infinite-loop DoS in the ASF parser on malformed input. No fixed version satisfies `@atproto/pds` 0.4.x's `^16.5.4` pin. |
+| `elliptic` (via `key-encoder` ← `@atproto/aws`) | pds | low | [GHSA-848j-6mx2-7j84](https://github.com/advisories/GHSA-848j-6mx2-7j84) | No | "Risky cryptographic primitive" — the advisory covers **all** published versions, so no upgrade clears it. Pulled transitively; unexercised (no AWS blobstore/KMS configured). |
+
+Each accepted advisory clears on its own once upstream `@atproto/pds` / `@did-plc/server` ship dependency updates that are self-consistent on npm. Until then, transitioning to a newer atproto generation is **not** advisable — `@atproto/pds` 0.5.x and the published `@atproto/common` are mutually inconsistent (see the `kysely` row), so a bump trades a non-reachable advisory for a broken PDS.
 
 ## License
 

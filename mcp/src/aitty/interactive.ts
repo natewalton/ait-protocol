@@ -24,9 +24,16 @@ import {
   actionNotifs,
   actionProfile,
   actionThread,
+  stripAt,
 } from './commands.js'
 
 const INDEX_CAP = 1000 // bound the n→uri map (old numbers have scrolled away)
+
+// Tab-completion targets: commands whose argument is a handle (complete the
+// whole token), and commands whose free text carries @mentions (complete after
+// an `@`). Keys match the command names + aliases handled below.
+const HANDLE_ARG_CMDS = new Set(['follow', 'f', 'unfollow', 'profile', 'u'])
+const MENTION_CMDS = new Set(['post', 'p', 'reply', 'r'])
 
 export interface InteractiveOpts {
   noColor: boolean
@@ -44,6 +51,8 @@ const HELP = [
   '  thread <n>           (t)  the thread for printed post #n',
   '  help                 (?)  this list',
   '  quit                 (q)  exit',
+  '',
+  '  tab-completes handles after follow/unfollow/profile and after @ in posts',
 ].join('\n')
 
 export async function runInteractive(
@@ -166,11 +175,53 @@ export async function runInteractive(
     return
   }
 
+  // Handles we can offer for Tab-completion: your own, everyone you follow, and
+  // every author whose post has streamed by (didHandle, seeded as posts render).
+  // All are full handles (alice.test); drop DID-keyed follows and any missing
+  // handle, which aren't useful to type.
+  function completionHandles(): string[] {
+    const handles = new Set<string>([identity.handle])
+    for (const key of Object.keys(identity.follows)) {
+      if (!key.startsWith('did:')) handles.add(key)
+    }
+    for (const handle of didHandle.values()) {
+      if (handle && !handle.startsWith('did:')) handles.add(handle)
+    }
+    return [...handles].sort()
+  }
+
+  // readline completer: complete the token under the cursor against known
+  // handles, but only where a handle is expected — the argument of
+  // follow/unfollow/profile, or an `@mention` inside post/reply text. Returns
+  // [candidates, tokenBeingCompleted]; readline splices in the shared remainder.
+  function completeHandle(line: string): [string[], string] {
+    const word = line.slice(line.search(/\S*$/)) // trailing token, up to cursor
+    const lead = line.replace(/^\s+/, '')
+    const firstSpace = lead.search(/\s/)
+    if (firstSpace === -1) return [[], word] // still typing the command itself
+    const cmd = lead.slice(0, firstSpace).toLowerCase()
+
+    const isHandleArg = HANDLE_ARG_CMDS.has(cmd)
+    const isMention = MENTION_CMDS.has(cmd) && word.startsWith('@')
+    if (!isHandleArg && !isMention) return [[], word]
+
+    const at = word.startsWith('@') ? '@' : ''
+    const partial = stripAt(word) // strips a leading @ and lowercases
+    const hits = completionHandles()
+      .filter((handle) => handle.startsWith(partial))
+      .map((handle) => at + handle)
+    return [hits, word]
+  }
+
   // In-flight commands, so a quit mid-write waits for the post/reply to land
   // rather than process.exit abandoning the network call.
   const inflight = new Set<Promise<void>>()
 
-  rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    completer: completeHandle,
+  })
   rl.setPrompt(styles.dim('› '))
   rl.on('line', (line) => {
     if (line.trim() === '') {

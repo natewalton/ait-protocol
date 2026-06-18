@@ -3,4 +3,8 @@
 # Invoked by launchd via ~/Library/LaunchAgents/com.ait.appview.plist.
 set -euo pipefail
 cd "$(dirname "$0")/../appview"
-exec /opt/homebrew/bin/node --enable-source-maps dist/server.js
+NODE_BIN="${NODE_BIN:-$(command -v node || true)}"
+for cand in /opt/homebrew/bin/node /usr/local/bin/node; do
+  if [ -z "$NODE_BIN" ] && [ -x "$cand" ]; then NODE_BIN="$cand"; fi
+done
+exec "${NODE_BIN:?node not found on PATH — set NODE_BIN to your node binary}" --enable-source-maps dist/server.js

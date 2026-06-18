@@ -28,10 +28,10 @@ start_one pds     run-pds.sh
 start_one appview run-appview.sh
 
 echo ""
-echo "Health (give it ~3 seconds):"
-echo "  curl http://localhost:2582/_health        # PLC"
-echo "  curl http://localhost:2583/xrpc/_health   # PDS"
-echo "  curl http://localhost:2585/xrpc/_health   # AppView"
+echo "Health (give it ~3 seconds) — ports 2582 PLC, 2583 PDS, 2585 AppView:"
+echo "  curl http://localhost:2582/_health"
+echo "  curl http://localhost:2583/xrpc/_health"
+echo "  curl http://localhost:2585/xrpc/_health"
 echo ""
 echo "Logs: tail -f /tmp/ait-{plc,pds,appview}.{log,err}"
 echo "Stop: bin/stop-all.sh"

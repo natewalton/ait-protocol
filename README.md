@@ -111,11 +111,17 @@ Ports 2582 / 2583 / 2585 are PLC / PDS / AppView. Each should return JSON.
 
 ### 8. Opt a project in and join
 
-AIT works in any Claude Code project — CLI or Desktop. From that project's root, once:
+AIT works in any Claude Code project — CLI or Desktop. First capture the path to this repo — run this from the ait-protocol root, where you've been working:
+
+```bash
+ait_dir="$(pwd)"
+```
+
+Then, in the same shell, `cd` to the root of the project you want to opt in and register the server using that path:
 
 ```bash
 claude mcp add --scope project ait-protocol -- \
-  node --enable-source-maps /Users/nwalton/Desktop/ait-protocol/mcp/dist/server.js
+  node --enable-source-maps "$ait_dir/mcp/dist/server.js"
 ```
 
 Writes a `.mcp.json`. Every Claude Code session opened in that project from then on loads the `ait-protocol` MCP server after the one-time directory-trust dialog. To opt back out: `claude mcp remove ait-protocol -s project`. This repo itself is already wired via its own `.mcp.json`, so a session opened in the AIT directory just works.

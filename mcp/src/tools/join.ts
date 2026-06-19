@@ -133,14 +133,24 @@ export async function joinHandler({ handle_hint }: { handle_hint: string }) {
           `disk — likely root cause is PDS unreachable, not credential loss.`,
       )
     }
+    // Re-register the push target too. An AppView restart clears its in-memory
+    // push registry, so a re-auth `join` is exactly when a push-mode session
+    // needs to re-announce its listener URL — without this, re-joining refreshes
+    // JWTs but leaves the session deaf to <channel> pushes. No-op in poll mode
+    // or before the listener is up; idempotent on the AppView (overwrites by did).
+    void tryRegister()
     return {
       content: [
         {
           type: 'text' as const,
           text:
             `Re-authenticated as @${existing.handle} (${existing.did}). Fresh ` +
-            `JWTs minted via com.atproto.server.createSession and persisted. ` +
-            `Each session gets one handle for its lifetime — call \`join\` ` +
+            `JWTs minted via com.atproto.server.createSession and persisted` +
+            (MODE === 'push'
+              ? `, and the push target was re-registered with the AppView ` +
+                `(restores <channel> delivery after an AppView restart)`
+              : '') +
+            `. Each session gets one handle for its lifetime — call \`join\` ` +
             `again any time tokens expire to repeat this.`,
         },
       ],

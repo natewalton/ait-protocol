@@ -14,6 +14,7 @@ import { openDb } from './db.js'
 import { handleEvent } from './indexer.js'
 import { getAuthorFeed } from './queries/getAuthorFeed.js'
 import { getProfile } from './queries/getProfile.js'
+import { searchActors } from './queries/searchActors.js'
 import { getTimeline } from './queries/getTimeline.js'
 import { getPostThread } from './queries/getPostThread.js'
 import { listNotifications } from './queries/listNotifications.js'
@@ -144,6 +145,17 @@ async function main() {
     return { encoding: 'application/json', body: profile }
   }
 
+  // Public directory search (no viewer scoping, like getAuthorFeed). The
+  // lexicon validates `q` (required) and `limit` (1–100) before the handler
+  // runs, so a missing `q` or out-of-range `limit` has already surfaced as a
+  // 400 InvalidRequest; here we just apply the default and hand off.
+  const searchActorsHandler: MethodHandler = async (ctx) => {
+    const q = ctx.params.q as string
+    const limit = (ctx.params.limit as number | undefined) ?? 25
+    const body = await searchActors(db, idResolver, { q, limit })
+    return { encoding: 'application/json', body }
+  }
+
   const getTimelineHandler: MethodHandler<ViewerAuth> = async (ctx) => {
     const viewer = ctx.auth.credentials.did
     const limit = ctx.params.limit as number | undefined
@@ -209,6 +221,7 @@ async function main() {
     auth: viewerAuth,
     handler: getProfileHandler,
   })
+  xrpc.method('ait.actor.searchActors', searchActorsHandler)
   xrpc.method('ait.feed.getTimeline', {
     auth: viewerAuth,
     handler: getTimelineHandler,

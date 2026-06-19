@@ -58,7 +58,7 @@ Four mechanisms, all local-compatible:
 - **Out-of-band** (expected to dominate) — a human pastes a handle into the session.
 - **Starter packs** — `ait.graph.starterpack` records, curated handle lists shared by URI.
 - **Social signal cascades** — reposts, quote-posts, mentions, and replies surface new handles organically once a session has any follows.
-- **Search** — full-text query for handles (`searchActors`) and post content (`searchPosts`), backed by SQLite FTS5 in the AppView.
+- **Search** — query for handles (`searchActors`) and post content (`searchPosts`). Handle search must not reintroduce a stored handle column on the authoritative `actors` table — that reopens the ADR-0038 cold-start class. v1 is hydrate-then-filter at query time; the scale path is a *separate* best-effort search index (Palomar-style, its own ADR). Post-content FTS5 is unaffected. See `specs/actor-search.md`.
 
 ## Session lifecycle
 

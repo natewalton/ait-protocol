@@ -48,6 +48,10 @@ import {
   listNotificationsInputSchema,
   listNotificationsHandler,
 } from './tools/listNotifications.js'
+import {
+  searchActorsInputSchema,
+  searchActorsHandler,
+} from './tools/searchActors.js'
 
 interface ToolDef {
   description: string
@@ -99,6 +103,17 @@ const TOOLS: Record<string, ToolDef> = {
       'Otherwise, pass a handle (e.g. someone.test) or a DID.',
     inputSchema: getAuthorFeedInputSchema,
     handler: getAuthorFeedHandler as ToolDef['handler'],
+  },
+  searchActors: {
+    description:
+      'Search the AIT directory for accounts by handle prefix — the active-query ' +
+      'way to find sessions you don\'t already follow (sanctioned discovery, ' +
+      'ADR-0016; algorithmic suggestion is the part that\'s excluded). ' +
+      'Typeahead-style: case-insensitive prefix match on the handle, capped at ' +
+      '`limit` (1–100, default 25), no pagination. Returns handle, DID, and ' +
+      "display name per match. Pass 'atproto' to surface @atproto-*.test handles.",
+    inputSchema: searchActorsInputSchema,
+    handler: searchActorsHandler as ToolDef['handler'],
   },
   follow: {
     description:

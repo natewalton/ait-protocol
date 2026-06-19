@@ -15,9 +15,10 @@
 // at the bottom of the screen (which scrolls the terminal) doesn't desync us:
 // the scroll moves cursor and prompt together, and "up N" still lands home.
 //
-// Single-row input is assumed (prompt + line ≤ terminal width); AIT commands and
-// handles are short. A line longer than the width wraps and the redraw math can
-// smear — an accepted v1 limitation, not a correctness risk for the data.
+// The input stays on a single terminal row: a line longer than the width scrolls
+// horizontally (a viewport that keeps the cursor visible) rather than wrapping,
+// and dropdown rows are clipped to the width. So the region's row count is always
+// known and the redraw math holds at any line length.
 
 import * as readline from 'node:readline'
 import type { Styles } from './render.js'
@@ -250,46 +251,58 @@ export class MentionPrompt {
   // --- rendering -------------------------------------------------------------
 
   // Redraw the input region in place. Invariant on entry AND exit: the terminal
-  // cursor sits on the prompt row. So: return to column 0, clear that row and
-  // everything below (the old dropdown), draw the prompt + line, draw the
-  // dropdown beneath, then move back up to the prompt row and out to the edit
-  // column.
+  // cursor sits on the (single) prompt row. So: return to column 0, clear that
+  // row and everything below (the old dropdown), draw the prompt + line, draw
+  // the dropdown beneath, then move back up to the prompt row and out to the
+  // edit column.
+  //
+  // The input is kept to ONE terminal row: a line longer than the width scrolls
+  // horizontally in a viewport that keeps the cursor visible, rather than
+  // wrapping. Wrapping would push the cursor onto a lower row, so the `\r`+CSI-0J
+  // clear (anchored to the cursor's row) would leave the wrapped rows above
+  // intact and the line would re-copy on every keystroke. The viewport also
+  // stops one column short of the width to dodge the terminal's deferred-wrap.
   private render(): void {
-    let out = '\r' + CSI + '0J'
-    out += this.styles.dim(PROMPT) + this.line
+    const width = process.stdout.columns || 80
+    const avail = Math.max(8, width - PROMPT_WIDTH - 1) // columns for line text
+    const scroll = Math.max(0, this.cursor - avail + 1) // window start, cursor-visible
+    const visible = this.line.slice(scroll, scroll + avail)
+    const cursorCol = PROMPT_WIDTH + (this.cursor - scroll) + 1 // 1-based
 
-    const rows = this.open ? this.dropdownRows() : []
+    let out = '\r' + CSI + '0J'
+    out += this.styles.dim(PROMPT) + visible
+
+    const rows = this.open ? this.dropdownRows(width) : []
     for (const row of rows) out += '\n' + row
     if (rows.length > 0) out += CSI + rows.length + 'A' // back up to the prompt row
 
-    const col = PROMPT_WIDTH + this.cursor + 1 // 1-based terminal column
-    out += CSI + col + 'G'
+    out += CSI + cursorCol + 'G'
     process.stdout.write(out)
   }
 
-  private dropdownRows(): string[] {
+  private dropdownRows(width: number): string[] {
     const dim = this.styles.dim
+    // Clip each row to a single terminal line (on the plain text, before styling)
+    // so a long handle/displayName can't wrap and re-introduce the multi-row
+    // breakage the input viewport avoids.
+    const clip = (s: string): string =>
+      s.length > width - 1 ? s.slice(0, width - 2) + '…' : s
     if (this.results.length === 0) {
-      return [
-        dim(
-          this.searching
-            ? `  (searching "${this.activeQuery}"…)`
-            : `  (no matches for "${this.activeQuery}")`,
-        ),
-      ]
+      const msg = this.searching
+        ? `  (searching "${this.activeQuery}"…)`
+        : `  (no matches for "${this.activeQuery}")`
+      return [dim(clip(msg))]
     }
     const shown = this.results.slice(0, MAX_ROWS)
     const rows = shown.map((actor, i) => {
       const handle = '@' + actor.handle
       const name = actor.displayName ? '  ' + actor.displayName : ''
-      const label = handle + name
       // Selected row: a ›-marker + emphasized handle. Others: dim, indented.
-      return i === this.selected
-        ? this.styles.mention('› ' + label)
-        : dim('  ' + label)
+      const label = clip((i === this.selected ? '› ' : '  ') + handle + name)
+      return i === this.selected ? this.styles.mention(label) : dim(label)
     })
     if (this.results.length > MAX_ROWS) {
-      rows.push(dim(`  …+${this.results.length - MAX_ROWS} more`))
+      rows.push(dim(clip(`  …+${this.results.length - MAX_ROWS} more`)))
     }
     return rows
   }

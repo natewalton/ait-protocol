@@ -2,20 +2,19 @@
 // each post numbered, and accept commands at a prompt pinned below the stream.
 // This is the default `aitty` (no subcommand) experience.
 //
-// The one non-trivial bit is keeping the prompt below the live feed (see the
-// spec section of the same name): on each incoming line we wipe the prompt
-// line, write the post straight to the stream (never rl.write(), which replays
-// into the input buffer — nodejs/node#12933), then redraw the prompt with the
-// in-progress input preserved. All of it gated on stdout being a TTY; piped,
-// it falls back to plain streaming with no prompt.
+// The one non-trivial bit is the input layer (picker.ts): a raw-mode line
+// editor with an inline @-mention picker (a live handle dropdown backed by
+// ait.actor.searchActors), keeping the prompt + dropdown pinned below the live
+// feed. Feed posts print above it via printAbovePrompt → MentionPrompt.printAbove.
+// All gated on stdout being a TTY; piped, it falls back to plain streaming.
 
-import * as readline from 'node:readline'
 import type { AtpAgent } from '@atproto/api'
-import type { FeedItem } from './agent.js'
+import { type FeedItem, fetchSearchActors } from './agent.js'
 import type { WatcherIdentity } from './identity.js'
 import { makeStyles, feedWidth, supportsColor } from './render.js'
 import { renderFeedItem } from './feed.js'
 import { emitBacklog, pollFeed, BACKLOG, SEEN_CAP } from './stream.js'
+import { MentionPrompt, type CompletionToken } from './picker.js'
 import {
   actionPost,
   actionReply,
@@ -29,9 +28,9 @@ import {
 
 const INDEX_CAP = 1000 // bound the n→uri map (old numbers have scrolled away)
 
-// Tab-completion targets: commands whose argument is a handle (complete the
-// whole token), and commands whose free text carries @mentions (complete after
-// an `@`). Keys match the command names + aliases handled below.
+// Picker targets: commands whose argument is a handle (the whole token is the
+// query), and commands whose free text carries @mentions (the query starts at
+// the `@`). Keys match the command names + aliases handled below.
 const HANDLE_ARG_CMDS = new Set(['follow', 'f', 'unfollow', 'profile', 'u'])
 const MENTION_CMDS = new Set(['post', 'p', 'reply', 'r'])
 
@@ -52,7 +51,8 @@ const HELP = [
   '  help                 (?)  this list',
   '  quit                 (q)  exit',
   '',
-  '  tab-completes handles after follow/unfollow/profile and after @ in posts',
+  '  @ opens a live handle picker — ↑/↓ choose, ⏎/tab insert, esc dismiss',
+  '  (handle args of follow/unfollow/profile pick too)',
 ].join('\n')
 
 export async function runInteractive(
@@ -69,19 +69,14 @@ export async function runInteractive(
   const seen = new Set<string>() // post uris already shown (dedupe)
   const index = new Map<number, string>() // printed [n] → post uri
   let counter = 0
-  let rl: readline.Interface | null = null
+  let prompt: MentionPrompt | null = null
 
   // Write a block above the pinned prompt. Before the prompt exists (backlog)
-  // or when piped, this is a plain write; with the prompt up, wipe-write-redraw.
+  // or when piped, this is a plain write; with the prompt up, the editor clears
+  // its region, writes the block into scrollback, and redraws below it.
   function printAbovePrompt(text: string): void {
-    if (isTTY && rl) {
-      readline.clearLine(process.stdout, 0)
-      readline.cursorTo(process.stdout, 0)
-      process.stdout.write(text + '\n\n')
-      rl.prompt(true)
-    } else {
-      process.stdout.write(text + '\n\n')
-    }
+    if (isTTY && prompt) prompt.printAbove(text)
+    else process.stdout.write(text + '\n\n')
   }
 
   function warn(s: string): void {
@@ -150,7 +145,7 @@ export async function runInteractive(
           return printAbovePrompt(HELP)
         case 'quit':
         case 'q':
-          if (rl) rl.close()
+          requestQuit()
           return
         default:
           return warn(`unknown command: ${cmd} — type "help"`)
@@ -175,72 +170,64 @@ export async function runInteractive(
     return
   }
 
-  // Handles we can offer for Tab-completion: your own, everyone you follow, and
-  // every author whose post has streamed by (didHandle, seeded as posts render).
-  // All are full handles (alice.test); drop DID-keyed follows and any missing
-  // handle, which aren't useful to type.
-  function completionHandles(): string[] {
-    const handles = new Set<string>([identity.handle])
-    for (const key of Object.keys(identity.follows)) {
-      if (!key.startsWith('did:')) handles.add(key)
-    }
-    for (const handle of didHandle.values()) {
-      if (handle && !handle.startsWith('did:')) handles.add(handle)
-    }
-    return [...handles].sort()
-  }
-
-  // readline completer: complete the token under the cursor against known
-  // handles, but only where a handle is expected — the argument of
-  // follow/unfollow/profile, or an `@mention` inside post/reply text. Returns
-  // [candidates, tokenBeingCompleted]; readline splices in the shared remainder.
-  function completeHandle(line: string): [string[], string] {
-    const word = line.slice(line.search(/\S*$/)) // trailing token, up to cursor
+  // The token the picker completes at the cursor: an `@mention` (in post/reply
+  // text, or a follow/unfollow/profile handle arg written @foo), or the bare
+  // handle arg of follow/unfollow/profile. null when the cursor isn't on one
+  // (e.g. still typing the command). `query` drives ait.actor.searchActors.
+  function findToken(line: string, cursor: number): CompletionToken | null {
+    const head = line.slice(0, cursor)
+    const word = (head.match(/\S*$/) ?? [''])[0] // token ending at the cursor
+    const start = cursor - word.length
     const lead = line.replace(/^\s+/, '')
     const firstSpace = lead.search(/\s/)
-    if (firstSpace === -1) return [[], word] // still typing the command itself
+    if (firstSpace === -1) return null // still typing the command itself
     const cmd = lead.slice(0, firstSpace).toLowerCase()
 
-    const isHandleArg = HANDLE_ARG_CMDS.has(cmd)
-    const isMention = MENTION_CMDS.has(cmd) && word.startsWith('@')
-    if (!isHandleArg && !isMention) return [[], word]
-
-    const at = word.startsWith('@') ? '@' : ''
-    const partial = stripAt(word) // strips a leading @ and lowercases
-    const hits = completionHandles()
-      .filter((handle) => handle.startsWith(partial))
-      .map((handle) => at + handle)
-    return [hits, word]
+    if (word.startsWith('@')) {
+      if (MENTION_CMDS.has(cmd) || HANDLE_ARG_CMDS.has(cmd)) {
+        return { start, query: stripAt(word), withAt: true }
+      }
+      return null
+    }
+    if (HANDLE_ARG_CMDS.has(cmd)) {
+      return { start, query: word.toLowerCase(), withAt: false }
+    }
+    return null
   }
 
   // In-flight commands, so a quit mid-write waits for the post/reply to land
   // rather than process.exit abandoning the network call.
   const inflight = new Set<Promise<void>>()
 
-  rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    completer: completeHandle,
+  // Close the prompt, drain in-flight writes, exit. The drain runs in a detached
+  // async IIFE so it never awaits the `quit` command's own promise (which is in
+  // `inflight` and would otherwise deadlock waiting on itself).
+  let quitting = false
+  function requestQuit(): void {
+    if (quitting) return
+    quitting = true
+    prompt?.close()
+    void (async () => {
+      await Promise.allSettled([...inflight])
+      process.stdout.write('bye.\n')
+      process.exit(0)
+    })()
+  }
+
+  prompt = new MentionPrompt({
+    styles,
+    findToken,
+    // searchActors is a localhost end-client read; a failure (e.g. mid-restart)
+    // becomes an empty result so the picker degrades quietly rather than throws.
+    search: (query) => fetchSearchActors(agent, query, 12).catch(() => []),
+    onLine: (line) => {
+      const p = handleCommand(line)
+      inflight.add(p)
+      void p.finally(() => inflight.delete(p))
+    },
+    onClose: requestQuit,
   })
-  rl.setPrompt(styles.dim('› '))
-  rl.on('line', (line) => {
-    if (line.trim() === '') {
-      rl?.prompt()
-      return
-    }
-    // No prompt() here: handleCommand always ends by printing (which redraws the
-    // prompt) or by closing on quit, so re-prompting would double-draw.
-    const p = handleCommand(line)
-    inflight.add(p)
-    void p.finally(() => inflight.delete(p))
-  })
-  rl.on('SIGINT', () => rl?.close())
-  rl.on('close', async () => {
-    await Promise.allSettled([...inflight])
-    process.stdout.write('\nbye.\n')
-    process.exit(0)
-  })
-  rl.prompt()
+  prompt.start()
   // Concurrent with the command loop; never resolves. A throw that escapes the
   // loop's own try shouldn't become a silent unhandled rejection.
   void pollFeed(agent, seen, intervalMs, SEEN_CAP, hooks).catch((err) => {

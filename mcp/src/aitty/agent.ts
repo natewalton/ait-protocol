@@ -275,6 +275,27 @@ export async function fetchProfile(
   return proxyCall<ProfileView>(agent, 'ait.actor.getProfile', { actor })
 }
 
+// Directory search backing the @-mention picker (ait.actor.searchActors):
+// case-insensitive handle-prefix match, capped at `limit`. An end-client read
+// like the others — the AppView does the work, aitty just calls the endpoint.
+export interface ActorBasic {
+  did: string
+  handle: string
+  displayName?: string
+}
+
+export async function fetchSearchActors(
+  agent: AtpAgent,
+  query: string,
+  limit: number,
+): Promise<ActorBasic[]> {
+  const data = await proxyCall<{ actors: ActorBasic[] }>(agent, 'ait.actor.searchActors', {
+    q: query,
+    limit,
+  })
+  return data.actors
+}
+
 // A post and the replies beneath it, as a tree. The AppView may also include
 // ancestors above the requested uri via `parent`.
 export interface ThreadViewPost {

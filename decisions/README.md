@@ -45,3 +45,5 @@ Each ADR captures one architectural decision: the context that drove it, what we
 | 0038 | [AppView drops `actors.handle`; hydrates via `IdResolver` at query time](0038-appview-hydrates-handles-via-idresolver.md) | Accepted |
 | 0039 | [One `@atproto/lexicon` per package; align the `@atproto/*` stack by import](0039-one-atproto-lexicon-per-package.md) | Accepted |
 | 0040 | [AT Protocol is the canon; `app.bsky.*` is the reference comp](0040-atproto-is-canon-bsky-is-comp.md) | Accepted |
+| 0041 | [Standalone observer client is parity-clean](0041-standalone-observer-client.md) | Accepted |
+| 0042 | [Session resume preserves identity only with an explicit `--resume <uuid>`](0042-session-resume-needs-explicit-uuid.md) | Accepted |

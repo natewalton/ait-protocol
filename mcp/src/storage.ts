@@ -21,6 +21,12 @@
 //      to the MCP child equals the new transcript UUID (verified via
 //      `ps -E` against the CLI launcher; also true for Desktop's first
 //      conversation in a project).
+//   4. process.env.AIT_SESSION_ID — Codex host: the codex-mode launcher
+//      pre-mints a UUID and sets it in the tool-MCP's env before
+//      thread/start (specs/notification-codex.md, Identity). Codex passes
+//      no per-thread id to child MCPs (env, argv, MCP initialize._meta all
+//      clean; verified against codex-cli 0.144.3), so identity must be
+//      supplied this way. Never set on the Claude path.
 //
 // ADR-0033's newest-mtime *.jsonl probe was the right call against
 // Claude Code 2.1.149's "harness doesn't propagate CLAUDE_CODE_SESSION_ID
@@ -75,11 +81,13 @@ class MissingSessionIdError extends Error {
   constructor() {
     super(
       'No session UUID resolvable. AIT_MCP_TEST_SESSION_ID is not set, ' +
-        "the parent claude process's argv has no --resume <UUID>, and " +
-        "CLAUDE_CODE_SESSION_ID is not in the MCP child's environment. " +
-        'Production code paths get the UUID from the harness (--resume on ' +
-        'resume, env var on cold-start; see ADR-0035). Test scripts and ' +
-        'non-Claude-Code runners must set AIT_MCP_TEST_SESSION_ID explicitly.',
+        "the parent claude process's argv has no --resume <UUID>, " +
+        "CLAUDE_CODE_SESSION_ID is not in the MCP child's environment, and " +
+        'AIT_SESSION_ID (the Codex-host source) is unset. Production code ' +
+        'paths get the UUID from the harness (Claude: --resume on resume, ' +
+        'env var on cold-start; Codex: AIT_SESSION_ID pre-minted by the ' +
+        'launcher — see ADR-0035 and specs/notification-codex.md). Test ' +
+        'scripts and non-harness runners must set AIT_MCP_TEST_SESSION_ID.',
     )
     this.name = 'MissingSessionIdError'
   }
@@ -120,13 +128,13 @@ function uuidFromParentArgv(): string | null {
   return UUID_SHAPE.test(uuid) ? uuid : null
 }
 
-// Three-source resolver. Each source serves a distinct case (not
+// Four-source resolver. Each source serves a distinct host type (not
 // tier-hedging): test override for headless runners, parent argv for
-// resumed conversations, env var for cold-start. Resolved fresh per
-// identity call (no module-level memoization). Override is
-// shape-validated the same way the production sources are — an
-// asymmetric trust gap would let a malformed value silently produce a
-// stable-but-wrong identity file.
+// resumed Claude conversations, env var for cold-start Claude, and
+// AIT_SESSION_ID for the Codex host. Resolved fresh per identity call
+// (no module-level memoization). Override is shape-validated the same
+// way the production sources are — an asymmetric trust gap would let a
+// malformed value silently produce a stable-but-wrong identity file.
 function resolveSessionUuid(): string {
   const rawOverride = process.env.AIT_MCP_TEST_SESSION_ID
   if (rawOverride !== undefined) {
@@ -145,6 +153,16 @@ function resolveSessionUuid(): string {
   const fromEnv = process.env.CLAUDE_CODE_SESSION_ID
   if (fromEnv) {
     const trimmed = fromEnv.trim()
+    if (UUID_SHAPE.test(trimmed)) return trimmed
+  }
+  // Codex host: the launcher pre-mints AIT_SESSION_ID (a UUID) into the
+  // tool-MCP's env before thread/start (specs/notification-codex.md, Identity)
+  // — the Codex analog of Claude's --resume / cold-start sources, since Codex
+  // propagates no per-thread id to child MCPs. Never set on the Claude path, so
+  // the three sources above stay byte-identical there.
+  const fromCodex = process.env.AIT_SESSION_ID
+  if (fromCodex) {
+    const trimmed = fromCodex.trim()
     if (UUID_SHAPE.test(trimmed)) return trimmed
   }
   throw new MissingSessionIdError()

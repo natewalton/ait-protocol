@@ -1,12 +1,16 @@
-// Push-mode runtime for the MCP server (step 6 of specs/notification-push.md).
+// Push delivery bridge for the MCP server (step 6 of specs/notification-push.md).
 //
-// When AIT_NOTIFICATION_MODE=push, the MCP opens a localhost HTTP listener
-// and registers its URL with the AppView. The AppView then POSTs each
-// freshly-indexed notification straight here, and the handler relays it to
-// Claude Code as a <channel source="ait-protocol" ...> block via the MCP
-// notification primitive.
+// When AIT_NOTIFICATION_MODE=push, the MCP opens a localhost HTTP listener and
+// registers its URL with the AppView. The AppView then POSTs each freshly-
+// indexed notification straight here. The listener bind, registration + `since`
+// replay, and NotificationView parse are runtime-invariant; the terminal step —
+// how a notification becomes model-visible, and when the cursor commits — is an
+// injected deliver() sink. The Claude push path passes channelSink(), which
+// emits a <channel source="ait-protocol" ...> block via the MCP notification
+// primitive; codex mode (specs/notification-codex.md) passes a sink that turns
+// each notification into a codex turn/start. Same bridge, different sink.
 //
-// startPushListener() is called once from server.ts when MODE === 'push'.
+// startPushListener(deliver) is called once from server.ts when MODE === 'push'.
 // tryRegister() is also called from the join tool after setIdentity, so a
 // brand-new session (no identity at MCP startup) registers as soon as one
 // is minted. Both calls are safe in poll mode — tryRegister early-exits
@@ -22,7 +26,7 @@ import {
   updateLastSeenNotificationAt,
 } from './storage.js'
 
-interface NotificationView {
+export interface NotificationView {
   uri: string
   cid: string
   author: { did: string; handle: string }
@@ -32,13 +36,21 @@ interface NotificationView {
   indexedAt: string
 }
 
+// The runtime-specific terminal step: surface a notification to the model, and
+// commit the cursor. Injected into startPushListener so the shared bridge stays
+// runtime-invariant. IMPORTANT: the cursor (lastSeenNotificationAt) must advance
+// only after the notification is durably delivered — the sink owns that timing,
+// so a crash before delivery replays the un-delivered tail via the `since`
+// handshake (specs/notification-push.md, Delivery semantics).
+export type NotificationSink = (view: NotificationView) => Promise<void>
+
 let listenerUrl: string | null = null
 
-export async function startPushListener(mcp: Server): Promise<void> {
+export async function startPushListener(deliver: NotificationSink): Promise<void> {
   if (listenerUrl) return
 
   const httpServer = http.createServer((req, res) => {
-    void handleNotify(mcp, req, res).catch((err) => {
+    void handleNotify(deliver, req, res).catch((err) => {
       console.error('notify handler error:', err)
       if (!res.headersSent) {
         res.writeHead(500)
@@ -86,8 +98,10 @@ export async function tryRegister(): Promise<void> {
   }
 }
 
+// Shared bridge: validate the request, parse the NotificationView, hand it to
+// the injected sink. The sink owns model-surfacing and cursor-commit timing.
 async function handleNotify(
-  mcp: Server,
+  deliver: NotificationSink,
   req: http.IncomingMessage,
   res: http.ServerResponse,
 ): Promise<void> {
@@ -102,17 +116,27 @@ async function handleNotify(
     Buffer.concat(chunks).toString('utf8'),
   ) as NotificationView
 
-  await mcp.notification({
-    method: 'notifications/claude/channel',
-    params: {
-      content: formatChannelBody(view),
-      meta: formatChannelMeta(view),
-    },
-  })
-  updateLastSeenNotificationAt(view.indexedAt)
+  await deliver(view)
 
   res.writeHead(200)
   res.end('ok')
+}
+
+// The Claude push sink: emit the notification as a <channel> block via the MCP
+// notification primitive, then advance the cursor. This is today's handleNotify
+// terminal behavior, moved intact — the cursor advances synchronously right
+// after the channel is emitted, exactly as before.
+export function channelSink(mcp: Server): NotificationSink {
+  return async (view: NotificationView) => {
+    await mcp.notification({
+      method: 'notifications/claude/channel',
+      params: {
+        content: formatChannelBody(view),
+        meta: formatChannelMeta(view),
+      },
+    })
+    updateLastSeenNotificationAt(view.indexedAt)
+  }
 }
 
 function formatChannelBody(n: NotificationView): string {

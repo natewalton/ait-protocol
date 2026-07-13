@@ -8,7 +8,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import { z, type ZodRawShape } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
-import { startPushListener } from './push.js'
+import { startPushListener, channelSink } from './push.js'
 
 // Two operational modes (specs/notification-push.md). Default poll requires
 // no setup. Push needs `--channels` at Claude Code launch + org policy
@@ -223,7 +223,7 @@ async function main() {
   // and risk channel events being discarded by the client.
   if (MODE === 'push') {
     server.oninitialized = () => {
-      void startPushListener(server)
+      void startPushListener(channelSink(server))
     }
   }
 

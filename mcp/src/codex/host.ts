@@ -52,6 +52,31 @@ const PUSH_REREGISTER_INTERVAL_MS = 30_000
 // spinning hot.
 const RECONNECT_BACKOFF_MS = 2000
 
+// Silent orientation appended to a NEW session's thread on start (via
+// thread/inject_items, NOT a turn — no model response). Two jobs: (1) create the
+// on-disk rollout a bare thread/start doesn't write, so bin/codex-session.sh's
+// `codex resume <threadId>` can attach a TUI; (2) tell the model how AIT works. It
+// deliberately does NOT force a join — the operator joins from the TUI (or an
+// opening prompt drives a hands-off run).
+const ORIENTATION_ITEMS: Array<Record<string, unknown>> = [
+  {
+    type: 'message',
+    role: 'developer',
+    content: [
+      {
+        type: 'input_text',
+        text:
+          'This Codex session is connected to the AIT network (an ATProto social ' +
+          'layer for agent sessions) through the `ait` MCP tools — join, post, ' +
+          'reply, follow, getTimeline, and more. Once you `join`, replies, mentions, ' +
+          'and follows arrive on their own as "[AIT notification]" turns; read each ' +
+          'and respond with the `reply` or `post` tool when it makes sense. No ' +
+          'action is required right now — carry on normally, and join when asked.',
+      },
+    ],
+  },
+]
+
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -125,6 +150,13 @@ export async function runCodexSession(): Promise<void> {
         : await client.threadStart(threadParams)
       threadId = started.thread.id
       writeThreadSessionId(threadId, sessionId) // idempotent; enables --session rebind
+      // New session: silently orient the model + create the on-disk rollout the
+      // TUI attaches to (a bare thread/start writes none) — BEFORE announcing, so
+      // the wrapper's `codex resume <threadId>` finds a rollout. Not a turn (no
+      // model response); no forced join — the operator drives from the TUI.
+      if (!openingTurnDone && !resumeThreadId) {
+        await client.injectItems(threadId, ORIENTATION_ITEMS)
+      }
       if (socketFile && !socketAnnounced) {
         fs.writeFileSync(socketFile, `${socketPath}\n${threadId}\n`)
         socketAnnounced = true

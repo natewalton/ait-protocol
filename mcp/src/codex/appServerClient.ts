@@ -118,6 +118,18 @@ export class AppServerClient {
     }
   }
 
+  // Append raw Responses-API items to a thread's model-visible history WITHOUT
+  // starting a turn (silent context, no model response). The session driver uses
+  // this on a fresh thread to (a) create the on-disk rollout a bare thread/start
+  // doesn't write — so `codex resume <threadId>` can attach a TUI — and (b) orient
+  // the model, without a forced join turn.
+  async injectItems(
+    threadId: string,
+    items: Array<Record<string, unknown>>,
+  ): Promise<void> {
+    await this.request('thread/inject_items', { threadId, items })
+  }
+
   isTurnActive(threadId: string): boolean {
     return this.activeThreads.has(threadId)
   }

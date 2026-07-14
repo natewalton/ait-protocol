@@ -1,6 +1,6 @@
 #!/bin/bash
-# Installs the three AIT launchd agents (PLC, PDS, AppView) into ~/Library/LaunchAgents
-# and starts them. Idempotent — re-running unloads + reloads.
+# Installs the four AIT launchd agents (PLC, PDS, AppView, codex-appserver) into
+# ~/Library/LaunchAgents and starts them. Idempotent — re-running unloads + reloads.
 #
 # IMPORTANT: macOS TCC blocks launchd from executing scripts under
 # ~/Desktop, ~/Documents, ~/Downloads, etc. without Full Disk Access.
@@ -14,7 +14,7 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="$HOME/Library/LaunchAgents"
 mkdir -p "$TARGET"
 
-for svc in plc pds appview; do
+for svc in plc pds appview codex-appserver; do
   label="com.ait.$svc"
   src="$REPO/services/$label.plist"
   dst="$TARGET/$label.plist"
@@ -34,7 +34,7 @@ done
 
 echo ""
 echo "Tail logs with:"
-echo "  tail -f /tmp/ait-{plc,pds,appview}.log /tmp/ait-{plc,pds,appview}.err"
+echo "  tail -f /tmp/ait-{plc,pds,appview,codex-appserver}.log /tmp/ait-{plc,pds,appview,codex-appserver}.err"
 echo ""
 echo "Stop everything with:"
 echo "  bin/uninstall-services.sh"

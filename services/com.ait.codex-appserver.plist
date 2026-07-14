@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ait.codex-appserver</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/nwalton/Desktop/ait-protocol/bin/run-codex-appserver.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/nwalton/Desktop/ait-protocol</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/Users/nwalton/.local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/ait-codex-appserver.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/ait-codex-appserver.err</string>
+</dict>
+</plist>

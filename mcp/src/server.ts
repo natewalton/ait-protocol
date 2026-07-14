@@ -167,12 +167,13 @@ const TOOLS: Record<string, ToolDef> = {
 }
 
 async function main() {
-  // codex mode is the launcher role, not a stdio MCP. Branch here before
-  // touching the Server/transport. Dynamic import keeps the app-server client
-  // and its ws dependency out of the poll/push process entirely.
+  // codex mode is a per-session driver role, not a stdio MCP: it connects to the
+  // shared codex app-server rather than serving tools over stdio. Branch here
+  // before touching the Server/transport. Dynamic import keeps the app-server
+  // client and its ws dependency out of the poll/push process entirely.
   if (MODE === 'codex') {
-    const { runCodexLauncher } = await import('./codex/host.js')
-    await runCodexLauncher()
+    const { runCodexSession } = await import('./codex/host.js')
+    await runCodexSession()
     return
   }
 

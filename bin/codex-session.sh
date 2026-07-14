@@ -1,16 +1,18 @@
 #!/bin/bash
 # Launch an interactive Codex session wired for AIT notifications — ONE terminal.
 #
-# Codex has no Channels equivalent, so AIT delivery needs a background LAUNCHER
-# that drives `codex app-server` and injects each notification as a turn, while
-# you interact through a `codex --remote` TUI. This script runs BOTH: the launcher
-# in the background of this terminal, and the TUI in the foreground. You get one
-# interactive Codex session (like claude-session.sh), and replies/mentions/follows
-# arrive as turns. Exiting the TUI (or Ctrl-C) stops the launcher + app-server.
+# Codex has no Channels equivalent, so AIT delivery needs a background DRIVER that
+# opens this session's thread on the SHARED `codex app-server` and injects each
+# notification as a turn, while you interact through a `codex --remote` TUI. This
+# script runs BOTH: the session driver in the background, and the TUI in the
+# foreground. You get one interactive Codex session (like claude-session.sh), and
+# replies/mentions/follows arrive as turns. Exiting the TUI (or Ctrl-C) stops this
+# session's driver — the SHARED app-server keeps running for other sessions.
 #
-# The session pre-mints its AIT identity before the thread starts (Codex freezes
-# a child MCP's env at spawn — see specs/notification-codex.md); tools + pushes
-# share that one handle.
+# The shared app-server is started once (here if it isn't already, or by
+# bin/start-all.sh at boot / launchd) and serves every Codex session; each session
+# gets its own thread + AIT identity via thread/start config
+# (specs/notification-codex.md).
 #
 # Prereqs: local network up (bin/start-all.sh), codex-cli installed, built mcp
 # (built here if missing). Run from the project dir you want the agent in — that
@@ -28,41 +30,57 @@ if [ ! -f "$mcp_dir/dist/server.js" ]; then
   (cd "$mcp_dir" && npm run build >&2)
 fi
 
+# Ensure the SHARED codex app-server is running (start once; leave it running for
+# other sessions). bin/start-all.sh / launchd may already have started it.
+appserver_pidfile=/tmp/ait-codex-appserver.pid
+if ! { [ -f "$appserver_pidfile" ] && kill -0 "$(cat "$appserver_pidfile")" 2>/dev/null; }; then
+  echo "codex-session: starting shared codex app-server…" >&2
+  nohup "$repo_root/bin/run-codex-appserver.sh" \
+    >/tmp/ait-codex-appserver.log 2>/tmp/ait-codex-appserver.err &
+  echo "$!" > "$appserver_pidfile"
+  disown 2>/dev/null || true
+fi
+
 sock_file="$(mktemp -t ait-codex-sock)"
 log_file="$(mktemp -t ait-codex-log)"
 
-# Start the launcher in the BACKGROUND. It writes its app-server socket path to
-# $AIT_CODEX_SOCKET_FILE once a thread is live; its own logs go to $log_file (kept
-# off the terminal so they don't corrupt the TUI). node inherits cwd → thread cwd.
+# Start THIS session's driver in the background. It connects to the shared
+# app-server, opens our thread, and writes the socket + threadId to
+# $AIT_CODEX_SOCKET_FILE once live; its logs go to $log_file (off the terminal so
+# they don't corrupt the TUI). node inherits cwd → thread cwd.
 env AIT_NOTIFICATION_MODE=codex AIT_CODEX_SOCKET_FILE="$sock_file" \
   node --enable-source-maps "$mcp_dir/dist/server.js" "$@" >"$log_file" 2>&1 &
-launcher_pid=$!
+driver_pid=$!
 
 cleanup() {
-  kill "$launcher_pid" 2>/dev/null || true
+  kill "$driver_pid" 2>/dev/null || true   # stop only OUR session; shared server keeps running
   rm -f "$sock_file"
-  echo "codex-session: launcher stopped (log kept at $log_file)" >&2
+  echo "codex-session: session stopped (log kept at $log_file; shared server still running)" >&2
 }
 trap cleanup EXIT INT TERM
 
-# Wait (up to ~30s) for the launcher to report its socket + threadId, or bail.
+# Wait (up to ~30s) for the driver to report its socket + threadId, or bail.
 sock=""; tid=""
 for _ in $(seq 1 60); do
   if [ -s "$sock_file" ]; then
     sock="$(sed -n 1p "$sock_file")"; tid="$(sed -n 2p "$sock_file")"
     [ -n "$sock" ] && [ -n "$tid" ] && break
   fi
-  if ! kill -0 "$launcher_pid" 2>/dev/null; then
-    echo "codex-session: launcher exited during startup —" >&2; cat "$log_file" >&2; exit 1
+  if ! kill -0 "$driver_pid" 2>/dev/null; then
+    echo "codex-session: session driver exited during startup —" >&2; cat "$log_file" >&2; exit 1
   fi
   sleep 0.5
 done
 if [ -z "$sock" ] || [ -z "$tid" ]; then
-  echo "codex-session: app-server socket did not come up in time —" >&2; cat "$log_file" >&2; exit 1
+  echo "codex-session: shared app-server not reachable in time. Driver log:" >&2
+  cat "$log_file" >&2
+  echo "--- shared app-server log (/tmp/ait-codex-appserver.err) ---" >&2
+  tail -20 /tmp/ait-codex-appserver.err 2>/dev/null || true
+  exit 1
 fi
 
-# Show the launcher's startup output (session id, thread, join/register), then
-# hand the terminal to the TUI resumed into that exact thread.
+# Show the driver's startup output (session id, thread, join/register), then hand
+# the terminal to the TUI resumed into that exact thread on the shared server.
 cat "$log_file" >&2
-echo "codex-session: attaching TUI — exit it (or Ctrl-C) to stop the session." >&2
+echo "codex-session: attaching TUI — exit it (or Ctrl-C) to stop this session." >&2
 codex resume "$tid" --remote "unix://$sock"

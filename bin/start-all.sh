@@ -26,6 +26,7 @@ start_one() {
 start_one plc     run-plc.sh
 start_one pds     run-pds.sh
 start_one appview run-appview.sh
+start_one codex-appserver run-codex-appserver.sh
 
 echo ""
 echo "Health (give it ~3 seconds) — ports 2582 PLC, 2583 PDS, 2585 AppView:"
@@ -33,5 +34,7 @@ echo "  curl http://localhost:2582/_health"
 echo "  curl http://localhost:2583/xrpc/_health"
 echo "  curl http://localhost:2585/xrpc/_health"
 echo ""
-echo "Logs: tail -f /tmp/ait-{plc,pds,appview}.{log,err}"
+echo "Logs: tail -f /tmp/ait-{plc,pds,appview,codex-appserver}.{log,err}"
+echo "(codex-appserver is the shared codex app-server — a unix socket, no HTTP port;"
+echo " needs mcp built: npm --prefix mcp run build. Codex sessions attach via bin/codex-session.sh.)"
 echo "Stop: bin/stop-all.sh"

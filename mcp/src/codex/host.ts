@@ -28,7 +28,7 @@ import { AppServerClient } from './appServerClient.js'
 import { startSidecar, type Sidecar } from './sidecar.js'
 import { appServerSocketPath } from './paths.js'
 import { createCodexSink } from './sink.js'
-import { startPushListener, tryRegister } from '../push.js'
+import { startPushListener, tryRegister, type NotificationSink } from '../push.js'
 import { loadIdentity } from '../storage.js'
 import { setIdentity, reloadIdentity } from '../session.js'
 import { readThreadSessionId, writeThreadSessionId } from './threadMap.js'
@@ -39,6 +39,10 @@ const AIT_SERVER_PATH = fileURLToPath(new URL('../server.js', import.meta.url))
 
 const IDENTITY_POLL_INTERVAL_MS = 1000
 const PUSH_REREGISTER_INTERVAL_MS = 30_000
+const RESPAWN_BACKOFF_MS = 2000
+// Give up (exit non-zero) after this many back-to-back failed lifecycles, so a
+// permanently-broken app-server doesn't spin in a tight respawn loop forever.
+const MAX_CONSECUTIVE_RESPAWN_FAILURES = 5
 
 // The thread starts idle, so nothing would make the model join on its own. This
 // initial turn is the codex analog of the opening "join AIT and wait" prompt a
@@ -69,65 +73,76 @@ export async function runCodexLauncher(): Promise<void> {
   // a new session, the real handle on a resume.
   reloadIdentity()
 
-  // 2. Spawn the app-server sidecar with the ait tool-MCP wired in.
   const socketPath = appServerSocketPath(sessionId)
-  const sidecar = await startSidecar({
-    socketPath,
-    extraArgs: aitMcpOverrides(sessionId),
-  })
-
-  // 3. Connect + handshake.
-  const client = new AppServerClient(socketPath)
-  installShutdown(sidecar, client)
-  // If the ws handshake fails, client.onClose isn't wired yet (it's attached
-  // only after 'open'), so kill the sidecar explicitly or the app-server orphans.
-  try {
-    await client.connect()
-  } catch (err) {
-    sidecar.shutdown()
-    throw err
-  }
-
-  // 4. Start a new thread, or resume the requested one. approvalPolicy 'never'
-  //    keeps the session autonomous — a pushed notification can be acted on
-  //    without an operator approving each step (the spec's hands-off model).
   const threadParams = {
     cwd: process.cwd(),
+    // Hands-off: act on notifications without an operator approving each step.
     approvalPolicy: 'never' as const,
     sandbox: 'workspace-write' as const,
   }
-  const started = resumeThreadId
-    ? await client.threadResume({ threadId: resumeThreadId, ...threadParams })
-    : await client.threadStart(threadParams)
-  const threadId = started.thread.id
-  // Record threadId→sessionId so a later `--session <threadId>` rebinds this
-  // handle. Idempotent; also persists a fresh mint when resuming an unknown id.
-  writeThreadSessionId(threadId, sessionId)
-  console.error(
-    `ait codex launcher: session ${sessionId} → thread ${threadId}` +
-      (resumeThreadId ? ' (resumed)' : ''),
-  )
 
-  // 5. Wire the push bridge to the codex sink. tryRegister inside runs as a
-  //    no-op until an identity exists (the model hasn't joined yet).
-  await startPushListener(createCodexSink(client, threadId))
-
-  // 6. Tell the operator how to attach a live TUI (same multi-client socket).
+  // The push listener and its registration OUTLIVE individual app-server
+  // lifecycles. `deliver` forwards to the current lifecycle's sink through a
+  // stable indirection, swapped on each (re)spawn. Notifications that arrive
+  // while the app-server is down — or sit un-injected in a dropped sink — replay
+  // via the re-register `since` handshake once the next lifecycle registers.
+  let activeSink: NotificationSink | null = null
+  await startPushListener((view) => activeSink?.(view) ?? Promise.resolve())
   console.error(`\n  Attach a TUI:  codex --remote unix://${socketPath}\n`)
-
-  // 7. Register the push target as soon as the model joins.
   void registerPushWhenReady()
 
-  // 8. Bootstrap a NEW session with the opening "join and wait" turn. A resumed
-  //    thread already joined (its identity is on disk, and registerPushWhenReady
-  //    finds it immediately), so re-injecting would be redundant.
-  if (!resumeThreadId) {
-    await client.turnStart(threadId, BOOTSTRAP_PROMPT)
-  }
+  // Supervisor: (re)spawn the app-server, run one lifecycle, respawn on crash. A
+  // killed app-server re-creates the socket; its own startup lock guards a
+  // double-spawn on the same path.
+  let sidecar: Sidecar | null = null
+  installSignalHandlers(() => sidecar)
 
-  // The push listener + app-server socket keep the event loop alive; block so
-  // the launcher runs for the session's lifetime (exit via signal).
-  await new Promise<void>(() => {})
+  let threadId: string | null = resumeThreadId
+  let bootstrapped = false
+  let failures = 0
+
+  for (;;) {
+    try {
+      sidecar = await startSidecar({ socketPath, extraArgs: aitMcpOverrides(sessionId) })
+      const client = new AppServerClient(socketPath)
+      const closed = new Promise<Error | undefined>((resolve) => client.onClose(resolve))
+      await client.connect()
+
+      // First lifecycle honours --session; every respawn resumes the known thread.
+      const started = threadId
+        ? await client.threadResume({ threadId, ...threadParams })
+        : await client.threadStart(threadParams)
+      threadId = started.thread.id
+      writeThreadSessionId(threadId, sessionId) // idempotent; enables --session rebind
+      activeSink = createCodexSink(client, threadId)
+      console.error(
+        `ait codex launcher: session ${sessionId} → thread ${threadId}` +
+          (bootstrapped || resumeThreadId ? ' (resumed)' : ''),
+      )
+
+      // Bootstrap once, only for a genuinely new session — a resume/respawn is
+      // already joined (identity on disk; registerPushWhenReady finds it).
+      if (!bootstrapped && !resumeThreadId) {
+        await client.turnStart(threadId, BOOTSTRAP_PROMPT)
+      }
+      bootstrapped = true
+      failures = 0
+
+      // Serve until the app-server connection drops, then fall through to respawn.
+      const err = await closed
+      console.error('ait codex launcher: app-server connection lost — respawning', err ?? '')
+    } catch (err) {
+      console.error('ait codex launcher: app-server lifecycle failed — respawning', err)
+      if (++failures >= MAX_CONSECUTIVE_RESPAWN_FAILURES) {
+        console.error(`ait codex launcher: ${failures} consecutive failures — giving up`)
+        sidecar?.shutdown()
+        process.exit(1)
+      }
+    }
+    activeSink = null
+    sidecar?.shutdown()
+    await delay(RESPAWN_BACKOFF_MS)
+  }
 }
 
 // The `-c` overrides that register the ait tool-MCP (poll mode) on the spawned
@@ -184,19 +199,13 @@ async function registerPushWhenReady(): Promise<void> {
   }
 }
 
-function installShutdown(sidecar: Sidecar, client: AppServerClient): void {
+// SIGINT/SIGTERM → kill the current sidecar and exit cleanly. Installed once; the
+// getter returns whichever sidecar the supervisor loop currently holds.
+function installSignalHandlers(getSidecar: () => Sidecar | null): void {
   const shutdown = () => {
-    client.close()
-    sidecar.shutdown()
+    getSidecar()?.shutdown()
     process.exit(0)
   }
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)
-  // v1 slice: if the app-server dies there's no respawn yet — surface it and
-  // exit so the operator relaunches (crash-respawn is deferred).
-  client.onClose((err) => {
-    console.error('ait codex launcher: app-server connection lost — exiting', err ?? '')
-    sidecar.shutdown()
-    process.exit(1)
-  })
 }

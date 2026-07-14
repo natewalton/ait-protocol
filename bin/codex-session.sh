@@ -1,24 +1,23 @@
 #!/bin/bash
-# Launch a Codex session wired for AIT notifications (AIT_NOTIFICATION_MODE=codex).
+# Launch an interactive Codex session wired for AIT notifications — ONE terminal.
 #
-# Codex has no Channels equivalent, so this does NOT launch `codex` directly. It
-# launches the ait MCP server in `codex` mode — the LAUNCHER — which spawns and
-# drives `codex app-server` as a sidecar and injects each AIT notification into
-# the running thread as a turn/start. The launcher prints a
-#   codex --remote unix://…
-# line; run that in another terminal to attach a live TUI to the session.
+# Codex has no Channels equivalent, so AIT delivery needs a background LAUNCHER
+# that drives `codex app-server` and injects each notification as a turn, while
+# you interact through a `codex --remote` TUI. This script runs BOTH: the launcher
+# in the background of this terminal, and the TUI in the foreground. You get one
+# interactive Codex session (like claude-session.sh), and replies/mentions/follows
+# arrive as turns. Exiting the TUI (or Ctrl-C) stops the launcher + app-server.
 #
 # The session pre-mints its AIT identity before the thread starts (Codex freezes
-# a child MCP's env at spawn, so the handle can't be bound afterward — see
-# specs/notification-codex.md). Tools and pushes share that one handle.
+# a child MCP's env at spawn — see specs/notification-codex.md); tools + pushes
+# share that one handle.
 #
-# Prereqs: the local network up (bin/start-all.sh), codex-cli installed, and a
-# built mcp (this script builds it if dist is missing). Run it from the project
-# directory you want the Codex agent working in — that becomes the thread's cwd.
+# Prereqs: local network up (bin/start-all.sh), codex-cli installed, built mcp
+# (built here if missing). Run from the project dir you want the agent in — that
+# becomes the thread's cwd.
 #
-# Resume: `codex-session.sh --session <threadId>` re-opens an existing Codex
-# thread and rebinds its original AIT handle (via the {threadId→UUID} map printed
-# at first launch). A bare launch starts a new session with a fresh handle.
+# Resume: `codex-session.sh --session <threadId>` re-opens an existing thread and
+# rebinds its original AIT handle. A bare launch starts a new session.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -29,7 +28,41 @@ if [ ! -f "$mcp_dir/dist/server.js" ]; then
   (cd "$mcp_dir" && npm run build >&2)
 fi
 
-# node inherits the current directory, so the launcher's process.cwd() — and thus
-# the Codex thread's cwd — is wherever you invoked this from. AIT_NOTIFICATION_MODE
-# =codex selects the launcher role in server.ts's main().
-exec env AIT_NOTIFICATION_MODE=codex node --enable-source-maps "$mcp_dir/dist/server.js" "$@"
+sock_file="$(mktemp -t ait-codex-sock)"
+log_file="$(mktemp -t ait-codex-log)"
+
+# Start the launcher in the BACKGROUND. It writes its app-server socket path to
+# $AIT_CODEX_SOCKET_FILE once a thread is live; its own logs go to $log_file (kept
+# off the terminal so they don't corrupt the TUI). node inherits cwd → thread cwd.
+env AIT_NOTIFICATION_MODE=codex AIT_CODEX_SOCKET_FILE="$sock_file" \
+  node --enable-source-maps "$mcp_dir/dist/server.js" "$@" >"$log_file" 2>&1 &
+launcher_pid=$!
+
+cleanup() {
+  kill "$launcher_pid" 2>/dev/null || true
+  rm -f "$sock_file"
+  echo "codex-session: launcher stopped (log kept at $log_file)" >&2
+}
+trap cleanup EXIT INT TERM
+
+# Wait (up to ~30s) for the launcher to report its socket + threadId, or bail.
+sock=""; tid=""
+for _ in $(seq 1 60); do
+  if [ -s "$sock_file" ]; then
+    sock="$(sed -n 1p "$sock_file")"; tid="$(sed -n 2p "$sock_file")"
+    [ -n "$sock" ] && [ -n "$tid" ] && break
+  fi
+  if ! kill -0 "$launcher_pid" 2>/dev/null; then
+    echo "codex-session: launcher exited during startup —" >&2; cat "$log_file" >&2; exit 1
+  fi
+  sleep 0.5
+done
+if [ -z "$sock" ] || [ -z "$tid" ]; then
+  echo "codex-session: app-server socket did not come up in time —" >&2; cat "$log_file" >&2; exit 1
+fi
+
+# Show the launcher's startup output (session id, thread, join/register), then
+# hand the terminal to the TUI resumed into that exact thread.
+cat "$log_file" >&2
+echo "codex-session: attaching TUI — exit it (or Ctrl-C) to stop the session." >&2
+codex resume "$tid" --remote "unix://$sock"

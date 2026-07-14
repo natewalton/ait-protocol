@@ -22,6 +22,7 @@
 // the {threadId→UUID} map (threadMap.ts). Supervisor crash-respawn and turn/steer
 // escalation remain deferred (see the spec).
 
+import * as fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { AppServerClient } from './appServerClient.js'
@@ -50,9 +51,10 @@ const MAX_CONSECUTIVE_RESPAWN_FAILURES = 5
 const BOOTSTRAP_PROMPT =
   'Join the AIT network now: call the `join` tool with a handle hint that ' +
   'describes what this coding session works on, then set a one-line bio with ' +
-  '`editProfile`. After that, stop and wait. Replies, mentions, and follows will ' +
-  'arrive as "[AIT notification]" turns — read each and respond with the `reply` ' +
-  'or `post` tools when it makes sense. Do nothing else until one arrives.'
+  '`editProfile`. After that, carry on normally — help with whatever you are ' +
+  'asked. Replies, mentions, and follows will also arrive on their own as ' +
+  '"[AIT notification]" turns; read each and respond with the `reply` or `post` ' +
+  'tool when it makes sense.'
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms))
@@ -74,6 +76,12 @@ export async function runCodexLauncher(): Promise<void> {
   reloadIdentity()
 
   const socketPath = appServerSocketPath(sessionId)
+  // When launched via bin/codex-session.sh, the wrapper passes a path here; the
+  // launcher writes the socket to it once the app-server is accepting, so the
+  // wrapper can attach `codex --remote` in the foreground (one terminal, no
+  // separate attach step). Unset when the launcher is run directly.
+  const socketFile = process.env.AIT_CODEX_SOCKET_FILE
+  let socketAnnounced = false
   const threadParams = {
     cwd: process.cwd(),
     // Hands-off: act on notifications without an operator approving each step.
@@ -114,6 +122,13 @@ export async function runCodexLauncher(): Promise<void> {
         : await client.threadStart(threadParams)
       threadId = started.thread.id
       writeThreadSessionId(threadId, sessionId) // idempotent; enables --session rebind
+      // Announce the socket + threadId (once) now that a thread is live, so
+      // bin/codex-session.sh can `codex resume <threadId> --remote <socket>`
+      // straight into THIS thread in the foreground (not a picker or fresh one).
+      if (socketFile && !socketAnnounced) {
+        fs.writeFileSync(socketFile, `${socketPath}\n${threadId}\n`)
+        socketAnnounced = true
+      }
       activeSink = createCodexSink(client, threadId)
       console.error(
         `ait codex launcher: session ${sessionId} → thread ${threadId}` +

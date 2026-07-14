@@ -284,9 +284,10 @@ export function saveIdentity(identity: Identity): void {
   const p = identityPath(uuid)
   fs.mkdirSync(path.dirname(p), { recursive: true, mode: 0o700 })
   // Preserve the notification cursor across rewrites: saveIdentity is called
-  // both on first join (cursor starts null) and on JWT refresh (cursor must
-  // not regress to null and lose the push-mode advance).
+  // both on first join and on JWT refresh (cursor must not regress and lose the
+  // push-mode advance).
   const existingCursor = readDiskShape(p)?.lastSeenNotificationAt ?? null
+  const createdAt = new Date().toISOString()
   const envelope = encryptInner(
     {
       password: identity.password,
@@ -298,8 +299,15 @@ export function saveIdentity(identity: Identity): void {
   const data: OnDiskShape = {
     did: identity.did,
     handle: identity.handle,
-    createdAt: new Date().toISOString(),
-    lastSeenNotificationAt: existingCursor,
+    createdAt,
+    // Baseline the notification cursor at join time on the FIRST save (no prior
+    // cursor), so re-registration always sends a non-null `since` and the AppView
+    // replays anything indexed after we joined. Without this a session's first-
+    // ever notification is lost if it arrives while the push listener is detached
+    // or the codex app-server is down: a null cursor makes registerAndReplay skip
+    // the backlog (pushRegistry.ts `if (since == null) return`). Later saves (JWT
+    // refresh) carry the advanced cursor forward. Applies to push and codex modes.
+    lastSeenNotificationAt: existingCursor ?? createdAt,
     ...envelope,
   }
   // Atomic write: tmp + rename. SIGKILL between truncate and final flush on a

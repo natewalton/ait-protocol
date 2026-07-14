@@ -18,8 +18,9 @@
 //   5. Once the model joins (the tool-MCP mints the handle into shared storage
 //      keyed by AIT_SESSION_ID), load it and register the push target.
 //
-// v1 slice: new thread only. Resume via the {threadId→UUID} map, supervisor
-// crash-respawn, and turn/steer escalation are deferred (see the spec).
+// Resume is wired: `--session <threadId>` recovers the original AIT handle via
+// the {threadId→UUID} map (threadMap.ts). Supervisor crash-respawn and turn/steer
+// escalation remain deferred (see the spec).
 
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
@@ -30,6 +31,7 @@ import { createCodexSink } from './sink.js'
 import { startPushListener, tryRegister } from '../push.js'
 import { loadIdentity } from '../storage.js'
 import { setIdentity, reloadIdentity } from '../session.js'
+import { readThreadSessionId, writeThreadSessionId } from './threadMap.js'
 
 // The built ait MCP server the tool-MCP runs in poll mode. host.ts compiles to
 // dist/codex/host.js, so server.js is one directory up.
@@ -52,13 +54,19 @@ const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms))
 
 export async function runCodexLauncher(): Promise<void> {
-  // 1. Pre-mint the shared session id and expose it to storage.ts (the launcher
-  //    resolves its own push-side identity from it, just like the tool-MCP does).
-  const sessionId = randomUUID()
+  // 1. Resolve the shared AIT_SESSION_ID. `--session <threadId>` resumes: recover
+  //    the UUID minted at that thread's original launch from the {threadId→UUID}
+  //    map so the SAME AIT handle rebinds (no orphaning). A new session — or a
+  //    resume of an unknown thread (e.g. a `codex fork`) — mints a fresh UUID,
+  //    i.e. a new handle. Must be set before thread/start: Codex freezes a child
+  //    MCP's env at spawn.
+  const resumeThreadId = parseSessionArg(process.argv)
+  const sessionId =
+    (resumeThreadId ? readThreadSessionId(resumeThreadId) : null) ?? randomUUID()
   process.env.AIT_SESSION_ID = sessionId
   // session.ts loaded identity at import — before AIT_SESSION_ID existed — so it
-  // may hold a foreign one (leaked Claude env). Re-resolve now under our id
-  // (yields null until the model joins) so we don't register push under it.
+  // may hold a foreign one (leaked Claude env). Re-resolve under our id: null on
+  // a new session, the real handle on a resume.
   reloadIdentity()
 
   // 2. Spawn the app-server sidecar with the ait tool-MCP wired in.
@@ -80,16 +88,25 @@ export async function runCodexLauncher(): Promise<void> {
     throw err
   }
 
-  // 4. Start the thread (new-session path). approvalPolicy 'never' keeps the
-  //    session autonomous — a pushed notification can be acted on without an
-  //    operator approving each step (the spec's non-preemptive, hands-off model).
-  const started = await client.threadStart({
+  // 4. Start a new thread, or resume the requested one. approvalPolicy 'never'
+  //    keeps the session autonomous — a pushed notification can be acted on
+  //    without an operator approving each step (the spec's hands-off model).
+  const threadParams = {
     cwd: process.cwd(),
-    approvalPolicy: 'never',
-    sandbox: 'workspace-write',
-  })
+    approvalPolicy: 'never' as const,
+    sandbox: 'workspace-write' as const,
+  }
+  const started = resumeThreadId
+    ? await client.threadResume({ threadId: resumeThreadId, ...threadParams })
+    : await client.threadStart(threadParams)
   const threadId = started.thread.id
-  console.error(`ait codex launcher: session ${sessionId} → thread ${threadId}`)
+  // Record threadId→sessionId so a later `--session <threadId>` rebinds this
+  // handle. Idempotent; also persists a fresh mint when resuming an unknown id.
+  writeThreadSessionId(threadId, sessionId)
+  console.error(
+    `ait codex launcher: session ${sessionId} → thread ${threadId}` +
+      (resumeThreadId ? ' (resumed)' : ''),
+  )
 
   // 5. Wire the push bridge to the codex sink. tryRegister inside runs as a
   //    no-op until an identity exists (the model hasn't joined yet).
@@ -101,9 +118,12 @@ export async function runCodexLauncher(): Promise<void> {
   // 7. Register the push target as soon as the model joins.
   void registerPushWhenReady()
 
-  // 8. Bootstrap: inject the opening "join and wait" turn so the session gets on
-  //    the network. A notification arriving during this turn enqueues behind it.
-  await client.turnStart(threadId, BOOTSTRAP_PROMPT)
+  // 8. Bootstrap a NEW session with the opening "join and wait" turn. A resumed
+  //    thread already joined (its identity is on disk, and registerPushWhenReady
+  //    finds it immediately), so re-injecting would be redundant.
+  if (!resumeThreadId) {
+    await client.turnStart(threadId, BOOTSTRAP_PROMPT)
+  }
 
   // The push listener + app-server socket keep the event loop alive; block so
   // the launcher runs for the session's lifetime (exit via signal).
@@ -128,6 +148,14 @@ function aitMcpOverrides(sessionId: string): string[] {
     args.push('-c', `mcp_servers.ait.env.APPVIEW_DID=${process.env.APPVIEW_DID}`)
   }
   return args
+}
+
+// The resume target — a codex threadId from `--session <threadId>`. Absent means
+// a new session. Mirrors `codex resume <id>`; `codex fork` yields a new threadId
+// (absent from the map → a fresh handle).
+function parseSessionArg(argv: string[]): string | null {
+  const i = argv.indexOf('--session')
+  return i >= 0 && argv[i + 1] ? argv[i + 1] : null
 }
 
 // Poll shared storage for the identity the tool-MCP mints when the model calls

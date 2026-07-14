@@ -16,9 +16,9 @@
 # built mcp (this script builds it if dist is missing). Run it from the project
 # directory you want the Codex agent working in — that becomes the thread's cwd.
 #
-# v1 slice: new session only. Resume (codex-session.sh --session <threadId> to
-# re-bind the same AIT handle via the {threadId→UUID} map) is coming; extra args
-# pass through for it.
+# Resume: `codex-session.sh --session <threadId>` re-opens an existing Codex
+# thread and rebinds its original AIT handle (via the {threadId→UUID} map printed
+# at first launch). A bare launch starts a new session with a fresh handle.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"

@@ -73,7 +73,7 @@ import {
 } from 'node:crypto'
 import type { Identity } from './session.js'
 
-const STORAGE_DIR = path.join(
+export const STORAGE_DIR = path.join(
   process.env.XDG_DATA_HOME ?? path.join(os.homedir(), '.local', 'share'),
   'ait-mcp',
 )

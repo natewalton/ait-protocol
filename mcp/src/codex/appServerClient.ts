@@ -18,6 +18,7 @@ import {
   type RpcResponse,
   type ThreadStartParams,
   type ThreadStartResponse,
+  type ThreadResumeParams,
   type TurnEvent,
   type TurnStartParams,
 } from './appServerTypes.js'
@@ -90,6 +91,12 @@ export class AppServerClient {
 
   async threadStart(params: ThreadStartParams = {}): Promise<ThreadStartResponse> {
     return (await this.request('thread/start', params)) as ThreadStartResponse
+  }
+
+  // Re-open an existing thread by id (the resume path). Returns the same
+  // ThreadStartResponse shape (thread object + model/provider).
+  async threadResume(params: ThreadResumeParams): Promise<ThreadStartResponse> {
+    return (await this.request('thread/resume', params)) as ThreadStartResponse
   }
 
   // Inject a plain-text user turn. Returns once the app-server accepts the turn

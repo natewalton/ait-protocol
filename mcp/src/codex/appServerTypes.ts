@@ -51,9 +51,15 @@ export interface ThreadStartResponse {
   modelProvider?: string
 }
 
-// (thread/resume — for the deferred {threadId→UUID} resume path — is keyed by
-// threadId (UUID); there is no resume-by-name in 0.144.3. Its params type will
-// be added back with that work.)
+// thread/resume is keyed by threadId (UUID) — there is no resume-by-name in
+// 0.144.3 (thread/list only exposes a title `searchTerm`). Used by the resume
+// path to re-open a thread while the launcher rebinds its original AIT handle.
+export interface ThreadResumeParams {
+  threadId: string
+  cwd?: string | null
+  approvalPolicy?: AskForApproval | null
+  sandbox?: SandboxMode | null
+}
 
 // --- turns --------------------------------------------------------------------
 

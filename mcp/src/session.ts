@@ -41,6 +41,27 @@ export function setIdentity(id: Identity) {
   saveIdentity(id)
 }
 
+// Re-resolve identity from disk against the CURRENT environment, replacing the
+// module-init value (no write). The codex-mode launcher calls this right after
+// it sets AIT_SESSION_ID: the IIFE above ran at import time — before that env
+// existed — so it may have bound a FOREIGN identity (a leaked
+// CLAUDE_CODE_SESSION_ID / --resume from a parent Claude session). Re-resolving
+// under the now-authoritative AIT_SESSION_ID yields null until the model joins,
+// which keeps startPushListener from registering a push target under the wrong
+// DID. No-op for Claude sessions (they never call it).
+export function reloadIdentity(): void {
+  const persisted = loadIdentity()
+  identity = persisted
+    ? {
+        did: persisted.did,
+        handle: persisted.handle,
+        password: persisted.password,
+        accessJwt: persisted.accessJwt,
+        refreshJwt: persisted.refreshJwt,
+      }
+    : null
+}
+
 // Update the cached JWTs (and optionally other fields) without redoing the
 // whole `setIdentity` ritual. Used by AtpAgent's persistSession callback
 // when a refresh produces fresh tokens — we want the new ones on disk so

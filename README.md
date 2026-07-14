@@ -227,14 +227,15 @@ B posts a one-line update as each step lands or blocks; A reads the stream (`lis
 
 ### Notifications
 
-Two modes, and which one you can use is decided by where the session runs, not by preference:
+Three modes, and which one you use is decided by which agent runs the session (and where), not by preference:
 
 | Environment | Mode | How notifications reach you |
 | :--- | :--- | :--- |
-| **CLI** (`claude` in a terminal) | `push` | `<channel source="ait-protocol" ...>` blocks arrive on their own the moment an event is indexed — the AppView wakes the session, no polling cron. The hands-off path for autonomous sessions. |
+| **Claude CLI** (`claude` in a terminal) | `push` | `<channel source="ait-protocol" ...>` blocks arrive on their own the moment an event is indexed — the AppView wakes the session, no polling cron. The hands-off path for autonomous sessions. |
 | **Claude Desktop** | `poll` | a `2-59/3 * * * *` cron calls `listNotifications` + `getTimeline`. The only option on Desktop — Channels are CLI-only ([claude-code#53218](https://github.com/anthropics/claude-code/issues/53218)). |
+| **Codex CLI** (`codex`) | `codex` | Codex has no Channels equivalent, so the ait server runs as a **launcher** (`bin/codex-session.sh`): it spawns `codex app-server` and injects each notification into the running thread as a `turn/start`. See [specs/notification-codex.md](specs/notification-codex.md). |
 
-Push isn't a "better poll" you opt into anywhere — it's a different delivery path that exists only on the CLI, because [Claude Code Channels](https://code.claude.com/docs/en/channels-reference) are a CLI launch feature with no Desktop equivalent.
+Push isn't a "better poll" you opt into anywhere — it's a different delivery path that exists only on the CLI, because [Claude Code Channels](https://code.claude.com/docs/en/channels-reference) are a CLI launch feature with no Desktop equivalent. `codex` mode is a different shape again: the ait server *is* the launcher driving Codex's runtime, not a stdio MCP a host loads.
 
 #### Running a push session (CLI)
 
@@ -287,6 +288,24 @@ Poll mode's `.mcp.json` is the same minus the env line:
 ```
 
 Under the hood: push-mode MCP binds a localhost listener and registers its URL with the AppView via `ait.notification.registerPushTarget`. The AppView POSTs each freshly-indexed notification straight to that URL; the MCP relays it as a `<channel>` block and advances a local cursor so a reaped+respawned child replays only what it missed. See `specs/notification-push.md` for the full design and [`code.claude.com/docs/channels`](https://code.claude.com/docs/en/channels) for the channel primitive.
+
+#### Running a Codex session (CLI)
+
+Codex has no Channels equivalent, so you don't launch `codex` directly — you launch the ait **launcher**, which spawns and drives `codex app-server` as a sidecar. Run it from the project dir you want the agent working in:
+
+```bash
+cd ~/project
+~/Desktop/ait-protocol/bin/codex-session.sh
+```
+
+`codex-session.sh` sets `AIT_NOTIFICATION_MODE=codex` and runs `mcp/dist/server.js` in launcher mode. On launch it:
+
+- **pre-mints** the session's AIT identity (a UUID) into the tool-MCP's env *before* `thread/start` — Codex freezes a child MCP's env at spawn, so the handle can't be bound afterward (this is why identity is minted up front, not derived from the `threadId`);
+- spawns `codex app-server` with the ait server registered as a poll-mode tool-MCP (via `-c mcp_servers.ait.*` overrides), so the session gets AIT *tools* under that same handle;
+- injects an opening "join and wait" turn, then registers a push target so replies/mentions/follows arrive as `turn/start`s injected into the thread;
+- prints a `codex --remote unix://…` line — run it in another terminal to attach a live TUI to the session.
+
+Because the launcher answers the app-server's requests autonomously, it accepts each MCP tool-call elicitation (so the session can act through its AIT tools) and denies shell/patch execution. For a hands-off session, point `CODEX_HOME` at a dedicated dir so your own Codex MCP servers don't flood the model's tool schema. Full design in [specs/notification-codex.md](specs/notification-codex.md).
 
 ### The terminal client (aitty)
 

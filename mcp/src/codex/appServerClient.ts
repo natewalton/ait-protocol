@@ -18,7 +18,6 @@ import {
   type RpcResponse,
   type ThreadStartParams,
   type ThreadStartResponse,
-  type ThreadResumeParams,
   type TurnEvent,
   type TurnStartParams,
 } from './appServerTypes.js'
@@ -91,10 +90,6 @@ export class AppServerClient {
 
   async threadStart(params: ThreadStartParams = {}): Promise<ThreadStartResponse> {
     return (await this.request('thread/start', params)) as ThreadStartResponse
-  }
-
-  async threadResume(params: ThreadResumeParams): Promise<ThreadStartResponse> {
-    return (await this.request('thread/resume', params)) as ThreadStartResponse
   }
 
   // Inject a plain-text user turn. Returns once the app-server accepts the turn
@@ -188,12 +183,15 @@ export class AppServerClient {
       return
     }
 
-    // A message with a method is server-initiated: a notification (no id) or a
-    // request (has id, e.g. an approval/elicitation). We run non-interactively
-    // (approvalPolicy 'never'), so the app-server doesn't send us requests; any
-    // that did arrive we intentionally ignore rather than answer. Notifications
-    // drive active-turn tracking.
-    if (typeof msg.method === 'string') this.onNotification(msg.method, msg.params)
+    // A message with a method is server-initiated: a request (has id, e.g. an
+    // approval / elicitation / currentTime) or a notification (no id). We MUST
+    // answer every request — with no operator at the keyboard, an unanswered
+    // request wedges the turn forever (verified: a turn sat idle at 0% CPU until
+    // its currentTime/read was answered). Notifications drive active-turn tracking.
+    if (typeof msg.method === 'string') {
+      if (msg.id != null) this.handleServerRequest(msg.method, msg.id)
+      else this.onNotification(msg.method, msg.params)
+    }
   }
 
   private onNotification(method: string, params: unknown): void {
@@ -209,6 +207,45 @@ export class AppServerClient {
     }
     // All other notifications (thread/*, item/* deltas, token usage, …) are
     // not needed by the launcher and are intentionally ignored.
+  }
+
+  // Answer a server→client request. The launcher is autonomous (no operator
+  // answering prompts), so the policy is:
+  //   - supply the clock (currentTime/read);
+  //   - ACCEPT MCP elicitations — codex gates each MCP tool call through one, and
+  //     a pushed session's whole job is to act through its AIT tools (join, reply,
+  //     post). Declining rejects the tool call (verified: a declined elicitation
+  //     surfaced as "the AIT join call was rejected"). Safe because the only MCP
+  //     server wired in codex mode is ait; if an operator adds their own servers,
+  //     revisit (an attached `codex --remote` TUI can answer instead).
+  //   - DENY command / file / patch execution — no unattended shell in the
+  //     operator's tree; the model acts through tools, not the sandbox.
+  // Anything unmodeled gets a JSON-RPC error, which still unblocks the turn.
+  private handleServerRequest(method: string, id: number): void {
+    switch (method) {
+      case 'currentTime/read':
+        this.respond(id, { currentTimeAt: Math.floor(Date.now() / 1000) })
+        return
+      case 'mcpServer/elicitation/request':
+        this.respond(id, { action: 'accept', content: {} })
+        return
+      case 'execCommandApproval':
+      case 'applyPatchApproval':
+        console.error(`app-server ${method} → auto-denied (autonomous launcher)`)
+        this.respond(id, { decision: 'denied' })
+        return
+      default:
+        console.error(`app-server request '${method}' unmodeled — replying error`)
+        this.respondError(id, -32601, `client does not handle ${method}`)
+    }
+  }
+
+  private respond(id: number, result: unknown): void {
+    this.send({ id, result })
+  }
+
+  private respondError(id: number, code: number, message: string): void {
+    this.send({ id, error: { code, message } })
   }
 }
 

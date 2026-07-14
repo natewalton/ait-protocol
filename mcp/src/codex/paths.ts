@@ -14,9 +14,10 @@ import * as path from 'node:path'
 // real directory there, so the macOS symlink caveat doesn't apply.
 export function runtimeDir(): string {
   if (process.platform === 'darwin') {
-    return process.env.TMPDIR ?? os.tmpdir()
+    // `||` not `??`: an exported-but-empty TMPDIR must fall back, not yield "".
+    return process.env.TMPDIR || os.tmpdir()
   }
-  return process.env.XDG_RUNTIME_DIR ?? '/tmp'
+  return process.env.XDG_RUNTIME_DIR || '/tmp'
 }
 
 // The app-server socket path for one session. Named by the first 8 hex chars of

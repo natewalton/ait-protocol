@@ -16,6 +16,9 @@ import type { AppServerClient } from './appServerClient.js'
 import type { NotificationSink, NotificationView } from '../push.js'
 import { updateLastSeenNotificationAt } from '../storage.js'
 
+// Delay before re-pumping after a hard (non-backoff) turn/start failure.
+const INJECT_RETRY_DELAY_MS = 3000
+
 // Render a NotificationView as the plain-text user turn the model reads. Codex
 // has no <channel> XML convention, so the metadata (reason, author, uri,
 // in_reply_to) rides in the body — the model needs it to decide how to act.
@@ -48,6 +51,8 @@ export function createCodexSink(
   threadId: string,
 ): NotificationSink {
   const queue: NotificationView[] = []
+  // Notification URIs accepted this process-lifetime, for replay dedup (below).
+  const seen = new Set<string>()
   // True from when we issue a turn/start until its turn/completed. Covers the
   // window between turnStart resolving and the turn/started event, during which
   // isTurnActive() still reads false — without it we'd inject a second turn.
@@ -68,10 +73,13 @@ export function createCodexSink(
       // Keep pendingInjection = true until this turn's turn/completed; the
       // listener below clears it and pumps the next item.
     } catch (err) {
-      // Hard failure (not the retried -32001). Leave the view queued and free
-      // the gate so the next boundary retries it.
-      console.error('codex turn injection failed, will retry:', err)
+      // Hard failure (not the retried -32001). Free the gate and schedule a
+      // retry: pump() is otherwise only re-driven by deliver() or turn/completed,
+      // neither of which a rejected turn/start produces, so the head-of-queue
+      // view would strand forever.
+      console.error('codex turn injection failed, retrying shortly:', err)
       pendingInjection = false
+      setTimeout(() => void pump(), INJECT_RETRY_DELAY_MS)
     }
   }
 
@@ -85,6 +93,12 @@ export function createCodexSink(
   // Enqueue and return immediately: the AppView's POST must not block on a
   // running turn. Injection + cursor-advance happen asynchronously in pump().
   return async (view: NotificationView) => {
+    // Dedup by uri: the registration `since` replay (re-register heartbeat, or
+    // post-crash catch-up) re-POSTs notifications whose cursor hasn't advanced.
+    // Skipping URIs already accepted this process-lifetime prevents double-
+    // injection; a genuine crash resets `seen`, so real catch-up still delivers.
+    if (seen.has(view.uri)) return
+    seen.add(view.uri)
     queue.push(view)
     void pump()
   }

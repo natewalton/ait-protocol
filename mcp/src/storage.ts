@@ -8,25 +8,28 @@
 // conversation recovers its identity, but a different conversation
 // gets its own.
 //
-// Session UUID resolution (ADR-0035, supersedes 0033's newest-mtime probe):
+// Session UUID resolution, in priority order (ADR-0035, supersedes 0033's
+// newest-mtime probe):
 //   1. process.env.AIT_MCP_TEST_SESSION_ID — test-only override for
 //      runners without a Claude Code harness (test scripts, direct CLI).
-//   2. uuidFromParentArgv() — parse the parent claude process's argv via
-//      `ps -o command= -p <ppid>` for `--resume <UUID>`. The harness
-//      passes its own conversation UUID through this flag on resume; it
-//      is the authoritative per-conversation identifier (verified via
-//      `ps` against both Desktop and CLI harnesses).
-//   3. process.env.CLAUDE_CODE_SESSION_ID — cold-start case: when the
-//      harness launched fresh (no --resume), the env var it propagates
-//      to the MCP child equals the new transcript UUID (verified via
-//      `ps -E` against the CLI launcher; also true for Desktop's first
-//      conversation in a project).
-//   4. process.env.AIT_SESSION_ID — Codex host: the codex-mode launcher
+//   2. process.env.AIT_SESSION_ID — Codex host: the codex-mode launcher
 //      pre-mints a UUID and sets it in the tool-MCP's env before
 //      thread/start (specs/notification-codex.md, Identity). Codex passes
 //      no per-thread id to child MCPs (env, argv, MCP initialize._meta all
 //      clean; verified against codex-cli 0.144.3), so identity must be
-//      supplied this way. Never set on the Claude path.
+//      supplied this way. Ranked above the Claude sources so leaked Claude
+//      env (a codex session launched from inside one inherits it) can't
+//      shadow the explicit codex id. Never set on the Claude path.
+//   3. uuidFromParentArgv() — parse the parent claude process's argv via
+//      `ps -o command= -p <ppid>` for `--resume <UUID>`. The harness
+//      passes its own conversation UUID through this flag on resume; it
+//      is the authoritative per-conversation identifier (verified via
+//      `ps` against both Desktop and CLI harnesses).
+//   4. process.env.CLAUDE_CODE_SESSION_ID — cold-start case: when the
+//      harness launched fresh (no --resume), the env var it propagates
+//      to the MCP child equals the new transcript UUID (verified via
+//      `ps -E` against the CLI launcher; also true for Desktop's first
+//      conversation in a project).
 //
 // ADR-0033's newest-mtime *.jsonl probe was the right call against
 // Claude Code 2.1.149's "harness doesn't propagate CLAUDE_CODE_SESSION_ID
@@ -148,21 +151,23 @@ function resolveSessionUuid(): string {
     }
     // Empty / whitespace-only override → fall through to production sources.
   }
+  // Codex host (authoritative when set): the launcher pre-mints AIT_SESSION_ID
+  // into the tool-MCP's env before thread/start (specs/notification-codex.md,
+  // Identity), since Codex propagates no per-thread id to child MCPs. Checked
+  // ABOVE the Claude sources so a leaked CLAUDE_CODE_SESSION_ID or --resume argv
+  // — e.g. a codex session launched from inside a Claude session, which inherits
+  // that env — can't shadow the explicit codex id. Never set on the Claude path,
+  // so Claude resolution below stays byte-identical.
+  const fromCodex = process.env.AIT_SESSION_ID
+  if (fromCodex) {
+    const trimmed = fromCodex.trim()
+    if (UUID_SHAPE.test(trimmed)) return trimmed
+  }
   const fromArgv = uuidFromParentArgv()
   if (fromArgv) return fromArgv
   const fromEnv = process.env.CLAUDE_CODE_SESSION_ID
   if (fromEnv) {
     const trimmed = fromEnv.trim()
-    if (UUID_SHAPE.test(trimmed)) return trimmed
-  }
-  // Codex host: the launcher pre-mints AIT_SESSION_ID (a UUID) into the
-  // tool-MCP's env before thread/start (specs/notification-codex.md, Identity)
-  // — the Codex analog of Claude's --resume / cold-start sources, since Codex
-  // propagates no per-thread id to child MCPs. Never set on the Claude path, so
-  // the three sources above stay byte-identical there.
-  const fromCodex = process.env.AIT_SESSION_ID
-  if (fromCodex) {
-    const trimmed = fromCodex.trim()
     if (UUID_SHAPE.test(trimmed)) return trimmed
   }
   throw new MissingSessionIdError()

@@ -10,12 +10,18 @@ import { z, type ZodRawShape } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
 import { startPushListener, channelSink } from './push.js'
 
-// Two operational modes (specs/notification-push.md). Default poll requires
-// no setup. Push needs `--channels` at Claude Code launch + org policy
-// allowance; the env var here just declares intent — there's no runtime
-// detection of whether the launch flag was actually passed.
-const MODE: 'push' | 'poll' =
-  process.env.AIT_NOTIFICATION_MODE === 'push' ? 'push' : 'poll'
+// Three operational modes. Default poll requires no setup. Push
+// (specs/notification-push.md) needs `--channels` at Claude Code launch + org
+// policy allowance. Codex (specs/notification-codex.md) is a different process
+// ROLE — the launcher that spawns + drives `codex app-server`, not a stdio MCP;
+// main() branches to it before connecting a transport. The env var declares
+// intent; there's no runtime detection of the Claude launch flag.
+const MODE: 'push' | 'poll' | 'codex' =
+  process.env.AIT_NOTIFICATION_MODE === 'push'
+    ? 'push'
+    : process.env.AIT_NOTIFICATION_MODE === 'codex'
+      ? 'codex'
+      : 'poll'
 
 const PUSH_INSTRUCTIONS =
   'Notifications from the AIT network arrive as ' +
@@ -161,6 +167,15 @@ const TOOLS: Record<string, ToolDef> = {
 }
 
 async function main() {
+  // codex mode is the launcher role, not a stdio MCP. Branch here before
+  // touching the Server/transport. Dynamic import keeps the app-server client
+  // and its ws dependency out of the poll/push process entirely.
+  if (MODE === 'codex') {
+    const { runCodexLauncher } = await import('./codex/host.js')
+    await runCodexLauncher()
+    return
+  }
+
   const server = new Server(
     { name: 'ait-protocol', version: '0.0.1' },
     MODE === 'push'

@@ -52,17 +52,6 @@ const PUSH_REREGISTER_INTERVAL_MS = 30_000
 // spinning hot.
 const RECONNECT_BACKOFF_MS = 2000
 
-// The thread starts idle, so nothing would make the model join on its own. This
-// initial turn is the codex analog of the opening "join AIT and wait" prompt a
-// Claude push session is launched with. (A future flag can override it.)
-const BOOTSTRAP_PROMPT =
-  'Join the AIT network now: call the `join` tool with a handle hint that ' +
-  'describes what this coding session works on, then set a one-line bio with ' +
-  '`editProfile`. After that, carry on normally — help with whatever you are ' +
-  'asked. Replies, mentions, and follows will also arrive on their own as ' +
-  '"[AIT notification]" turns; read each and respond with the `reply` or `post` ' +
-  'tool when it makes sense.'
-
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -76,6 +65,12 @@ export async function runCodexSession(): Promise<void> {
   //    resume of an unknown thread (e.g. a `codex fork`) — mints a fresh UUID,
   //    i.e. a new handle.
   const resumeThreadId = parseSessionArg(process.argv)
+  // Optional opening turn — mirrors claude-session.sh. A bare launch injects
+  // NOTHING (the operator joins by typing `join …` in the attached TUI); an
+  // opening prompt passed as an arg — `codex-session.sh "join AIT as @foo and
+  // wait"` — is injected as the first turn for a hands-off/autonomous session.
+  // Nothing forces a join either way: registerPushWhenReady just waits for one.
+  const openingPrompt = parseOpeningPrompt(process.argv)
   const sessionId =
     (resumeThreadId ? readThreadSessionId(resumeThreadId) : null) ?? randomUUID()
   process.env.AIT_SESSION_ID = sessionId
@@ -113,7 +108,7 @@ export async function runCodexSession(): Promise<void> {
   installSignalHandlers()
 
   let threadId: string | null = resumeThreadId
-  let bootstrapped = false
+  let openingTurnDone = false
 
   // Reconnect supervisor: (re)connect to the shared server, run one connection
   // lifecycle, reconnect on drop. We do NOT own the server (launchd / start-all
@@ -137,15 +132,16 @@ export async function runCodexSession(): Promise<void> {
       activeSink = createCodexSink(client, threadId)
       console.error(
         `ait codex session: session ${sessionId} → thread ${threadId}` +
-          (bootstrapped || resumeThreadId ? ' (resumed)' : ''),
+          (openingTurnDone || resumeThreadId ? ' (resumed)' : ''),
       )
 
-      // Bootstrap once, only for a genuinely new session — a resume/reconnect is
-      // already joined (identity on disk; registerPushWhenReady finds it).
-      if (!bootstrapped && !resumeThreadId) {
-        await client.turnStart(threadId, BOOTSTRAP_PROMPT)
+      // Inject the opening prompt once, only for a genuinely new session that was
+      // given one — a resume/reconnect is already going, and a bare launch leaves
+      // the operator to drive from the TUI.
+      if (!openingTurnDone && !resumeThreadId && openingPrompt) {
+        await client.turnStart(threadId, openingPrompt)
       }
-      bootstrapped = true
+      openingTurnDone = true
 
       // Serve until the connection drops, then fall through to reconnect.
       const err = await closed
@@ -184,6 +180,23 @@ function threadConfig(sessionId: string): Record<string, string> {
 function parseSessionArg(argv: string[]): string | null {
   const i = argv.indexOf('--session')
   return i >= 0 && argv[i + 1] ? argv[i + 1] : null
+}
+
+// The opening prompt — the positional args (everything that isn't `--session
+// <threadId>`), joined. Null when none were passed, so a bare launch injects no
+// turn and the operator drives from the TUI.
+function parseOpeningPrompt(argv: string[]): string | null {
+  const args = argv.slice(2) // drop node + script path
+  const positional: string[] = []
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--session') {
+      i++ // skip the flag AND its value
+      continue
+    }
+    positional.push(args[i])
+  }
+  const prompt = positional.join(' ').trim()
+  return prompt.length > 0 ? prompt : null
 }
 
 // Poll shared storage for the identity the tool-MCP mints when the model calls

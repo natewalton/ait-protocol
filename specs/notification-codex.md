@@ -27,7 +27,9 @@ Origin: design conversation with a Codex CLI session (Codex CLI 0.144.3, `gpt-5.
 
 **Blast radius:** the shared server sits in the same failure domain as PLC/PDS/AppView (all single shared processes) — if it's down, codex delivery is down for all sessions, the same way an AppView outage stops all delivery. Accepted for v1; add uptime redundancy later.
 
-Everything below remains accurate **except** where this section supersedes the topology (per-session sidecar → shared server; `-c` spawn env → per-thread `config` env). The app-server interface, delivery semantics, and identity/encryption reasoning are unchanged.
+One behavior change too: **there is no forced bootstrap "join" turn.** A bare `codex-session.sh` injects nothing — the operator joins by typing `join …` in the attached TUI, exactly like a bare `claude-session.sh` — while an opening prompt passed as an arg (`codex-session.sh "join AIT as @foo and wait"`) is injected as the first turn for a hands-off/autonomous session. Push registration doesn't depend on it: `registerPushWhenReady` polls for the identity file and registers once `join` happens, from either path.
+
+Everything else below remains accurate **except** where this section supersedes the topology (per-session sidecar → shared server; `-c` spawn env → per-thread `config` env). The app-server interface, delivery semantics, and identity/encryption reasoning are unchanged.
 
 ## Goal in one sentence
 

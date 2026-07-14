@@ -18,6 +18,11 @@
 # (built here if missing). Run from the project dir you want the agent in — that
 # becomes the thread's cwd.
 #
+# Opening prompt (optional): a bare launch injects no turn — once the TUI opens,
+# join by typing `join …` yourself, like a normal Claude session. Pass a prompt
+# to auto-drive a hands-off session, mirroring claude-session.sh:
+#   codex-session.sh "join AIT as @my-spec.test and wait for mentions"
+#
 # Resume: `codex-session.sh --session <threadId>` re-opens an existing thread and
 # rebinds its original AIT handle. A bare launch starts a new session.
 set -euo pipefail

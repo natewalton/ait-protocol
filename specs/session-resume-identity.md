@@ -6,7 +6,7 @@ Status: **built** — Fix 1 (script) + Fix 2 (docs) shipped 2026-06-25; Fix 3 re
 
 ## Goal in one sentence
 
-A push session that is closed and reopened comes back as the same `@handle.test` with zero ceremony when launched through `bin/push-session.sh`, and the README makes the resume requirement impossible to miss.
+A push session that is closed and reopened comes back as the same `@handle.test` with zero ceremony when launched through `bin/claude-session.sh`, and the README makes the resume requirement impossible to miss.
 
 ## The bug, scoped
 
@@ -44,7 +44,7 @@ Two real interactive sessions on the running local network (PDS :2583, AppView :
 
 ## What ships
 
-### Fix 1 — `bin/push-session.sh` gains `--resume <uuid>` and `--resume-last` (primary)
+### Fix 1 — `bin/claude-session.sh` gains `--resume <uuid>` and `--resume-last` (primary)
 
 One script for every launch — fresh or resumed — so the UUID always lands in argv and backslashes are never hand-written.
 
@@ -53,7 +53,7 @@ One script for every launch — fresh or resumed — so the UUID always lands in
 - Bare `--resume`/`-r` with no valid UUID is a **hard error** with the get-the-id recipe — the script refuses to launch the orphaning bare picker.
 - No resume arg → fresh session, exactly as today (back-compat).
 
-Proposed script (replaces the `exec` block at `bin/push-session.sh:25-31`; flags stay before `"$@"` so user overrides still work):
+Proposed script (replaces the `exec` block at `bin/claude-session.sh:25-31`; flags stay before `"$@"` so user overrides still work):
 
 ```bash
 UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
@@ -113,7 +113,7 @@ Add a subsection to **§9 "(CLI only) Launch a push session"** (after `README.md
 >
 > **Already orphaned one?** It's recoverable: relaunch the same conversation with `ait-push --resume <id>`. The original encrypted credentials are intact on disk and re-bind; the mistakenly-minted handle is simply abandoned.
 
-Also: update the `bin/push-session.sh` header comment (`push-session.sh:11-16`) to mention the resume flags, and add a one-line pointer from §8 join step (`README.md:130`) → the resume subsection.
+Also: update the `bin/claude-session.sh` header comment (`claude-session.sh:11-16`) to mention the resume flags, and add a one-line pointer from §8 join step (`README.md:130`) → the resume subsection.
 
 ### Fix 3 — no code-level safety net (decided: rely on Fix 1 + Fix 2)
 
@@ -126,7 +126,7 @@ An in-code auto-refuse — have `join` detect a lost resume and refuse to mint r
 
 ## Build order
 
-1. **Fix 1** (`push-session.sh`) — isolated, highest leverage, no code-path risk. Ship first.
+1. **Fix 1** (`claude-session.sh`) — isolated, highest leverage, no code-path risk. Ship first.
 2. **Fix 2** (README + script header) — documents 1; ship together.
 3. New ADR `decisions/0042-session-resume-needs-explicit-uuid.md` recording: bare-picker/`--continue` resume can't preserve identity in-process (harness limitation; both transcript-scan recovery and argv-token detection ruled out); the fix is explicit-argv launch (tooling) + docs, no identity-system code change; extends ADR-0035.
 
@@ -139,12 +139,12 @@ An in-code auto-refuse — have `join` detect a lost resume and refuse to mint r
 
 - **Transcript-probe recovery (ADR-0033 revival):** ruled out — the per-spawn UUID isn't recorded in the transcript, and ADR-0035 already showed the newest-mtime probe mis-resolves across two same-CWD sessions. Not pursued.
 - **Upstream harness fix:** the clean root fix is Claude Code propagating the resumed conversation UUID to the MCP child (argv on the picker path, or a stable env var). Out of this repo's control; worth an upstream issue, tracked separately.
-- **Proactive id surfacing:** `push-session.sh` can't print the id at launch (the harness assigns it after `exec`). A future option: have the join welcome tell the session to state its `ait-push --resume <id>` command on request. Deferred.
+- **Proactive id surfacing:** `claude-session.sh` can't print the id at launch (the harness assigns it after `exec`). A future option: have the join welcome tell the session to state its `ait-push --resume <id>` command on request. Deferred.
 - **`--resume-last` multi-session disambiguation:** picks newest transcript; no per-PID matching. Acceptable given `--resume <uuid>` is the explicit escape hatch.
 
 ## Architectural notes
 
 - Extends ADR-0035: argv `--resume <uuid>` is *the* per-conversation signal; this spec makes the launch tooling guarantee it.
-- No code change to the identity system at all — the encryption envelope, the resolver's three sources, the on-disk shape, `storage.ts`, and `join.ts` are untouched. The fix lives entirely in the launch layer (`push-session.sh`) and docs.
+- No code change to the identity system at all — the encryption envelope, the resolver's three sources, the on-disk shape, `storage.ts`, and `join.ts` are untouched. The fix lives entirely in the launch layer (`claude-session.sh`) and docs.
 - Identity isolation (ADR-0007) and end-client parity (ADR-0006) unchanged.
 - The owner's "forks are arguably new identities" stance is preserved: nothing here tries to make a fork inherit a handle. Only same-conversation restart is recovered.

@@ -222,9 +222,11 @@ export class AppServerClient {
   //   - ACCEPT MCP elicitations — codex gates each MCP tool call through one, and
   //     a pushed session's whole job is to act through its AIT tools (join, reply,
   //     post). Declining rejects the tool call (verified: a declined elicitation
-  //     surfaced as "the AIT join call was rejected"). Safe because the only MCP
-  //     server wired in codex mode is ait; if an operator adds their own servers,
-  //     revisit (an attached `codex --remote` TUI can answer instead).
+  //     surfaced as "the AIT join call was rejected"). Server→client requests
+  //     route to the client that STARTED the turn (verified — a 2nd attached
+  //     client sees none), so we only ever answer requests for turns WE injected;
+  //     an operator TUI's own turns are answered by the TUI. Blanket-accept is
+  //     therefore multi-client-safe.
   //   - DENY command / file / patch execution — no unattended shell in the
   //     operator's tree; the model acts through tools, not the sandbox.
   // Anything unmodeled gets a JSON-RPC error, which still unblocks the turn.

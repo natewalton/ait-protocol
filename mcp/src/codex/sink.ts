@@ -62,7 +62,11 @@ export function createCodexSink(
     // All three guards are synchronous (no await before pendingInjection is
     // set), so concurrent pump() calls can't both pass — injections serialize.
     if (pendingInjection || queue.length === 0) return
-    if (client.isTurnActive(threadId)) return // a turn (ours or operator's) is running
+    // Only turns WE injected — turn notifications route to the initiator, so the
+    // launcher's client never sees an operator (attached TUI) turn. Those are
+    // serialized by the app-server's own turn queue (a turn/start during an
+    // operator turn enqueues, non-preemptive), so we needn't track them here.
+    if (client.isTurnActive(threadId)) return
 
     pendingInjection = true
     const view = queue[0]

@@ -1,8 +1,8 @@
 #!/bin/bash
-# Stops the three AIT services started by bin/start-all.sh.
+# Stops the four AIT services started by bin/start-all.sh.
 set -euo pipefail
 LOGS=/tmp
-for name in plc pds appview; do
+for name in plc pds appview codex-appserver; do
   pidfile="$LOGS/ait-$name.pid"
   if [ -f "$pidfile" ]; then
     pid=$(cat "$pidfile")

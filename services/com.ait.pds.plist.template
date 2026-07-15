@@ -3,20 +3,20 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.ait.plc</string>
+    <string>com.ait.pds</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/nwalton/Desktop/ait-protocol/bin/run-plc.sh</string>
+        <string>__REPO__/bin/run-pds.sh</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/nwalton/Desktop/ait-protocol/plc</string>
+    <string>__REPO__/pds</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/ait-plc.log</string>
+    <string>/tmp/ait-pds.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/ait-plc.err</string>
+    <string>/tmp/ait-pds.err</string>
 </dict>
 </plist>

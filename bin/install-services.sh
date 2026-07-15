@@ -16,18 +16,26 @@ mkdir -p "$TARGET"
 
 for svc in plc pds appview codex-appserver; do
   label="com.ait.$svc"
-  src="$REPO/services/$label.plist"
+  src="$REPO/services/$label.plist.template"
   dst="$TARGET/$label.plist"
 
   if [ ! -f "$src" ]; then
-    echo "missing source plist: $src" >&2
+    echo "missing source template: $src" >&2
     exit 1
   fi
 
   # Unload any previous version first (ignore errors if it wasn't loaded).
   launchctl unload "$dst" 2>/dev/null || true
 
-  cp "$src" "$dst"
+  # Substitute this machine's paths into the template (__REPO__ = repo root,
+  # __HOME__ = $HOME). The committed templates stay machine-agnostic. Literal
+  # bash replacement, not sed, so a repo/home path containing sed metacharacters
+  # (& | \) can't corrupt or abort the generated plist.
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line//__REPO__/$REPO}"
+    line="${line//__HOME__/$HOME}"
+    printf '%s\n' "$line"
+  done < "$src" > "$dst"
   launchctl load -w "$dst"
   echo "installed $label (-> $dst)"
 done

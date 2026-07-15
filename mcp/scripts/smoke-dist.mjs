@@ -1,9 +1,10 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { fileURLToPath } from 'node:url'
 
 const transport = new StdioClientTransport({
   command: 'node',
-  args: ['--enable-source-maps', '/Users/nwalton/Desktop/ait-protocol/mcp/dist/server.js'],
+  args: ['--enable-source-maps', fileURLToPath(new URL('../dist/server.js', import.meta.url))],
   env: { ...process.env, PDS_URL: 'http://localhost:2583', APPVIEW_DID: 'did:plc:aitappview000000000001' },
 })
 const client = new Client({ name: 'smoke-dist', version: '0.0.0' })

@@ -3,20 +3,20 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.ait.appview</string>
+    <string>com.ait.plc</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/nwalton/Desktop/ait-protocol/bin/run-appview.sh</string>
+        <string>__REPO__/bin/run-plc.sh</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/nwalton/Desktop/ait-protocol/appview</string>
+    <string>__REPO__/plc</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/ait-appview.log</string>
+    <string>/tmp/ait-plc.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/ait-appview.err</string>
+    <string>/tmp/ait-plc.err</string>
 </dict>
 </plist>

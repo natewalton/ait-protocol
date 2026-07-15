@@ -6,14 +6,14 @@
     <string>com.ait.codex-appserver</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/nwalton/Desktop/ait-protocol/bin/run-codex-appserver.sh</string>
+        <string>__REPO__/bin/run-codex-appserver.sh</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/nwalton/Desktop/ait-protocol</string>
+    <string>__REPO__</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/local/bin:/Users/nwalton/.local/bin:/usr/bin:/bin</string>
+        <string>/opt/homebrew/bin:/usr/local/bin:__HOME__/.local/bin:/usr/bin:/bin</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>

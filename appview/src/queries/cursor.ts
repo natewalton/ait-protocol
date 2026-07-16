@@ -1,8 +1,17 @@
-// Opaque base64url cursors — callers hand them back unchanged, never parse them.
+// Opaque pagination/replay cursors. Two shapes live here because the AppView
+// has two kinds of ordering to expose, and neither can use the other's:
 //
-// Two shapes, because neither table can use the other's ordering: `posts` has no
-// sequence, so the feeds keyset on (createdAt, uri); `notifications` has `seq`,
-// which is already total and needs no tiebreaker.
+//   - Post feeds (getTimeline, getAuthorFeed) read `posts`, which has no
+//     sequence, so they order on (createdAt, uri) — a keyset tuple in the shape
+//     of atproto's own GenericKeyset/TimeCidKeyset (`primary::secondary`), which
+//     is internal to @atproto/pds and can't be imported.
+//   - Notifications read `notifications`, which owns a monotonic `seq`, so they
+//     order on that alone. seq is already total and unique, making a tiebreaker
+//     redundant.
+//
+// Both encode to an opaque base64url string. Callers never inspect the contents:
+// what's inside is the AppView's business, and the wire contract is "hand this
+// back to me unchanged" — the same contract bsky's listNotifications cursor has.
 
 export interface DecodedCursor {
   createdAt: string

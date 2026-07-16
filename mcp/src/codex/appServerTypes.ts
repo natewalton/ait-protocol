@@ -61,6 +61,15 @@ export interface ThreadResumeParams {
   sandbox?: SandboxMode | null
 }
 
+// thread/name/set — sets a thread's display name. The launcher calls it purely
+// for its side effect: it forces the app-server to persist the thread's on-disk
+// rollout (a bare thread/start writes none) so `codex resume` can attach. The
+// param is `name` (verified live) — not `title`, the term the picker UI uses.
+export interface ThreadNameSetParams {
+  threadId: string
+  name: string
+}
+
 // --- turns --------------------------------------------------------------------
 
 // The only UserInput variant we inject: a plain-text user message. `text_elements`

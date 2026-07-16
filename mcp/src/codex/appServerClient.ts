@@ -19,6 +19,7 @@ import {
   type ThreadStartParams,
   type ThreadStartResponse,
   type ThreadResumeParams,
+  type ThreadNameSetParams,
   type TurnEvent,
   type TurnStartParams,
 } from './appServerTypes.js'
@@ -118,16 +119,17 @@ export class AppServerClient {
     }
   }
 
-  // Append raw Responses-API items to a thread's model-visible history WITHOUT
-  // starting a turn (silent context, no model response). The session driver uses
-  // this on a fresh thread to (a) create the on-disk rollout a bare thread/start
-  // doesn't write — so `codex resume <threadId>` can attach a TUI — and (b) orient
-  // the model, without a forced join turn.
-  async injectItems(
-    threadId: string,
-    items: Array<Record<string, unknown>>,
-  ): Promise<void> {
-    await this.request('thread/inject_items', { threadId, items })
+  // Name a thread — and, as a side effect, force the app-server to write its
+  // on-disk rollout. A bare thread/start persists nothing, so
+  // bin/codex-session.sh's `codex resume <threadId>` would fail with "no rollout
+  // found"; naming the thread is the lightest write that creates a (session_meta-
+  // only) rollout the TUI can attach to. Crucially, unlike thread/inject_items it
+  // opens NO `auto-compact-0` turn_context — a resumed TUI renders such a dangling
+  // context as a phantom "Working" spinner that never clears — and runs no model
+  // turn.
+  async setName(threadId: string, name: string): Promise<void> {
+    const params: ThreadNameSetParams = { threadId, name }
+    await this.request('thread/name/set', params)
   }
 
   isTurnActive(threadId: string): boolean {

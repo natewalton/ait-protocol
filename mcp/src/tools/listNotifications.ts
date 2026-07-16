@@ -6,6 +6,10 @@ export const listNotificationsInputSchema = {
   cursor: z.string().optional(),
 }
 
+// Mirrors ait.notification.listNotifications#notification. This tool renders
+// text and doesn't resume a stream, so it never reads `cursor` — it's here to
+// keep the mirror faithful to the lexicon. The push path (push.ts) is what
+// commits it.
 interface NotificationView {
   uri: string
   cid: string
@@ -15,6 +19,7 @@ interface NotificationView {
   record: { text?: string; subject?: string } | null
   isRead: boolean
   indexedAt: string
+  cursor: string
 }
 
 interface ListResult {

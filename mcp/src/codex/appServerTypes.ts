@@ -85,11 +85,15 @@ export interface TurnStartParams {
   input: UserInputText[]
 }
 
+export interface TurnStartResponse {
+  turn: { id: string }
+}
+
 // turn/started and turn/completed both carry { threadId, turn }. We only read
 // the threadId (to scope active-turn tracking) and the completed turn's status.
 export interface TurnEvent {
   threadId: string
-  turn?: { status?: string }
+  turn?: { id?: string; status?: string }
 }
 
 export interface ThreadStartedEvent {

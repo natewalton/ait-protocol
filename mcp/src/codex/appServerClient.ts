@@ -22,6 +22,7 @@ import {
   type ThreadNameSetParams,
   type TurnEvent,
   type TurnStartParams,
+  type TurnStartResponse,
 } from './appServerTypes.js'
 
 const CLIENT_INFO = {
@@ -46,7 +47,7 @@ export class AppServerClient {
   // Threads with a turn currently running (from turn/started .. turn/completed).
   // A thread runs one turn at a time, so membership = "busy".
   private readonly activeThreads = new Set<string>()
-  private readonly turnCompletedListeners: Array<(threadId: string) => void> = []
+  private readonly turnCompletedListeners: Array<(event: TurnEvent) => void> = []
   private readonly closeListeners: Array<(err?: Error) => void> = []
   private closed = false
 
@@ -103,15 +104,20 @@ export class AppServerClient {
   // Inject a plain-text user turn. Returns once the app-server accepts the turn
   // (the JSON-RPC response); the turn itself runs asynchronously, surfacing via
   // the turn/started .. turn/completed events. Retries -32001 with backoff.
-  async turnStart(threadId: string, text: string): Promise<void> {
+  async turnStart(threadId: string, text: string): Promise<string> {
     const params: TurnStartParams = {
       threadId,
       input: [{ type: 'text', text, text_elements: [] }],
     }
     for (let attempt = 0; ; attempt++) {
       try {
-        await this.request('turn/start', params)
-        return
+        const response = (await this.request(
+          'turn/start',
+          params,
+        )) as TurnStartResponse
+        const turnId = response.turn?.id
+        if (!turnId) throw new Error('turn/start response missing turn.id')
+        return turnId
       } catch (err) {
         if (!isOverloaded(err) || attempt >= OVERLOAD_MAX_RETRIES) throw err
         await delay(backoffMs(attempt))
@@ -136,7 +142,7 @@ export class AppServerClient {
     return this.activeThreads.has(threadId)
   }
 
-  onTurnCompleted(listener: (threadId: string) => void): void {
+  onTurnCompleted(listener: (event: TurnEvent) => void): void {
     this.turnCompletedListeners.push(listener)
   }
 
@@ -223,7 +229,8 @@ export class AppServerClient {
       const threadId = (params as TurnEvent)?.threadId
       if (threadId) {
         this.activeThreads.delete(threadId)
-        for (const listener of this.turnCompletedListeners) listener(threadId)
+        const event = params as TurnEvent
+        for (const listener of this.turnCompletedListeners) listener(event)
       }
     }
     // All other notifications (thread/*, item/* deltas, token usage, …) are

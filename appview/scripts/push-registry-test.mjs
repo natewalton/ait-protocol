@@ -2,16 +2,14 @@
 // specs/notification-push.md. Verifies, without standing up the firehose:
 //   (a) isValidPushUrl accepts only http://127.0.0.1:<port>/... URLs
 //   (b) registerAndReplay POSTs backlog notifications oldest-first
-//   (c) registerAndReplay with since=null skips replay
+//   (c) registerAndReplay from current seq skips replay
 //   (d) registerAndReplay on POST failure removes the registration
 //   (e) notifyInsert pushes a freshly-inserted row to the registered URL
 //   (f) notifyInsert on POST failure removes the registration
 
-import http from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { setTimeout as delay } from 'node:timers/promises'
 
 const tmp = mkdtempSync(join(tmpdir(), 'push-registry-test-'))
 
@@ -64,25 +62,22 @@ function seedNotification(uri, recipientDid, authorDid, createdAt) {
 seedActor(DID_AUTHOR)
 seedActor(DID_A)
 
-// Tiny mock MCP listener. Records every POST body; can be set to fail on demand.
+// Mock fetch transport. Records every POST body; can be set to fail on demand.
 let received = []
 let failNext = false
-const listener = http.createServer(async (req, res) => {
-  const chunks = []
-  for await (const chunk of req) chunks.push(chunk)
-  const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+let onFetch = null
+globalThis.fetch = async (_url, init) => {
+  const body = JSON.parse(init.body)
   received.push(body)
+  const hook = onFetch
+  onFetch = null
+  if (hook) hook()
   if (failNext) {
-    res.writeHead(500)
-    res.end()
-    return
+    return new Response('', { status: 500 })
   }
-  res.writeHead(200)
-  res.end('ok')
-})
-await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve))
-const port = listener.address().port
-const URL_OK = `http://127.0.0.1:${port}/notify`
+  return new Response('ok', { status: 200 })
+}
+const URL_OK = 'http://127.0.0.1:9999/notify'
 
 let failures = 0
 function check(label, cond, detail = '') {
@@ -112,23 +107,23 @@ seedNotification('at://b/p/3', DID_A, DID_AUTHOR, '2026-05-29T12:00:00.000Z')
 
 received = []
 registry._clear()
-await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, '2026-05-29T10:30:00.000Z')
+await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, 1)
 check('(b) replay delivered exactly 2 events', received.length === 2)
 check('(b) oldest first', received[0]?.uri === 'at://b/p/2' && received[1]?.uri === 'at://b/p/3')
 check('(b) registration still live', registry._registeredUrl(DID_A) === URL_OK)
 
-// (c) since=null skips replay
+// (c) current seq skips replay
 received = []
 registry._clear()
-await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, null)
-check('(c) since=null delivers 0 events', received.length === 0)
+await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, 3)
+check('(c) current seq delivers 0 events', received.length === 0)
 check('(c) registration live', registry._registeredUrl(DID_A) === URL_OK)
 
 // (d) POST failure during replay removes registration and bails
 received = []
 registry._clear()
 failNext = true
-await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, '2026-05-29T09:00:00.000Z')
+await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, 0)
 failNext = false
 check('(d) replay attempted at least one POST', received.length >= 1)
 check('(d) registration removed after failure', registry._registeredUrl(DID_A) === undefined)
@@ -136,26 +131,44 @@ check('(d) registration removed after failure', registry._registeredUrl(DID_A) =
 // (e) notifyInsert pushes the freshly-inserted row
 received = []
 registry._clear()
-await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, null)
+await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, 3)
 seedPost('at://b/p/4', DID_AUTHOR, 'four', '2026-05-29T13:00:00.000Z')
 seedNotification('at://b/p/4', DID_A, DID_AUTHOR, '2026-05-29T13:00:00.000Z')
 registry.notifyInsert(db, idResolver, DID_A, 'at://b/p/4')
-await delay(100)
+await registry._processAll()
 check('(e) live push delivered 1 event', received.length === 1)
 check('(e) live push has expected uri', received[0]?.uri === 'at://b/p/4')
 
 // (f) notifyInsert POST failure removes registration
 received = []
 registry._clear()
-await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, null)
+await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, 4)
 failNext = true
 registry.notifyInsert(db, idResolver, DID_A, 'at://b/p/4')
-await delay(100)
+await registry._processAll()
 failNext = false
 check('(f) live push attempted', received.length === 1)
 check('(f) registration removed after live-push failure', registry._registeredUrl(DID_A) === undefined)
 
-listener.close()
+// (g) A live insert racing the first backlog POST queues behind replay. This is
+// the cutover that used to deliver [live, backlog] and let the cursor jump.
+received = []
+registry._clear()
+seedPost('at://b/p/5', DID_AUTHOR, 'five', '2026-05-29T14:00:00.000Z')
+seedNotification('at://b/p/5', DID_A, DID_AUTHOR, '2026-05-29T14:00:00.000Z')
+onFetch = () => {
+  seedPost('at://b/p/6', DID_AUTHOR, 'six', '2026-05-29T15:00:00.000Z')
+  seedNotification('at://b/p/6', DID_A, DID_AUTHOR, '2026-05-29T15:00:00.000Z')
+  registry.notifyInsert(db, idResolver, DID_A, 'at://b/p/6')
+}
+await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, 4)
+await registry._processAll()
+check(
+  '(g) replay/live cutover stays ordered',
+  received.map((v) => v.uri).join(',') === 'at://b/p/5,at://b/p/6',
+  received.map((v) => v.uri).join(','),
+)
+
 db.close()
 rmSync(tmp, { recursive: true, force: true })
 

@@ -7,7 +7,7 @@
 //       notifications/claude/channel notification to the connected client
 //   (d) The emitted content/meta match the spec's formatters (reason, author,
 //       indexed_at, uri, in_reply_to; 'followed you' body for follow events)
-//   (e) The notify handler advances lastSeenNotificationAt on disk
+//   (e) The notify handler commits the opaque AppView cursor on disk
 //   (f) The handler 404s wrong paths/methods
 // Identity is pre-seeded so the MCP has a DID at startup; the tryRegister
 // call will fail noisily (no real PDS) — that's expected and orthogonal.
@@ -21,7 +21,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { homedir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -34,7 +34,8 @@ const MCP_SERVER = resolve(
 )
 
 const SESSION = randomUUID()
-const STORAGE_DIR = join(homedir(), '.local', 'share', 'ait-mcp')
+const XDG_DATA_HOME = join(tmpdir(), `ait-push-test-${SESSION}`)
+const STORAGE_DIR = join(XDG_DATA_HOME, 'ait-mcp')
 const IDENT_PATH = join(
   STORAGE_DIR,
   `identity-${createHash('sha256').update(SESSION).digest('hex').slice(0, 16)}.json`,
@@ -53,6 +54,7 @@ writeFileSync(
       handle: 'pushtest.test',
       createdAt: '2026-05-29T00:00:00.000Z',
       lastSeenNotificationAt: null,
+      lastSeenNotificationCursor: null,
       ciphertext: Buffer.alloc(32).toString('base64'),
       nonce: Buffer.alloc(12).toString('base64'),
       tag: Buffer.alloc(16).toString('base64'),
@@ -67,6 +69,7 @@ const env = { ...process.env }
 delete env.CLAUDE_PROJECT_DIR
 env.AIT_MCP_TEST_SESSION_ID = SESSION
 env.AIT_NOTIFICATION_MODE = 'push'
+env.XDG_DATA_HOME = XDG_DATA_HOME
 env.PDS_URL = 'http://127.0.0.1:1' // unreachable; we expect tryRegister to fail
 env.APPVIEW_DID = 'did:plc:aitappview000000000001'
 
@@ -135,6 +138,7 @@ const mentionView = {
   reasonSubject: 'at://did:plc:bob/ait.feed.post/abc',
   record: { text: 'hey @pushtest.test, you around?' },
   indexedAt: '2026-05-29T16:30:00.000Z',
+  cursor: 'opaque-mention-cursor',
 }
 
 const postRes = await fetch(listenerUrl, {
@@ -164,6 +168,7 @@ const followView = {
   reason: 'follow',
   record: null,
   indexedAt: '2026-05-29T16:31:00.000Z',
+  cursor: 'opaque-follow-cursor',
 }
 seenChannels.length = 0
 await fetch(listenerUrl, {
@@ -175,12 +180,13 @@ for (let i = 0; i < 20 && seenChannels.length === 0; i++) await delay(50)
 check('(d) follow content is canned "followed you"', seenChannels[0]?.content === 'followed you')
 check('(d) follow omits in_reply_to', seenChannels[0]?.meta?.in_reply_to === undefined)
 
-// (e) cursor on disk advanced to the most recent indexedAt
-const storage = await import('../dist/storage.js')
+// (e) cursor on disk advanced to the opaque cursor from the latest view
 process.env.AIT_MCP_TEST_SESSION_ID = SESSION
+process.env.XDG_DATA_HOME = XDG_DATA_HOME
 delete process.env.CLAUDE_PROJECT_DIR
-const cursor = storage.getLastSeenNotificationAt()
-check('(e) cursor advanced to latest indexedAt', cursor === followView.indexedAt, `got ${cursor}`)
+const storage = await import('../dist/storage.js')
+const cursor = storage.getNotificationRegistrationCheckpoint()
+check('(e) cursor advanced opaquely', cursor.value === followView.cursor, `got ${cursor.value}`)
 
 // (f) wrong method + wrong path both 404
 const wrongMethod = await fetch(listenerUrl, { method: 'GET' })
@@ -193,6 +199,7 @@ check('(f) POST /other is 404', wrongPath.status === 404)
 
 await client.close()
 rmSync(IDENT_PATH)
+rmSync(XDG_DATA_HOME, { recursive: true, force: true })
 
 if (failures > 0) {
   console.error(`\n${failures} failure(s)`)

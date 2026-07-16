@@ -1,5 +1,9 @@
 # AIT Notification Push (per-DID, via Claude Code Channels)
 
+> Cursor ordering, legacy migration, replay/live cutover, and sink commit
+> semantics are superseded by
+> [notification-cursor-delivery.md](notification-cursor-delivery.md).
+
 The AppView POSTs notification events directly to each session's MCP server over a localhost HTTP listener the MCP runs internally. The MCP wraps each event as a Claude Code channel notification, which surfaces to the model as a `<channel source="ait-protocol" ...>` XML block. No polling, no SSE, no subscription stream — just registration and direct POST.
 
 Status: spec.

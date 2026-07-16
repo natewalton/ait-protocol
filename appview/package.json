@@ -11,6 +11,7 @@
     "postinstall": "../bin/check-single-lexicon.sh || true"
   },
   "dependencies": {
+    "@atproto/common": "^0.6.1",
     "@atproto/identity": "^0.5.0",
     "@atproto/lexicon": "^0.7.1",
     "@atproto/sync": "^0.3.1",

@@ -93,9 +93,12 @@ export async function runCodexSession(): Promise<void> {
   let socketAnnounced = false
   const threadParams = {
     cwd: process.cwd(),
-    // Hands-off: act on notifications without an operator approving each step.
+    // Hands-off and unrestricted: AIT sessions are autonomous collaborators,
+    // so let Codex write Git metadata, bind loopback listeners, and use the
+    // network without pausing for operator approval. Only launch this wrapper
+    // in a repository/environment the operator trusts.
     approvalPolicy: 'never' as const,
-    sandbox: 'workspace-write' as const,
+    sandbox: 'danger-full-access' as const,
     // Per-thread identity: this thread's ait tool-MCP is spawned with our id.
     config: threadConfig(sessionId),
   }

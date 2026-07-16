@@ -314,19 +314,21 @@ export function saveIdentity(identity: Identity): void {
       existingDisk?.lastSeenNotificationCursor ?? null,
     ...envelope,
   }
-  // Atomic write: tmp + rename. SIGKILL between truncate and final flush on a
-  // direct writeFileSync produces a partial-JSON file; loadIdentity treats
-  // parse failures as "no identity", and ADR-0014 makes that loss permanent.
-  // POSIX rename(2) replaces atomically. PID suffix tolerates concurrent
-  // writes from sibling children (shouldn't happen but cheap to defend).
+  writeDiskShape(p, data)
+}
+
+// Atomic write: tmp + rename. SIGKILL between truncate and final flush on a
+// direct writeFileSync produces a partial-JSON file; loadIdentity treats parse
+// failures as "no identity", and ADR-0014 makes that loss permanent. POSIX
+// rename(2) replaces atomically. PID suffix tolerates concurrent writes from
+// sibling children (shouldn't happen but cheap to defend).
+function writeDiskShape(p: string, shape: OnDiskShape): void {
   const tmp = `${p}.tmp.${process.pid}`
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 })
+  fs.writeFileSync(tmp, JSON.stringify(shape, null, 2), { mode: 0o600 })
   fs.renameSync(tmp, p)
 }
 
-// Read the OnDiskShape if present and parseable; null otherwise. Internal
-// helper used by both saveIdentity (to preserve the cursor) and the cursor
-// accessors below.
+// Read the OnDiskShape if present and parseable; null otherwise.
 function readDiskShape(p: string): OnDiskShape | null {
   if (!fs.existsSync(p)) return null
   try {
@@ -341,78 +343,65 @@ export type NotificationRegistrationCheckpoint =
   | { kind: 'since'; value: string }
   | { kind: 'none'; value: null }
 
-// Prefer the opaque cursor, but retain the legacy ISO timestamp indefinitely:
-// dormant conversations may first resume long after the seq migration. The
-// AppView is the only layer that can translate that timestamp without racing
-// its notification projection.
-export function getNotificationRegistrationCheckpoint(): NotificationRegistrationCheckpoint {
+// null when this process has no resolvable session, or nothing on disk yet.
+function loadOwnIdentityFile(): { path: string; shape: OnDiskShape } | null {
   let uuid: string
   try {
     uuid = resolveSessionUuid()
   } catch {
-    return { kind: 'none', value: null }
+    return null
   }
-  const disk = readDiskShape(identityPath(uuid))
-  const cursor = disk?.lastSeenNotificationCursor
+  const path = identityPath(uuid)
+  const shape = readDiskShape(path)
+  return shape ? { path, shape } : null
+}
+
+// Prefer the opaque cursor, but retain the legacy ISO timestamp indefinitely:
+// dormant conversations may first resume long after the seq migration. Only the
+// AppView can translate that timestamp without racing its own projection.
+export function getNotificationRegistrationCheckpoint(): NotificationRegistrationCheckpoint {
+  const disk = loadOwnIdentityFile()
+  const cursor = disk?.shape.lastSeenNotificationCursor
   if (cursor) return { kind: 'cursor', value: cursor }
-  const since = disk?.lastSeenNotificationAt
+  const since = disk?.shape.lastSeenNotificationAt
   if (since) return { kind: 'since', value: since }
   return { kind: 'none', value: null }
 }
 
-function rewriteCursor(
-  p: string,
-  existing: OnDiskShape,
-  cursor: string,
-): void {
-  const updated: OnDiskShape = {
+// Migrating a file to the cursor generation clears the legacy field, so a
+// session upgrades exactly once.
+function rewriteCursor(p: string, existing: OnDiskShape, cursor: string): void {
+  writeDiskShape(p, {
     ...existing,
     lastSeenNotificationAt: null,
     lastSeenNotificationCursor: cursor,
-  }
-  const tmp = `${p}.tmp.${process.pid}`
-  fs.writeFileSync(tmp, JSON.stringify(updated, null, 2), { mode: 0o600 })
-  fs.renameSync(tmp, p)
+  })
 }
 
 // Persist a delivered AppView cursor. Delivery is serial per recipient, so
-// callers never complete out of order and no client-side cursor comparison is
-// needed (opaque cursors must not be parsed here).
+// callers never complete out of order and no client-side comparison is needed
+// (opaque cursors must not be parsed here).
 export function updateLastSeenNotificationCursor(cursor: string): void {
-  let uuid: string
-  try {
-    uuid = resolveSessionUuid()
-  } catch {
-    return
-  }
-  const p = identityPath(uuid)
-  const existing = readDiskShape(p)
-  if (!existing) return
-  rewriteCursor(p, existing, cursor)
+  const disk = loadOwnIdentityFile()
+  if (!disk) return
+  rewriteCursor(disk.path, disk.shape, cursor)
 }
 
-// Normalize a first-registration or legacy timestamp checkpoint without
-// regressing a cursor advanced concurrently by live delivery. `expected` is
-// the exact value sent to registerPushTarget (null for a fresh identity).
+// Normalize a first-registration or legacy checkpoint without regressing a
+// cursor that live delivery advanced meanwhile. `expected` is the exact value
+// sent to registerPushTarget (null for a fresh identity).
 export function compareAndSwapNotificationCursor(
   expected: string | null,
   cursor: string,
 ): boolean {
-  let uuid: string
-  try {
-    uuid = resolveSessionUuid()
-  } catch {
-    return false
-  }
-  const p = identityPath(uuid)
-  const existing = readDiskShape(p)
-  if (!existing) return false
+  const disk = loadOwnIdentityFile()
+  if (!disk) return false
   const current =
-    existing.lastSeenNotificationCursor ??
-    existing.lastSeenNotificationAt ??
+    disk.shape.lastSeenNotificationCursor ??
+    disk.shape.lastSeenNotificationAt ??
     null
   if (current !== expected) return false
-  rewriteCursor(p, existing, cursor)
+  rewriteCursor(disk.path, disk.shape, cursor)
   return true
 }
 

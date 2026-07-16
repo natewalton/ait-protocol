@@ -1,6 +1,6 @@
 import type { IdResolver } from '@atproto/identity'
 import type { Db } from '../db.js'
-import { decodeCursor, encodeCursor } from './cursor.js'
+import { decodeSeqCursor, encodeSeqCursor } from './cursor.js'
 import { hydrateHandles } from './hydrateActor.js'
 import { replyRefFromRow } from './replyRef.js'
 
@@ -18,7 +18,14 @@ export interface NotificationView {
   reasonSubject?: string
   record: unknown
   isRead: boolean
+  // Display only. NOT a cursor: it is millisecond-resolution and collides, which
+  // is what stranded same-millisecond twins behind a `>` bound. Consumers commit
+  // `cursor` instead.
   indexedAt: string
+  // The opaque position of this notification in the recipient's stream. A push
+  // consumer stores this verbatim and hands it back to registerPushTarget; it
+  // must never be parsed or reconstructed from indexedAt/seq.
+  cursor: string
 }
 
 export interface ListNotificationsResult {
@@ -27,6 +34,7 @@ export interface ListNotificationsResult {
 }
 
 interface NotificationRow {
+  seq: number
   uri: string
   cid: string
   recipientDid: string
@@ -57,7 +65,7 @@ interface FollowRow {
 // ADR-0038: drop `a.handle` from each SELECT; keep the LEFT JOIN actors
 // solely as the gate for `a.active`. Handles are added by hydrateNotifications.
 const NOTIF_SELECT_COLS = `
-  n.uri, n.cid, n.recipientDid, n.authorDid, n.reason,
+  n.seq, n.uri, n.cid, n.recipientDid, n.authorDid, n.reason,
   n.reasonSubject, n.createdAt, n.indexedAt
 `
 const NOTIF_FROM_WITH_ACTIVE = `
@@ -81,11 +89,16 @@ export async function listNotifications(
   `
   const args: (string | number)[] = [params.viewer]
   if (params.cursor) {
-    const c = decodeCursor(params.cursor)
-    query += ' AND (n.createdAt, n.uri) < (?, ?)'
-    args.push(c.createdAt, c.uri)
+    const seq = decodeSeqCursor(params.cursor)
+    // An undecodable cursor pages from the top rather than throwing: this used
+    // to be a (createdAt, uri) tuple, so a client mid-pagination across the
+    // rollout will hand back one of those exactly once.
+    if (seq !== null) {
+      query += ' AND n.seq < ?'
+      args.push(seq)
+    }
   }
-  query += ' ORDER BY n.createdAt DESC, n.uri DESC LIMIT ?'
+  query += ' ORDER BY n.seq DESC LIMIT ?'
   args.push(limit)
 
   const rows = db.prepare(query).all(...args) as NotificationRow[]
@@ -93,7 +106,7 @@ export async function listNotifications(
 
   const cursor =
     rows.length === limit
-      ? encodeCursor(rows[rows.length - 1].createdAt, rows[rows.length - 1].uri)
+      ? encodeSeqCursor(rows[rows.length - 1].seq)
       : undefined
 
   return { cursor, notifications }
@@ -123,30 +136,63 @@ export async function getNotificationByKey(
   return views[0] ?? null
 }
 
-// Notifications for `recipientDid` strictly newer than `since`, oldest first.
-// Used by registerPushTarget to replay events the MCP missed while detached.
-// Filter is on indexedAt — the AppView's monotonic write time — so the
-// MCP-side cursor (advanced from view.indexedAt on each push) and the
-// AppView's replay see the same time domain. record.createdAt is
-// sender-supplied wall clock and can be backdated, so using it would
-// silently lose backfilled notifications and re-deliver some already-seen.
-export async function getNotificationsSince(
+// Notifications for `recipientDid` after `afterSeq`, oldest first. Used by
+// registerPushTarget to replay what a consumer missed while detached.
+//
+// The bound is seq, not a timestamp. It used to be `indexedAt > since`, which
+// silently and permanently dropped any notification sharing a millisecond with
+// one already delivered: the consumer's cursor sat at that millisecond, and the
+// strict `>` excluded its twin from every future replay while listNotifications
+// went on returning it. Every same-millisecond collision in the live data was a
+// reply+follow pair, which is why the symptom read as "a notification type
+// stopped arriving". seq is total, unique, and gap-free-forward, so a bound on
+// it cannot tie.
+export async function getNotificationsAfterSeq(
   db: Db,
   idResolver: IdResolver,
   recipientDid: string,
-  since: string,
+  afterSeq: number,
 ): Promise<NotificationView[]> {
   const rows = db
     .prepare(
       `SELECT ${NOTIF_SELECT_COLS}
        ${NOTIF_FROM_WITH_ACTIVE}
        WHERE n.recipientDid = ?
-         AND n.indexedAt > ?
+         AND n.seq > ?
          AND ${ACTIVE_FILTER}
-       ORDER BY n.indexedAt ASC, n.uri ASC`,
+       ORDER BY n.seq ASC`,
     )
-    .all(recipientDid, since) as NotificationRow[]
+    .all(recipientDid, afterSeq) as NotificationRow[]
   return hydrateNotifications(db, idResolver, rows)
+}
+
+// Translate a legacy ISO `since` into the seq cursor that reproduces it: the
+// predecessor of the first row at-or-after that instant, so replaying
+// `seq > result` covers everything with `indexedAt >= since`.
+//
+// Deliberately inclusive of the boundary millisecond where the old bound was
+// exclusive. That re-delivers rows at exactly `since` — a duplicate the consumer
+// dedupes by uri — and in exchange recovers the twin the old bound stranded.
+// Returns 0 when nothing is at-or-after `since` (replay everything), which is
+// also the correct answer for a recipient whose stream starts after it.
+export function seqBeforeTimestamp(
+  db: Db,
+  recipientDid: string,
+  since: string,
+): number {
+  const row = db
+    .prepare(
+      `SELECT COALESCE(MAX(seq), 0) AS seq
+       FROM notifications
+       WHERE recipientDid = ?
+         AND seq < (
+           SELECT COALESCE(MIN(seq), (SELECT COALESCE(MAX(seq), 0) + 1 FROM notifications))
+           FROM notifications
+           WHERE recipientDid = ? AND indexedAt >= ?
+         )`,
+    )
+    .get(recipientDid, recipientDid, since) as { seq: number }
+  return row.seq
 }
 
 // Shared hydrator: rows → views with the triggering post/follow record
@@ -228,6 +274,7 @@ async function hydrateNotifications(
       record,
       isRead: false,
       indexedAt: r.indexedAt,
+      cursor: encodeSeqCursor(r.seq),
     }
     if (r.reasonSubject) view.reasonSubject = r.reasonSubject
     return view

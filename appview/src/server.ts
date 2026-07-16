@@ -18,6 +18,8 @@ import { searchActors } from './queries/searchActors.js'
 import { getTimeline } from './queries/getTimeline.js'
 import { getPostThread } from './queries/getPostThread.js'
 import { listNotifications } from './queries/listNotifications.js'
+import { seqBeforeTimestamp } from './queries/listNotifications.js'
+import { decodeSeqCursor, encodeSeqCursor } from './queries/cursor.js'
 import { resolveActorToDid } from './queries/resolveHandle.js'
 import { makeVerifyViewer } from './xrpc/auth.js'
 import { isValidPushUrl, registerAndReplay } from './pushRegistry.js'
@@ -196,7 +198,7 @@ async function main() {
     // ctx.input is `void | HandlerInput` (procedures may declare no body); this
     // one always carries a body, so read it defensively.
     const input = (ctx.input as { body?: unknown } | undefined)?.body as
-      | { url?: unknown; since?: unknown }
+      | { url?: unknown; cursor?: unknown; since?: unknown }
       | undefined
     const url = input?.url
     // Lexicon already enforces `url` is a string (required). The runtime
@@ -207,13 +209,39 @@ async function main() {
         'url must be a string of the form http://127.0.0.1:<port>/...',
       )
     }
-    // The lexicon types `since` as nullable string with format datetime. The
-    // MCP sends `null` on first registration (mcp/src/push.ts:71-78). Either
-    // undefined (omitted) or null collapses to null for registerAndReplay —
-    // both mean "no backlog replay".
-    const since = (input?.since as string | null | undefined) ?? null
-    await registerAndReplay(db, idResolver, viewer, url, since)
-    return { encoding: 'application/json', body: { status: 'ok' as const } }
+    const cursor = input?.cursor
+    // Old MCP binaries always sent the field and used null for no checkpoint.
+    // Preserve that mixed-version rollout shape indefinitely.
+    const since = input?.since ?? undefined
+    if (cursor !== undefined && since !== undefined) {
+      throw new InvalidRequestError('cursor and since are mutually exclusive')
+    }
+
+    let afterSeq = 0
+    if (cursor !== undefined) {
+      if (typeof cursor !== 'string') {
+        throw new InvalidRequestError('cursor must be an opaque string')
+      }
+      const decoded = decodeSeqCursor(cursor)
+      if (decoded === null) {
+        throw new InvalidRequestError('invalid notification cursor')
+      }
+      afterSeq = decoded
+    } else if (since !== undefined) {
+      // Lexicon validates datetime shape. Translate at the AppView, which alone
+      // owns timestamp→seq state; inclusive boundary replay heals old same-ms
+      // losses and is safe because consumers dedupe by notification URI.
+      if (typeof since !== 'string') {
+        throw new InvalidRequestError('since must be a datetime string')
+      }
+      afterSeq = seqBeforeTimestamp(db, viewer, since)
+    }
+
+    await registerAndReplay(db, idResolver, viewer, url, afterSeq)
+    return {
+      encoding: 'application/json',
+      body: { status: 'ok' as const, cursor: encodeSeqCursor(afterSeq) },
+    }
   }
 
   xrpc.method('ait.feed.getAuthorFeed', getAuthorFeedHandler)

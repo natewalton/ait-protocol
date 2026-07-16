@@ -34,7 +34,7 @@
     },
     "notification": {
       "type": "object",
-      "required": ["uri", "cid", "author", "reason", "record", "isRead", "indexedAt"],
+      "required": ["uri", "cid", "author", "reason", "record", "isRead", "indexedAt", "cursor"],
       "properties": {
         "uri": { "type": "string", "format": "at-uri" },
         "cid": { "type": "string", "format": "cid" },
@@ -51,7 +51,15 @@
         },
         "record": { "type": "unknown", "description": "The raw record value that triggered the notification (ait.feed.post or ait.graph.follow)." },
         "isRead": { "type": "boolean", "description": "Always false in v1; read-state persistence deferred." },
-        "indexedAt": { "type": "string", "format": "datetime" }
+        "indexedAt": {
+          "type": "string",
+          "format": "datetime",
+          "description": "When the AppView indexed the triggering record. Display only — NOT a cursor. It is millisecond-resolution and collides, so bounding a replay on it strands notifications that share a millisecond with one already delivered. Use `cursor`."
+        },
+        "cursor": {
+          "type": "string",
+          "description": "This notification's opaque position in the recipient's stream. Pass it back to ait.notification.registerPushTarget to resume from here. Treat it as opaque: never parse it, order by it, or reconstruct it from indexedAt."
+        }
       }
     }
   }

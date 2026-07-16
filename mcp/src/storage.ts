@@ -51,7 +51,8 @@
 //     "did": "<plaintext, public protocol id>",
 //     "handle": "<plaintext, public protocol id>",
 //     "createdAt": "<plaintext, diagnostic>",
-//     "lastSeenNotificationAt": "<plaintext ISO ts | null>",
+//     "lastSeenNotificationAt": "<legacy plaintext ISO ts | null>",
+//     "lastSeenNotificationCursor": "<opaque AppView cursor | null>",
 //     "ciphertext": "<base64 AES-256-GCM ct of { password, accessJwt, refreshJwt }>",
 //     "nonce": "<base64 12 bytes, fresh per write>",
 //     "tag": "<base64 16 bytes, GCM auth tag>"
@@ -193,6 +194,10 @@ interface OnDiskShape {
   handle: string
   createdAt: string
   lastSeenNotificationAt?: string | null
+  // Opaque AppView-issued cursor. New identities leave this null until their
+  // first registerPushTarget response supplies a baseline. The legacy ISO
+  // field above remains readable indefinitely for dormant-session upgrades.
+  lastSeenNotificationCursor?: string | null
   ciphertext: string
   nonce: string
   tag: string
@@ -286,7 +291,7 @@ export function saveIdentity(identity: Identity): void {
   // Preserve the notification cursor across rewrites: saveIdentity is called
   // both on first join and on JWT refresh (cursor must not regress and lose the
   // push-mode advance).
-  const existingCursor = readDiskShape(p)?.lastSeenNotificationAt ?? null
+  const existingDisk = readDiskShape(p)
   const createdAt = new Date().toISOString()
   const envelope = encryptInner(
     {
@@ -300,14 +305,13 @@ export function saveIdentity(identity: Identity): void {
     did: identity.did,
     handle: identity.handle,
     createdAt,
-    // Baseline the notification cursor at join time on the FIRST save (no prior
-    // cursor), so re-registration always sends a non-null `since` and the AppView
-    // replays anything indexed after we joined. Without this a session's first-
-    // ever notification is lost if it arrives while the push listener is detached
-    // or the codex app-server is down: a null cursor makes registerAndReplay skip
-    // the backlog (pushRegistry.ts `if (since == null) return`). Later saves (JWT
-    // refresh) carry the advanced cursor forward. Applies to push and codex modes.
-    lastSeenNotificationAt: existingCursor ?? createdAt,
+    // Preserve either cursor generation across JWT refreshes. A fresh identity
+    // deliberately has neither: the AppView owns sequence space and returns the
+    // initial opaque baseline from registerPushTarget. Client wall clock is not
+    // a valid substitute for an AppView cursor.
+    lastSeenNotificationAt: existingDisk?.lastSeenNotificationAt ?? null,
+    lastSeenNotificationCursor:
+      existingDisk?.lastSeenNotificationCursor ?? null,
     ...envelope,
   }
   // Atomic write: tmp + rename. SIGKILL between truncate and final flush on a
@@ -332,30 +336,49 @@ function readDiskShape(p: string): OnDiskShape | null {
   }
 }
 
-// Notification cursor: advanced once per channel event emitted in push mode
-// (per specs/notification-push.md). Returns null when no identity file exists
-// yet or the field has never been set.
-export function getLastSeenNotificationAt(): string | null {
+export type NotificationRegistrationCheckpoint =
+  | { kind: 'cursor'; value: string }
+  | { kind: 'since'; value: string }
+  | { kind: 'none'; value: null }
+
+// Prefer the opaque cursor, but retain the legacy ISO timestamp indefinitely:
+// dormant conversations may first resume long after the seq migration. The
+// AppView is the only layer that can translate that timestamp without racing
+// its notification projection.
+export function getNotificationRegistrationCheckpoint(): NotificationRegistrationCheckpoint {
   let uuid: string
   try {
     uuid = resolveSessionUuid()
   } catch {
-    return null
+    return { kind: 'none', value: null }
   }
-  return readDiskShape(identityPath(uuid))?.lastSeenNotificationAt ?? null
+  const disk = readDiskShape(identityPath(uuid))
+  const cursor = disk?.lastSeenNotificationCursor
+  if (cursor) return { kind: 'cursor', value: cursor }
+  const since = disk?.lastSeenNotificationAt
+  if (since) return { kind: 'since', value: since }
+  return { kind: 'none', value: null }
 }
 
-// Atomic rewrite of just the cursor field. No-op if the identity file is
-// absent (nothing to attach a cursor to — caller should only call this after
-// identity exists). Monotonic: a same-or-older `at` is dropped so two
-// concurrent push handlers whose awaits resolve out of arrival order can't
-// regress the cursor and cause the next replay to redeliver the newer event.
-// Resolver failures (transient missing transcript, etc.) swallow silently —
-// surfacing a 500 from the push handler would cause the AppView to drop the
-// registration entirely, which is worse than missing one cursor advance.
-// Reuses the same tmp+rename pattern as saveIdentity so a SIGKILL mid-write
-// doesn't leave a partial file.
-export function updateLastSeenNotificationAt(at: string): void {
+function rewriteCursor(
+  p: string,
+  existing: OnDiskShape,
+  cursor: string,
+): void {
+  const updated: OnDiskShape = {
+    ...existing,
+    lastSeenNotificationAt: null,
+    lastSeenNotificationCursor: cursor,
+  }
+  const tmp = `${p}.tmp.${process.pid}`
+  fs.writeFileSync(tmp, JSON.stringify(updated, null, 2), { mode: 0o600 })
+  fs.renameSync(tmp, p)
+}
+
+// Persist a delivered AppView cursor. Delivery is serial per recipient, so
+// callers never complete out of order and no client-side cursor comparison is
+// needed (opaque cursors must not be parsed here).
+export function updateLastSeenNotificationCursor(cursor: string): void {
   let uuid: string
   try {
     uuid = resolveSessionUuid()
@@ -365,16 +388,32 @@ export function updateLastSeenNotificationAt(at: string): void {
   const p = identityPath(uuid)
   const existing = readDiskShape(p)
   if (!existing) return
-  if (
-    existing.lastSeenNotificationAt &&
-    existing.lastSeenNotificationAt >= at
-  ) {
-    return
+  rewriteCursor(p, existing, cursor)
+}
+
+// Normalize a first-registration or legacy timestamp checkpoint without
+// regressing a cursor advanced concurrently by live delivery. `expected` is
+// the exact value sent to registerPushTarget (null for a fresh identity).
+export function compareAndSwapNotificationCursor(
+  expected: string | null,
+  cursor: string,
+): boolean {
+  let uuid: string
+  try {
+    uuid = resolveSessionUuid()
+  } catch {
+    return false
   }
-  const updated: OnDiskShape = { ...existing, lastSeenNotificationAt: at }
-  const tmp = `${p}.tmp.${process.pid}`
-  fs.writeFileSync(tmp, JSON.stringify(updated, null, 2), { mode: 0o600 })
-  fs.renameSync(tmp, p)
+  const p = identityPath(uuid)
+  const existing = readDiskShape(p)
+  if (!existing) return false
+  const current =
+    existing.lastSeenNotificationCursor ??
+    existing.lastSeenNotificationAt ??
+    null
+  if (current !== expected) return false
+  rewriteCursor(p, existing, cursor)
+  return true
 }
 
 export function clearIdentity(): void {

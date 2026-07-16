@@ -22,8 +22,9 @@ import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { appViewCall } from './atproto/pdsClient.js'
 import { getIdentity } from './session.js'
 import {
-  getLastSeenNotificationAt,
-  updateLastSeenNotificationAt,
+  compareAndSwapNotificationCursor,
+  getNotificationRegistrationCheckpoint,
+  updateLastSeenNotificationCursor,
 } from './storage.js'
 
 export interface NotificationView {
@@ -34,17 +35,23 @@ export interface NotificationView {
   reasonSubject?: string
   record: { text?: string } | null
   indexedAt: string
+  cursor: string
 }
 
 // The runtime-specific terminal step: surface a notification to the model, and
 // commit the cursor. Injected into startPushListener so the shared bridge stays
-// runtime-invariant. IMPORTANT: the cursor (lastSeenNotificationAt) must advance
-// only after the notification is durably delivered — the sink owns that timing,
+// runtime-invariant. IMPORTANT: the opaque notification cursor must advance
+// only after the runtime-specific delivery signal — the sink owns that timing,
 // so a crash before delivery replays the un-delivered tail via the `since`
 // handshake (specs/notification-push.md, Delivery semantics).
 export type NotificationSink = (view: NotificationView) => Promise<void>
 
+const REREGISTER_INTERVAL_MS = 30_000
+const delay = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms))
+
 let listenerUrl: string | null = null
+let registerInFlight: Promise<void> | null = null
 
 export async function startPushListener(deliver: NotificationSink): Promise<void> {
   if (listenerUrl) return
@@ -70,6 +77,16 @@ export async function startPushListener(deliver: NotificationSink): Promise<void
   console.error(`ait push listener: ${listenerUrl}`)
 
   await tryRegister()
+
+  // AppView registrations are in-memory and are deleted on restart or one
+  // failed POST. Reassert for the listener lifetime; tryRegister coalesces a
+  // beat with any startup/join registration already in flight.
+  void (async () => {
+    for (;;) {
+      await delay(REREGISTER_INTERVAL_MS)
+      await tryRegister()
+    }
+  })()
 }
 
 // Register the listener URL with the AppView. Called from startup (if a
@@ -79,22 +96,31 @@ export async function startPushListener(deliver: NotificationSink): Promise<void
 // AppView side: the registry's Map<did, url> overwrites by key.
 export async function tryRegister(): Promise<void> {
   if (!listenerUrl || !getIdentity()) return
-  // AppView's body validation requires `since` to be present as either null
-  // or a non-empty string (server.ts:158-164: rejects when body.since is
-  // undefined). Always send the field, with null on first registration.
-  // The lexicon types it as an optional datetime string; XrpcClient's input
-  // validation is currently TODO-commented (xrpc-client.js:30) so the null
-  // doesn't trip client-side validation today. If that ever lights up, we'd
-  // need to either widen the lexicon shape or change both sides to "omit
-  // when null".
-  const since = getLastSeenNotificationAt()
+  if (registerInFlight) return registerInFlight
+  registerInFlight = (async () => {
+    const checkpoint = getNotificationRegistrationCheckpoint()
+    const data: { url: string; cursor?: string; since?: string } = {
+      url: listenerUrl as string,
+    }
+    if (checkpoint.kind === 'cursor') data.cursor = checkpoint.value
+    if (checkpoint.kind === 'since') data.since = checkpoint.value
+    try {
+      const result = await appViewCall<{ status: 'ok'; cursor: string }>(
+        'ait.notification.registerPushTarget',
+        { data },
+      )
+      // AppView returns the normalized starting cursor: for legacy `since` this
+      // is its loss-safe seq predecessor; for a fresh identity it is the initial
+      // baseline. Do not overwrite a cursor advanced by concurrent live delivery.
+      compareAndSwapNotificationCursor(checkpoint.value, result.cursor)
+    } catch (err) {
+      console.error('registerPushTarget error:', err)
+    }
+  })()
   try {
-    await appViewCall<{ status: 'ok' }>(
-      'ait.notification.registerPushTarget',
-      { data: { url: listenerUrl, since } },
-    )
-  } catch (err) {
-    console.error('registerPushTarget error:', err)
+    await registerInFlight
+  } finally {
+    registerInFlight = null
   }
 }
 
@@ -127,15 +153,25 @@ async function handleNotify(
 // terminal behavior, moved intact — the cursor advances synchronously right
 // after the channel is emitted, exactly as before.
 export function channelSink(mcp: Server): NotificationSink {
+  const seen = new Set<string>()
   return async (view: NotificationView) => {
-    await mcp.notification({
-      method: 'notifications/claude/channel',
-      params: {
-        content: formatChannelBody(view),
-        meta: formatChannelMeta(view),
-      },
-    })
-    updateLastSeenNotificationAt(view.indexedAt)
+    if (seen.has(view.uri)) return
+    seen.add(view.uri)
+    try {
+      await mcp.notification({
+        method: 'notifications/claude/channel',
+        params: {
+          content: formatChannelBody(view),
+          meta: formatChannelMeta(view),
+        },
+      })
+      updateLastSeenNotificationCursor(view.cursor)
+    } catch (err) {
+      // A failed sink call makes /notify return 500 and AppView drop the
+      // registration. Let heartbeat replay retry in this same process.
+      seen.delete(view.uri)
+      throw err
+    }
   }
 }
 

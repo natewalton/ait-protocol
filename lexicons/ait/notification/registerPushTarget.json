@@ -4,7 +4,7 @@
   "defs": {
     "main": {
       "type": "procedure",
-      "description": "Register a localhost URL where the AppView will POST notifications for the authenticated caller as they are indexed. If `since` is non-null, the AppView also replays every notification it has stored for this caller with `indexedAt > since` (oldest first) before returning. Re-registration overwrites the prior URL. Spec: specs/notification-push.md.",
+      "description": "Register a localhost URL where the AppView will POST notifications for the authenticated caller in cursor order. Replays notifications after `cursor`; legacy `since` is translated loss-safely for dormant pre-cursor sessions. Re-registration overwrites the prior URL. Spec: specs/notification-push.md.",
       "input": {
         "encoding": "application/json",
         "schema": {
@@ -16,10 +16,14 @@
               "type": "string",
               "description": "Where to POST notifications. Must be of the form http://127.0.0.1:<port>/... (localhost only)."
             },
+            "cursor": {
+              "type": "string",
+              "description": "Opaque notification cursor previously returned by this endpoint or attached to a pushed notification. Mutually exclusive with `since`."
+            },
             "since": {
               "type": "string",
               "format": "datetime",
-              "description": "ISO timestamp. If provided, the AppView replays every notification for this caller with indexedAt > since before returning. Use the caller's last-seen-notification cursor on respawn; null on first registration."
+              "description": "Deprecated ISO notification checkpoint retained for dormant sessions. Null means no checkpoint for old clients. The AppView normalizes a datetime to an opaque cursor and inclusively replays the boundary millisecond. Mutually exclusive with `cursor`."
             }
           }
         }
@@ -28,9 +32,13 @@
         "encoding": "application/json",
         "schema": {
           "type": "object",
-          "required": ["status"],
+          "required": ["status", "cursor"],
           "properties": {
-            "status": { "type": "string", "const": "ok" }
+            "status": { "type": "string", "const": "ok" },
+            "cursor": {
+              "type": "string",
+              "description": "Normalized opaque starting cursor for this registration. Persist with compare-and-swap so concurrent live delivery cannot regress it."
+            }
           }
         }
       }

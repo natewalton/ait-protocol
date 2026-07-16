@@ -7,14 +7,14 @@
 // tracked from the app-server's turn lifecycle — new notifications enqueue and
 // drain one turn/start per turn boundary, never cutting into in-flight work.
 //
-// Cursor discipline (crash-replay): lastSeenNotificationAt advances only after a
-// notification is successfully turn/start-ed, so a crash with queued-but-un-
-// injected views replays that tail on restart via the registration `since`
-// handshake (specs/notification-push.md + notification-codex.md).
+// Cursor discipline (crash-replay): the opaque AppView cursor advances only
+// after the matching Codex turn completes successfully. A turn/start response
+// is only an in-memory acceptance ACK; committing there loses the notification
+// if app-server dies before execution.
 
 import type { AppServerClient } from './appServerClient.js'
 import type { NotificationSink, NotificationView } from '../push.js'
-import { updateLastSeenNotificationAt } from '../storage.js'
+import { updateLastSeenNotificationCursor } from '../storage.js'
 
 // Delay before re-pumping after a hard (non-backoff) turn/start failure.
 const INJECT_RETRY_DELAY_MS = 3000
@@ -57,6 +57,25 @@ export function createCodexSink(
   // window between turnStart resolving and the turn/started event, during which
   // isTurnActive() still reads false — without it we'd inject a second turn.
   let pendingInjection = false
+  let pendingTurnId: string | null = null
+  const earlyCompletions = new Map<string, string | undefined>()
+
+  function finishTurn(turnId: string, status: string | undefined): void {
+    if (!pendingInjection || pendingTurnId !== turnId) return
+    pendingTurnId = null
+    if (status === 'completed') {
+      const view = queue.shift()
+      if (view) updateLastSeenNotificationCursor(view.cursor)
+      pendingInjection = false
+      void pump()
+      return
+    }
+
+    // Failed/interrupted is not delivery. Keep the head in place: allowing a
+    // later item to commit would skip this notification on crash replay.
+    pendingInjection = false
+    setTimeout(() => void pump(), INJECT_RETRY_DELAY_MS)
+  }
 
   async function pump(): Promise<void> {
     // All three guards are synchronous (no await before pendingInjection is
@@ -69,13 +88,18 @@ export function createCodexSink(
     if (client.isTurnActive(threadId)) return
 
     pendingInjection = true
+    pendingTurnId = null
     const view = queue[0]
     try {
-      await client.turnStart(threadId, formatTurn(view))
-      queue.shift()
-      updateLastSeenNotificationAt(view.indexedAt) // advance only on success
-      // Keep pendingInjection = true until this turn's turn/completed; the
-      // listener below clears it and pumps the next item.
+      const turnId = await client.turnStart(threadId, formatTurn(view))
+      pendingTurnId = turnId
+      // App-server may emit turn/completed before its turn/start response is
+      // observed on this client. Reconcile that event after learning the id.
+      if (earlyCompletions.has(turnId)) {
+        const status = earlyCompletions.get(turnId)
+        earlyCompletions.delete(turnId)
+        finishTurn(turnId, status)
+      }
     } catch (err) {
       // Hard failure (not the retried -32001). Free the gate and schedule a
       // retry: pump() is otherwise only re-driven by deliver() or turn/completed,
@@ -83,15 +107,19 @@ export function createCodexSink(
       // view would strand forever.
       console.error('codex turn injection failed, retrying shortly:', err)
       pendingInjection = false
+      pendingTurnId = null
       setTimeout(() => void pump(), INJECT_RETRY_DELAY_MS)
     }
   }
 
-  client.onTurnCompleted(() => {
-    // Fires for our injected turn (clearing the gate) or an operator turn
-    // (already clear) — either way the thread is now idle, so drain the next.
-    pendingInjection = false
-    void pump()
+  client.onTurnCompleted((event) => {
+    if (event.threadId !== threadId || !event.turn?.id) return
+    const { id, status } = event.turn
+    if (pendingInjection && pendingTurnId === null) {
+      earlyCompletions.set(id, status)
+      return
+    }
+    finishTurn(id, status)
   })
 
   // Enqueue and return immediately: the AppView's POST must not block on a

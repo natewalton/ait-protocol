@@ -11,14 +11,20 @@
 // re-register on their next tool call or scheduled heartbeat.
 
 import type { IdResolver } from '@atproto/identity'
+import { createDeferrable } from '@atproto/common'
+import { MemoryRunner } from '@atproto/sync'
 import type { Db } from './db.js'
 import {
   getNotificationByKey,
-  getNotificationsSince,
+  getNotificationsAfterSeq,
   type NotificationView,
 } from './queries/listNotifications.js'
 
 const registry = new Map<string, string>()
+// Separate from the firehose runner: firehose partitions by author DID, while
+// delivery partitions by recipient DID. addTask gives each recipient one
+// ordered stream without hand-rolling a keyed queue.
+const deliveryRunner = new MemoryRunner()
 
 const PUSH_TIMEOUT_MS = 5_000
 
@@ -35,8 +41,8 @@ export function isValidPushUrl(raw: string): boolean {
   return url.protocol === 'http:' && url.hostname === '127.0.0.1'
 }
 
-// Register a DID → URL binding and replay any notifications with
-// createdAt > since (oldest first). On the first POST failure during
+// Register a DID → URL binding and replay notifications after the opaque
+// cursor's decoded seq (oldest first). On the first POST failure during
 // replay, the registration is dropped and the rest of the backlog stays
 // in the DB for the next startup. Returns void; success vs. failure is
 // observable only via the registry state afterward.
@@ -45,20 +51,33 @@ export async function registerAndReplay(
   idResolver: IdResolver,
   did: string,
   url: string,
-  since: string | null,
+  afterSeq: number,
 ): Promise<void> {
-  registry.set(did, url)
-
-  if (since == null) return
-
-  const backlog = await getNotificationsSince(db, idResolver, did, since)
-  for (const view of backlog) {
-    const ok = await postNotification(url, view)
-    if (!ok) {
-      registry.delete(did)
-      return
+  // Enqueue replay before publishing the registration, but gate its DB query
+  // until afterward. An insert before registry.set is visible to the deferred
+  // query; an insert after it queues behind this task. There is no cutover gap.
+  const gate = createDeferrable()
+  const replay = deliveryRunner.addTask(did, async () => {
+    await gate.complete
+    const backlog = await getNotificationsAfterSeq(
+      db,
+      idResolver,
+      did,
+      afterSeq,
+    )
+    for (const view of backlog) {
+      // A newer registration supersedes this replay task.
+      if (registry.get(did) !== url) return
+      const ok = await postNotification(url, view)
+      if (!ok) {
+        if (registry.get(did) === url) registry.delete(did)
+        return
+      }
     }
-  }
+  })
+  registry.set(did, url)
+  gate.resolve()
+  await replay
 }
 
 // Fire-and-forget push for a single freshly-inserted notification. Called
@@ -75,19 +94,23 @@ export function notifyInsert(
 ): void {
   const url = registry.get(recipientDid)
   if (!url) return
-  void (async () => {
+  void deliveryRunner.addTask(recipientDid, async () => {
+    // Registration may have been replaced while this task waited in line.
+    if (registry.get(recipientDid) !== url) return
     try {
       const view = await getNotificationByKey(db, idResolver, uri, recipientDid)
       if (!view) return
       const ok = await postNotification(url, view)
-      if (!ok) registry.delete(recipientDid)
+      if (!ok && registry.get(recipientDid) === url) {
+        registry.delete(recipientDid)
+      }
     } catch (err) {
       console.error(
         `notifyInsert ${recipientDid} ${uri}: ${err instanceof Error ? err.message : err}`,
       )
-      registry.delete(recipientDid)
+      if (registry.get(recipientDid) === url) registry.delete(recipientDid)
     }
-  })()
+  })
 }
 
 // Test helpers — keep the registry inspectable from the smoke tests without
@@ -98,6 +121,10 @@ export function _registeredUrl(did: string): string | undefined {
 
 export function _clear(): void {
   registry.clear()
+}
+
+export async function _processAll(): Promise<void> {
+  await deliveryRunner.processAll()
 }
 
 async function postNotification(

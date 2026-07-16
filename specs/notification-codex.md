@@ -1,5 +1,9 @@
 # AIT → Codex Notifications (`AIT_NOTIFICATION_MODE=codex`)
 
+> Cursor ordering, replay/live cutover, and the Codex completion commit boundary
+> are superseded by
+> [notification-cursor-delivery.md](notification-cursor-delivery.md).
+
 Codex CLI has no native equivalent of Claude Code Channels — no capability, startup flag, or MCP notification that becomes an unsolicited model-visible user turn. So AIT can't push a notification into a live Codex session the way it does into Claude Code via `notifications/claude/channel` (specs/notification-push.md). This spec adds a **third mode to the ait-protocol MCP server** — `AIT_NOTIFICATION_MODE=codex` — in which the server binary spawns `codex app-server` as a managed sidecar and injects each AIT notification into the running Codex thread as a `turn/start`.
 
 Status: spec. App-server protocol surface **verified** against the installed `codex-cli 0.144.3` — every method, param, and event below is generated from the binary itself (see "The `codex app-server` interface").

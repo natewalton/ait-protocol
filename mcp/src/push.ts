@@ -38,12 +38,9 @@ export interface NotificationView {
   cursor: string
 }
 
-// The runtime-specific terminal step: surface a notification to the model, and
-// commit the cursor. Injected into startPushListener so the shared bridge stays
-// runtime-invariant. IMPORTANT: the opaque notification cursor must advance
-// only after the runtime-specific delivery signal — the sink owns that timing,
-// so a crash before delivery replays the un-delivered tail via the `since`
-// handshake (specs/notification-push.md, Delivery semantics).
+// Surfaces a notification to the model and commits the cursor. The sink owns
+// commit timing: the cursor must advance only after that runtime's delivery
+// signal, so a crash before delivery replays the tail on re-registration.
 export type NotificationSink = (view: NotificationView) => Promise<void>
 
 const REREGISTER_INTERVAL_MS = 30_000

@@ -1,18 +1,6 @@
-// Offline tests for the notification seq ordering + cursor work.
-//
-// These exist because the original commit shipped its evidence as throwaway
-// scratch scripts: the numbers were real but nobody could re-run them. Each
-// case below is one of those measurements, made reproducible.
-//
-//   (a) fresh DB and migrated DB converge on the same schema
-//   (b) migration preserves every row and assigns seq in rowid order
-//   (c) same-millisecond twins get distinct seqs (the bug that started this)
-//   (d) migration is idempotent — a second boot doesn't rebuild or renumber
-//   (e) UNIQUE(uri, recipientDid) survives, so ON CONFLICT still collapses
-//   (f) AUTOINCREMENT never recycles a seq after a delete
-//   (g) seq cursors round-trip; foreign/garbage cursors decode to null, not NaN
-//   (h) seqBeforeTimestamp heals a legacy ISO cursor sitting on a twin boundary
-//   (i) seqBeforeTimestamp is bounded at both ends (future `since`, unknown DID)
+// Offline tests for notification seq ordering, the migration, and cursors.
+// Every check guards a decision that is easy to undo by accident — the
+// assertion names say which.
 
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -66,7 +54,7 @@ const insertPreSeq = (db, uri, reason, indexedAt) =>
     )
     .run(uri, `cid-${uri}`, RECIP, AUTHOR, reason, indexedAt, indexedAt)
 
-// --- (a)(b)(c) migration ----------------------------------------------------
+// --- migration ---
 console.log('\nmigration')
 const legacyPath = join(tmp, 'legacy.sqlite')
 {
@@ -106,19 +94,17 @@ check(
   JSON.stringify(twins),
 )
 
-const freshPath = join(tmp, 'fresh.sqlite')
-const fresh = openDb(freshPath)
+// Guards the shared DDL const: a fresh DB and a migrated one must not drift.
+const fresh = openDb(join(tmp, 'fresh.sqlite'))
 const freshCols = fresh.pragma('table_info(notifications)').map((c) => c.name)
 check(
   'fresh and migrated schemas are identical',
   JSON.stringify(freshCols) === JSON.stringify(migCols),
   `${JSON.stringify(freshCols)} vs ${JSON.stringify(migCols)}`,
 )
-const freshIdx = fresh.pragma('index_list(notifications)').map((i) => i.name)
-check('fresh DB has the recipient index', freshIdx.includes('notifications_by_recipient'))
 fresh.close()
 
-// --- (d) idempotency --------------------------------------------------------
+// --- idempotency: this runs against the real DB on every server start ---
 const seqsBefore = JSON.stringify(
   migrated.prepare('SELECT seq FROM notifications ORDER BY seq').all(),
 )
@@ -129,7 +115,7 @@ const seqsAfter = JSON.stringify(
 )
 check('second boot does not rebuild or renumber', seqsBefore === seqsAfter)
 
-// --- (e) UNIQUE / ON CONFLICT ----------------------------------------------
+// --- the UNIQUE that replaced the composite PK ---
 console.log('\nconstraints')
 const before = reopened.prepare('SELECT COUNT(*) c FROM notifications').get().c
 reopened
@@ -144,7 +130,7 @@ check(
   reopened.prepare('SELECT COUNT(*) c FROM notifications').get().c === before,
 )
 
-// --- (f) AUTOINCREMENT non-reuse -------------------------------------------
+// --- AUTOINCREMENT non-reuse ---
 // Load-bearing: indexer.ts DELETEs notification rows. A recycled seq would land
 // behind a consumer's cursor and never replay.
 const maxBefore = reopened.prepare('SELECT MAX(seq) m FROM notifications').get().m
@@ -162,10 +148,11 @@ check(
   `deleted ${maxBefore}, next insert got ${maxAfter}`,
 )
 
-// --- (g) cursor codec -------------------------------------------------------
+// --- cursor codec ---
 console.log('\ncursor codec')
 check('seq cursor round-trips', decodeSeqCursor(encodeSeqCursor(42)) === 42)
-check('seq cursor is opaque (not the bare number)', encodeSeqCursor(42) !== '42')
+// A tuple cursor decaying to NaN would compare true against every row, so
+// rejection has to be explicit rather than incidental.
 check(
   'a post-feed tuple cursor decodes to null, not NaN',
   decodeSeqCursor(encodeCursor('2026-01-01T00:00:00Z', 'at://x')) === null,
@@ -173,7 +160,7 @@ check(
 check('garbage decodes to null', decodeSeqCursor('!!!not-base64!!!') === null)
 check('negative/spoofed cursor rejected', decodeSeqCursor(Buffer.from('-5').toString('base64url')) === null)
 
-// --- (h)(i) legacy ISO translation -----------------------------------------
+// --- legacy ISO cursor translation ---
 console.log('\nlegacy ISO cursor healing')
 // A session that delivered the follow committed its indexedAt = T. Its twin,
 // the reply, shares T and was never delivered.

@@ -85,7 +85,7 @@ esac
 exec env AIT_NOTIFICATION_MODE=push \
   claude \
     ${resume_id:+--resume "$resume_id"} \
-    --model 'claude-opus-4-8[1m]' \
+    --model claude-opus-5 \
     --effort max \
     --dangerously-skip-permissions \
     --dangerously-load-development-channels server:ait-protocol \

@@ -60,15 +60,15 @@ EOF
     ;;
 esac
 
-# Pins Opus 4.8 with the 1M-token context window (`[1m]` variant) and max
-# thinking effort — the CLI default is neither. --dangerously-skip-permissions
+# Pins Opus 5 and max thinking effort. Opus 5's 1M-token context window is the
+# default, so no `[1m]` suffix; max effort is not the CLI default. --dangerously-skip-permissions
 # runs hands-off (no approval prompts), which is the point of a push session:
 # the agent acts on incoming replies/mentions without a human at the keyboard.
 # A resumed conversation keeps its handle only with --resume <uuid> in argv, so
 # resume_id (when set) is placed first. Flags sit before "$@", so you can still
 # override by passing your own --model / --effort in the args.
 args=(
-  --model 'claude-opus-4-8[1m]'
+  --model claude-opus-5
   --effort max
   --dangerously-skip-permissions
   --dangerously-load-development-channels server:ait-protocol

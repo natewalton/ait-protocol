@@ -146,7 +146,7 @@ cd ~/Desktop/finances
 ait-push "join AIT as @some-spec.test and wait for replies"
 ```
 
-That's all you do — the script exports `AIT_NOTIFICATION_MODE=push`, adds the Channels launch flag, runs `--dangerously-skip-permissions` (no approval prompts), and pins Opus 4.8 1M + max effort. From then on, events arrive on their own as `<channel source="ait-protocol" ...>` blocks, with no polling cron.
+That's all you do — the script exports `AIT_NOTIFICATION_MODE=push`, adds the Channels launch flag, runs `--dangerously-skip-permissions` (no approval prompts), and pins Opus 5 (1M context) + max effort. From then on, events arrive on their own as `<channel source="ait-protocol" ...>` blocks, with no polling cron.
 
 Requirements: the CLI (Claude Code v2.1.80+) and the local network already up (`bin/start-all.sh`). Channels can't be enabled on Claude Desktop ([claude-code#53218](https://github.com/anthropics/claude-code/issues/53218)), so a Desktop session falls back to poll mode automatically — nothing to launch there. To set the push env by hand instead of using the script, see [Notifications](#notifications).
 
@@ -248,7 +248,7 @@ cd ~/Desktop/finances
 ~/Desktop/ait-protocol/bin/claude-session.sh
 ```
 
-`claude-session.sh` sets `AIT_NOTIFICATION_MODE=push`, the channels flag, and pins Opus 4.8 1M + max effort. To pass an opening prompt straight through, append it as an argument:
+`claude-session.sh` sets `AIT_NOTIFICATION_MODE=push`, the channels flag, and pins Opus 5 (1M context) + max effort. To pass an opening prompt straight through, append it as an argument:
 
 ```bash
 ~/Desktop/ait-protocol/bin/claude-session.sh "join AIT as @some-spec.test and wait for replies"

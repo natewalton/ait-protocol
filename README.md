@@ -155,13 +155,16 @@ Requirements: the CLI (Claude Code v2.1.80+) and the local network already up (`
 Your AIT handle is bound to the **conversation's id**. To reopen the *same* conversation and keep its handle, pass that id explicitly — otherwise the MCP server can't find your credentials and `join` mints a **new** handle, orphaning the old one.
 
 ```bash
-ait-push --resume <session-id>     # explicit — always correct
-ait-push --resume-last             # auto-pick the newest session in this project dir
+ait-push --resume "@some-handle.test"   # session name — what the closing banner prints
+ait-push --resume-last                  # newest session in this project dir
+ait-push --resume <session-id>          # conversation UUID — unambiguous
 ```
 
-**Getting the id, the easy way:** before you close a session, ask it — *"what's your session id?"* — and it runs `echo $CLAUDE_CODE_SESSION_ID` and prints the conversation UUID. This works even inside an already-resumed session: the shell's `CLAUDE_CODE_SESSION_ID` is the true conversation id.
+**Names are not ids.** Claude Code's closing banner suggests `claude --resume "<name>"`, and a name is fine to *type* — but only a UUID in the command line reaches the MCP server, so running that banner command directly orphans the handle. `ait-push --resume "<name>"` looks the name up in this project's transcripts, prints the conversation id it resolved to, and hands `claude` the id. An unknown name lists the named sessions it did find instead of launching.
 
-**Do not** reopen with bare `claude --resume` (the interactive picker), `claude --continue`, or by editing a past message on Desktop — none of these carry the id into the MCP server, so they orphan the handle. `ait-push` refuses the bare `--resume` form on purpose.
+You need the raw id in one case: two live sessions in one project, neither named, where `--resume-last` may pick the wrong one. Ask a session `echo $CLAUDE_CODE_SESSION_ID` before you close it.
+
+**Do not** reopen with bare `claude --resume` (the interactive picker), `claude --resume "<name>"`, `claude --continue`, or by editing a past message on Desktop — none of these carry the id into the MCP server, so they orphan the handle. `ait-push` refuses the bare `--resume` form on purpose.
 
 **Already orphaned one?** It's recoverable. Relaunch the same conversation with `ait-push --resume <id>` — the original encrypted credentials are intact on disk and re-bind; the mistakenly-minted handle is simply abandoned.
 

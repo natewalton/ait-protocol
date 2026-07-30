@@ -2,7 +2,7 @@
 
 Keep a single AIT identity bound across a **restart** of the same conversation, and document the one launch requirement that makes it work. A conversation that compacts already keeps its handle; a conversation that is *resumed* keeps it only when the resume carries the conversation's UUID explicitly in argv. The common bare-picker resume does not, so the MCP child can't find the credential file and `join` mints a brand-new handle — silently orphaning the old one.
 
-Status: **built** — Fix 1 (script) + Fix 2 (docs) shipped 2026-06-25; Fix 3 resolved to **no code change** (rely on 1+2, rationale below). Scope deliberately excludes forks — a fork is a new conversation branch, and minting it a new handle is defensible (owner's call, 2026-06-25).
+Status: **built** — Fix 1 (script) + Fix 2 (docs) shipped 2026-06-25; Fix 3 resolved to **no code change** (rely on 1+2, rationale below); Fix 4 (session names) shipped 2026-07-30. Scope deliberately excludes forks — a fork is a new conversation branch, and minting it a new handle is defensible (owner's call, 2026-06-25).
 
 ## Goal in one sentence
 
@@ -18,6 +18,7 @@ A *single* AIT identity, when its conversation is:
 | **restarted, explicit `claude --resume <uuid>`** | ✅ preserved | the UUID is in the parent argv → `uuidFromParentArgv()` (resolver #2, ADR-0035) returns it. |
 | **restarted, bare `claude --resume` (picker)** | ❌ **orphaned → new mint** | argv has the bare token `--resume` with no UUID → `uuidFromParentArgv()` returns null → resolver falls to `CLAUDE_CODE_SESSION_ID`, which on a resume is a fresh **per-spawn** value ≠ the resumed conversation's UUID → `loadIdentity()` misses → `join` mints. |
 | **restarted, `claude --continue` / `-c`** | ❌ same as bare picker | same shape: a resume-intent token, no UUID in argv. (Not separately reproduced; same code path.) |
+| **restarted, `claude --resume "<session name>"`** | ❌ same as bare picker | added in Claude Code ~2.1.220, and the closing banner suggests exactly this form. argv carries the display name, not a UUID → `RESUME_UUID_RE` misses → same fall-through to `CLAUDE_CODE_SESSION_ID`. `bin/claude-session.sh` accepts the name and translates it to the UUID before exec (see Fix 1). |
 
 Compaction is **safe and out of scope for code changes** — confirmed below. The fix targets the restart paths that put no UUID in argv.
 
@@ -92,6 +93,8 @@ exec env AIT_NOTIFICATION_MODE=push \
     "$@"
 ```
 
+That block is the 2026-06-25 proposal, kept for the reasoning. The live script has since moved past it (Fix 4); read `bin/claude-session.sh` for current behaviour.
+
 Notes: `--resume "$resume_id"` (explicit value) parses correctly in any position; placing it first is simplest. `--resume-last`'s slug rule matches the transcript-dir encoding documented in `specs/transcript-derived-session-key.md` (realpath, `/`→`-`, `.`→`-`). Multi-session caveat: `--resume-last` picks the most-recently-written transcript in the dir; with two live conversations in one project it may pick the wrong one — `--resume <uuid>` is the unambiguous form.
 
 ### Fix 2 — README: a visible resume section + the get-the-id recipe
@@ -123,6 +126,17 @@ An in-code auto-refuse — have `join` detect a lost resume and refuse to mint r
 - **transcript-existence probe** (on a mint-path miss, refuse if the resolved UUID has no `<uuid>.jsonl`): reliable, but re-introduces the project-dir slug computation ADR-0035 deliberately deleted. A systems review (2026-06-25) found it reverses ADR-0035's concept reduction (8→5 resolver concepts), is the *second* filesystem-probe-for-identity (ADR-0033 was the first, removed by 0035), and couples `join`'s execution path to the resolver's failure semantics — violating separate-validation-from-execution.
 
 **Decision (owner, 2026-06-25): ship neither.** Fix 1 makes the supported launch path (`ait-push`) safe by construction; Fix 2 documents the requirement and the recovery. The residual — a silent orphan when someone bare-resumes *outside* the script — is recoverable (the original credential file stays intact) and now documented. `storage.ts` and `join.ts` stay untouched; the identity system keeps its ADR-0035 concept count.
+
+### Fix 4 — the launcher accepts a session name (2026-07-30)
+
+Claude Code ~2.1.220 taught `--resume` to take a session display name, and its closing banner now prints that form: `claude --resume "@ppp-social-enrich.test"`. A name in argv matches no UUID, so Fix 1's launcher rejected it outright and the banner command orphans the handle.
+
+`bin/claude-session.sh` now takes either form. On a non-UUID argument it walks `~/.claude/projects/<slug>/*.jsonl` newest-first, reads the last `{"type":"agent-name","agentName":"…"}` record in each, and passes the matching file's UUID to `claude`. It prints the id it resolved. An unknown name lists the named sessions it did find and exits 2.
+
+Two limits, both by design:
+
+- **A name can never be the identity key.** It arrives long after the handle exists — in `0cfbc615-…` the join lands at line 123 and the first `agent-name` record at line 2236. The name is a lookup key for the launcher, nothing more; the UUID stays the thing the vault is derived from.
+- **The lookup stays in the launcher.** Teaching `storage.ts` to match a name in argv was rejected for the same reason Fix 3's argv-token detection was: `ps -o command=` includes the prompt, and this repo's own docs contain the literal string `--resume "@some-handle.test"`. Today a miss mints a fresh handle, which is recoverable; a name false-positive would decrypt *another conversation's* vault, breaking ADR-0007 isolation with no recovery. The banner command is also missing `AIT_NOTIFICATION_MODE=push` and the channels flag, so no resolver change could make it safe anyway.
 
 ## Build order
 

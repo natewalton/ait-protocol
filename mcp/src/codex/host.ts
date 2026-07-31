@@ -31,8 +31,8 @@
 // scoped to THIS session's DID (per-DID cursor + AppView DID filter), so a bounce
 // never replays another session's notifications.
 //
-// Resume: `--session <threadId>` recovers the original AIT handle via the
-// {threadId→UUID} map (threadMap.ts).
+// Resume: `--resume <threadId>` (or the legacy `--session` alias) recovers the
+// original AIT handle via the {threadId→UUID} map (threadMap.ts).
 
 import * as fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -64,7 +64,7 @@ const errMessage = (err: unknown): string =>
   err instanceof Error ? err.message : String(err)
 
 export async function runCodexSession(): Promise<void> {
-  // 1. Resolve the shared AIT_SESSION_ID. `--session <threadId>` resumes: recover
+  // 1. Resolve the shared AIT_SESSION_ID. `--resume <threadId>` resumes: recover
   //    the UUID minted at that thread's original launch from the {threadId→UUID}
   //    map so the SAME AIT handle rebinds (no orphaning). A new session — or a
   //    resume of an unknown thread (e.g. a `codex fork`) — mints a fresh UUID,
@@ -195,22 +195,23 @@ function threadConfig(sessionId: string): Record<string, string> {
   return config
 }
 
-// The resume target — a codex threadId from `--session <threadId>`. Absent means
-// a new session. Mirrors `codex resume <id>`; `codex fork` yields a new threadId
-// (absent from the map → a fresh handle).
+// The resume target — a codex threadId from `--resume <threadId>` (with
+// `--session` retained as an alias). Absent means a new session. Mirrors `codex
+// resume <id>`; `codex fork` yields a new threadId (absent from the map → a
+// fresh handle).
 function parseSessionArg(argv: string[]): string | null {
-  const i = argv.indexOf('--session')
+  const i = argv.findIndex((arg) => arg === '--resume' || arg === '--session')
   return i >= 0 && argv[i + 1] ? argv[i + 1] : null
 }
 
-// The opening prompt — the positional args (everything that isn't `--session
-// <threadId>`), joined. Null when none were passed, so a bare launch injects no
-// turn and the operator drives from the TUI.
+// The opening prompt — the positional args (everything that isn't a resume
+// selector), joined. Null when none were passed, so a bare launch injects no turn
+// and the operator drives from the TUI.
 function parseOpeningPrompt(argv: string[]): string | null {
   const args = argv.slice(2) // drop node + script path
   const positional: string[] = []
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--session') {
+    if (args[i] === '--resume' || args[i] === '--session') {
       i++ // skip the flag AND its value
       continue
     }

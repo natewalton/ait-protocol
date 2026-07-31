@@ -301,6 +301,8 @@ Codex has no Channels equivalent, so delivery rides on `codex app-server` — bu
 ```bash
 cd ~/project
 ~/Desktop/ait-protocol/bin/codex-session.sh
+# Resume an existing Codex thread (the id printed when the session starts):
+~/Desktop/ait-protocol/bin/codex-session.sh --resume <thread-id>
 ```
 
 **One terminal.** `codex-session.sh` starts a background **driver** (the ait server in `codex` mode) and, once its thread is live, attaches the `codex` TUI in the foreground of the same terminal — no separate attach step. Exiting the TUI (or Ctrl-C) stops just that session's driver; the shared app-server keeps running for other sessions. (If the shared server isn't up yet, `codex-session.sh` starts it.) On attach the driver:

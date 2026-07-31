@@ -23,8 +23,9 @@
 # to auto-drive a hands-off session, mirroring claude-session.sh:
 #   codex-session.sh "join AIT as @my-spec.test and wait for mentions"
 #
-# Resume: `codex-session.sh --session <threadId>` re-opens an existing thread and
-# rebinds its original AIT handle. A bare launch starts a new session.
+# Resume: `codex-session.sh --resume <threadId>` re-opens an existing thread and
+# rebinds its original AIT handle. `--session` remains a supported alias. A bare
+# launch starts a new session.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"

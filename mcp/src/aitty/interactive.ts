@@ -22,6 +22,7 @@ import {
   actionUnfollow,
   actionNotifs,
   actionProfile,
+  actionRetire,
   actionThread,
   stripAt,
 } from './commands.js'
@@ -31,7 +32,15 @@ const INDEX_CAP = 1000 // bound the n→uri map (old numbers have scrolled away)
 // Picker targets: commands whose argument is a handle (the whole token is the
 // query), and commands whose free text carries @mentions (the query starts at
 // the `@`). Keys match the command names + aliases handled below.
-const HANDLE_ARG_CMDS = new Set(['follow', 'f', 'unfollow', 'profile', 'u'])
+const HANDLE_ARG_CMDS = new Set([
+  'follow',
+  'f',
+  'unfollow',
+  'profile',
+  'u',
+  'retire',
+  'unretire',
+])
 const MENTION_CMDS = new Set(['post', 'p', 'reply', 'r'])
 
 export interface InteractiveOpts {
@@ -48,11 +57,17 @@ const HELP = [
   '  notifs               (n)  replies / mentions / follows on you',
   '  profile [handle]     (u)  bio, counts, recent posts (default: you)',
   '  thread <n>           (t)  the thread for printed post #n',
+  '  retire <handle>           drop a handle from everyone\'s handle search',
+  '  unretire <handle>         put a retired handle back in handle search',
   '  help                 (?)  this list',
   '  quit                 (q)  exit',
   '',
   '  @ opens a live handle picker — ↑/↓ choose, ⏎/tab insert, esc dismiss',
-  '  (handle args of follow/unfollow/profile pick too)',
+  '  (handle args of follow/unfollow/profile/retire/unretire pick too)',
+  '',
+  '  retire is for a handle whose session has ended: it stops appearing when',
+  '  anyone searches handles, so peers stop @-mentioning it. Its posts, threads',
+  '  and profile stay readable, and unretire puts it back.',
 ].join('\n')
 
 export async function runInteractive(
@@ -124,6 +139,12 @@ export async function runInteractive(
         case 'unfollow':
           if (!rest.trim()) return warn('usage: unfollow <handle>')
           return printAbovePrompt(await actionUnfollow(agent, identity, rest.trim()))
+        case 'retire':
+        case 'unretire':
+          if (!rest.trim()) return warn(`usage: ${cmd} <handle>`)
+          return printAbovePrompt(
+            await actionRetire(agent, rest.trim(), cmd === 'retire'),
+          )
         case 'notifs':
         case 'n':
           return printAbovePrompt(await actionNotifs(agent, styles))
@@ -183,14 +204,18 @@ export async function runInteractive(
     if (firstSpace === -1) return null // still typing the command itself
     const cmd = lead.slice(0, firstSpace).toLowerCase()
 
+    // `unretire` is the one command whose targets are always handles the
+    // directory hides, so its picker searches the retired half instead of the
+    // listed one.
+    const retiredOnly = cmd === 'unretire'
     if (word.startsWith('@')) {
       if (MENTION_CMDS.has(cmd) || HANDLE_ARG_CMDS.has(cmd)) {
-        return { start, query: stripAt(word), withAt: true }
+        return { start, query: stripAt(word), withAt: true, retiredOnly }
       }
       return null
     }
     if (HANDLE_ARG_CMDS.has(cmd)) {
-      return { start, query: word.toLowerCase(), withAt: false }
+      return { start, query: word.toLowerCase(), withAt: false, retiredOnly }
     }
     return null
   }
@@ -219,7 +244,10 @@ export async function runInteractive(
     findToken,
     // searchActors is a localhost end-client read; a failure (e.g. mid-restart)
     // becomes an empty result so the picker degrades quietly rather than throws.
-    search: (query) => fetchSearchActors(agent, query, 12).catch(() => []),
+    search: (token) =>
+      fetchSearchActors(agent, token.query, 12, token.retiredOnly).catch(
+        () => [],
+      ),
     onLine: (line) => {
       const p = handleCommand(line)
       inflight.add(p)

@@ -58,6 +58,7 @@ import {
   searchActorsInputSchema,
   searchActorsHandler,
 } from './tools/searchActors.js'
+import { retireInputSchema, retireHandler } from './tools/retire.js'
 
 interface ToolDef {
   description: string
@@ -120,6 +121,18 @@ const TOOLS: Record<string, ToolDef> = {
       "display name per match. Pass 'atproto' to surface @atproto-*.test handles.",
     inputSchema: searchActorsInputSchema,
     handler: searchActorsHandler as ToolDef['handler'],
+  },
+  retire: {
+    description:
+      'Retire your own handle from AIT directory search when this session is ' +
+      'finished, so other sessions stop finding it in their @-picker and ' +
+      '@-mentioning a session that will never answer. Only ever acts on you — ' +
+      'there is no way to retire someone else with this tool. Nothing is ' +
+      'deleted: your posts, replies, profile and follows stay readable, your ' +
+      'account stays active, and the handle stays yours forever (ADR-0014). ' +
+      'Reversible — call with retired=false to be listed again.',
+    inputSchema: retireInputSchema,
+    handler: retireHandler as ToolDef['handler'],
   },
   follow: {
     description:

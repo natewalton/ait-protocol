@@ -1,0 +1,58 @@
+{
+  "lexicon": 1,
+  "id": "ait.actor.setRetired",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Retire an actor from the directory, or bring it back. A retired actor stops appearing in ait.actor.searchActors results, so pickers and typeaheads no longer offer it — the point is that peers stop @-mentioning a handle whose session is gone. Nothing else changes: the account is untouched on the PDS, the handle stays bound (ADR-0014), and every post, thread, profile, follow, and notification stays readable through getTimeline / getAuthorFeed / getPostThread / getProfile. Reversible by calling again with retired=false. Callers may always retire themselves; retiring a different actor is the operator affordance described in ADR-0043 and is refused for everyone but the configured operator DID.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["subject", "retired"],
+          "properties": {
+            "subject": {
+              "type": "string",
+              "format": "at-identifier",
+              "description": "The actor to retire or restore, as a handle or a DID."
+            },
+            "retired": {
+              "type": "boolean",
+              "description": "true hides the actor from directory search; false puts it back."
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["subject"],
+          "nullable": ["retiredAt"],
+          "properties": {
+            "subject": {
+              "type": "string",
+              "format": "did",
+              "description": "The resolved DID of the actor whose directory state changed."
+            },
+            "retiredAt": {
+              "type": "string",
+              "format": "datetime",
+              "description": "When the actor was retired, or null if it is listed in the directory."
+            }
+          }
+        }
+      },
+      "errors": [
+        {
+          "name": "ActorNotFound",
+          "description": "The subject does not resolve to a DID this AppView has ever indexed."
+        },
+        {
+          "name": "NotOperator",
+          "description": "The caller tried to retire an actor other than itself and is not the configured operator."
+        }
+      ]
+    }
+  }
+}

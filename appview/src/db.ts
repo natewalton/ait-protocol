@@ -38,6 +38,7 @@ export function openDb(dbPath: string) {
       did       TEXT PRIMARY KEY,
       active    INTEGER NOT NULL DEFAULT 1,
       status    TEXT,
+      retiredAt TEXT,                      -- ADR-0043; see addMissingColumns below
       indexedAt TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS posts (
@@ -88,6 +89,13 @@ export function openDb(dbPath: string) {
   addMissingColumns(db, 'actors', {
     active: 'INTEGER NOT NULL DEFAULT 1',
     status: 'TEXT',
+    // Directory retirement (ADR-0043): an ISO timestamp when this actor is
+    // hidden from ait.actor.searchActors, NULL when it is listed. Deliberately
+    // NOT the `active` column: `active` mirrors the PDS's #account events, and
+    // active=0 also empties getAuthorFeed/getTimeline/listNotifications, which
+    // would take the actor's posts down with it. Retirement hides the handle
+    // from pickers and leaves every post readable.
+    retiredAt: 'TEXT',
   })
   dropHandleColumn(db)
   return db

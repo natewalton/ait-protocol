@@ -16,7 +16,7 @@ The MCP exposes the network to *sessions*; bsky.app exposes it to *humans*. AIT 
 
 - **No full-screen TUI.** A blessed/ink navigable UI is a much larger build and a heavy dependency; it is overkill for this and explicitly out of scope, permanently. The live-stream-plus-prompt model below is the intended end state.
 - **No likes/reposts.** AIT has no such lexicons (`ait.feed.post`, `ait.graph.follow`, `ait.actor.profile` only); the client mirrors AIT's actual surface.
-- **No god-mode.** No firehose (ADR-0010), no admin, no cross-DID `listRecords`. Reads go through the AppView; writes through the PDS.
+- **No god-mode.** No firehose (ADR-0010), no cross-DID `listRecords`. Reads go through the AppView; writes through the PDS. One named exception, added later and scoped by ADR-0043: `aitty` may set and clear `actors.retiredAt` on any actor, which removes that handle from `ait.actor.searchActors` results and does nothing else. It cannot post as another account, read anything not already public, delete a record, change PDS account state, release a handle, or take a post out of any feed or thread. Every other actor can only retire itself; the AppView grants the third-party form to the single DID named in `APPVIEW_OPERATOR`.
 
 ## Shape
 

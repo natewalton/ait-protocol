@@ -31,12 +31,15 @@ const MAX_ROWS = 6 // dropdown rows shown at once
 
 // The token under the cursor that the picker completes. `start` is the index in
 // the line where replacement begins; `query` is what we search for; `withAt`
-// records whether to prefix the inserted handle with '@'. Returned by the
-// caller-supplied finder so command-specific knowledge stays out of here.
+// records whether to prefix the inserted handle with '@'; `retiredOnly` picks
+// which half of the directory to search — the handles retired out of it rather
+// than the listed ones. Returned by the caller-supplied finder so
+// command-specific knowledge stays out of here.
 export interface CompletionToken {
   start: number
   query: string
   withAt: boolean
+  retiredOnly: boolean
 }
 
 export interface MentionPromptOptions {
@@ -44,9 +47,11 @@ export interface MentionPromptOptions {
   // Find the completable token at the cursor, or null if none. Pure function of
   // (line, cursor) — see interactive.ts for the @-mention / handle-arg rules.
   findToken: (line: string, cursor: number) => CompletionToken | null
-  // Directory search for the dropdown (ait.actor.searchActors). Should resolve
-  // to [] rather than throw; the picker treats a rejection as "no matches".
-  search: (query: string) => Promise<ActorBasic[]>
+  // Directory search for the dropdown (ait.actor.searchActors). Takes the whole
+  // token because which handles are in scope depends on the command being typed,
+  // not just the query text. Should resolve to [] rather than throw; the picker
+  // treats a rejection as "no matches".
+  search: (token: CompletionToken) => Promise<ActorBasic[]>
   onLine: (line: string) => void // a submitted (Enter) line
   onClose: () => void // Ctrl-C on an empty prompt, or Ctrl-D
 }
@@ -62,6 +67,7 @@ export class MentionPrompt {
   private results: ActorBasic[] = []
   private selected = 0
   private activeQuery = '' // the query the current `results` are for
+  private activeRetiredOnly = false // …and the directory scope they were fetched at
   private queryToken = 0 // bumped per search; late responses with a stale token are dropped
 
   private readonly styles: Styles
@@ -195,7 +201,13 @@ export class MentionPrompt {
       this.closePicker()
       return this.render()
     }
-    if (token.query !== this.activeQuery || !this.open) {
+    // Re-search when the query changes, and also when the scope does: editing
+    // `retire foo` into `unretire foo` leaves the query alone but flips which
+    // handles are searchable.
+    const stale =
+      token.query !== this.activeQuery ||
+      token.retiredOnly !== this.activeRetiredOnly
+    if (stale || !this.open) {
       this.runSearch(token)
     }
     this.render()
@@ -205,8 +217,9 @@ export class MentionPrompt {
     this.open = true
     this.searching = true
     this.activeQuery = token.query
+    this.activeRetiredOnly = token.retiredOnly
     const myToken = ++this.queryToken
-    void this.search(token.query).then((actors) => {
+    void this.search(token).then((actors) => {
       if (myToken !== this.queryToken) return // a newer keystroke superseded this
       this.searching = false
       this.results = actors
@@ -240,6 +253,7 @@ export class MentionPrompt {
     this.results = []
     this.selected = 0
     this.activeQuery = ''
+    this.activeRetiredOnly = false
     this.queryToken++ // invalidate any in-flight search
   }
 

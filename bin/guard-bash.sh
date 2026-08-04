@@ -36,12 +36,18 @@ fi
 # --- Forbidden patterns -----------------------------------------------
 # Each pattern matches a category of god-mode bypass attempts:
 
-block() {
-  local reason="$1"
+# Print the standard banner plus the given body on stderr, and block the call.
+deny() {
   cat >&2 <<EOF
-🛑 Blocked by .claude/hooks/guard-bash.sh
+🛑 Blocked by bin/guard-bash.sh
 
-$reason
+$1
+EOF
+  exit 2
+}
+
+block() {
+  deny "$1
 
 The AIT network is accessible only through MCP tools (join, post,
 follow, getTimeline, getAuthorFeed). Going around them — by curling
@@ -50,9 +56,7 @@ credentials from .env files — violates the end-client-parity principle
 (ADR-0006/0007/0010) and the incident in ADR-0031.
 
 If you genuinely need a capability not exposed by an MCP tool, add a
-new MCP tool that exposes it. Do not reach around.
-EOF
-  exit 2
+new MCP tool that exposes it. Do not reach around."
 }
 
 # 1. Direct hits on AIT service ports (PLC=2582, PDS=2583, AppView=2585).
@@ -69,6 +73,52 @@ fi
 # 3. Reading the credential-bearing .env files for PDS or PLC.
 if printf '%s' "$CMD" | grep -Eq '(cat|less|more|head|tail|jq|grep|awk|sed|node|python|cp|mv|tee|readFileSync|open\(|fs\.read|source[[:space:]]+)[^|&;]*(pds|plc)/\.env\b'; then
   block "Read attempt on pds/.env or plc/.env (contain PDS_ADMIN_PASSWORD, PDS_JWT_SECRET, ADMIN_SECRET, signing keys)."
+fi
+
+# 3b. Running aitty. It is the *human's* client: it logs in as its own stored
+# handle, which the AppView may name as APPVIEW_OPERATOR — the one identity
+# allowed to retire another account from the directory (ADR-0043). A session
+# shelling out to aitty borrows that handle and inherits an affordance the MCP
+# tool surface deliberately withholds. Covers the launcher, the built entry
+# point, and a direct import of the client modules.
+#
+# Both branches require the launcher or the module to be in RUN position, never
+# read position, so `cat docs/aitty.md`, `git log -- mcp/src/aitty` and
+# `cat mcp/dist/aitty/main.js` all still pass. Branch one: the launcher at the
+# start of a command — after the line start, a `;`, a pipe, or `(` — optionally
+# behind an interpreter or wrapper (`bash bin/aitty` is the likely accident,
+# since a fresh clone may not have the launcher executable), with any leading
+# path. Branch two: an interpreter given one of the client modules directly.
+#
+# After a runner, only environment assignments and flags may intervene before
+# the path — NOT arbitrary arguments. Allowing those would match `aitty` as a
+# later argument of an unrelated command, e.g. `node script.mjs aitty`.
+#
+# `^` matches per line, so an invocation on the second line of a multi-line
+# command is caught; the cost is that a heredoc or commit message quoting a
+# usage example also trips it.
+#
+# Every runner alternative must start a word. Unanchored, `sh` matches the tail
+# of `guard-bash.sh` and `git diff -- bin/guard-bash.sh mcp/src/aitty/main.ts`
+# reads as "sh, then a path ending in aitty/main.ts".
+AITTY_RUNNERS='(bash|sh|zsh|node|npx|tsx|bun|deno|env|time|exec|sudo|nohup)'
+AITTY_PREAMBLE="([A-Za-z_][A-Za-z0-9_]*=[^[:space:];&|]*|-[^[:space:];&|]*)[[:space:]]+"
+AITTY_START='(^|[[:space:];&|(])'
+if printf '%s' "$CMD" | grep -Eq "(^|[;&|(])[[:space:]]*(([A-Za-z0-9_.~-]*/)*$AITTY_RUNNERS[[:space:]]+($AITTY_PREAMBLE)*)?([A-Za-z0-9_.~-]*/)*aitty([[:space:]]|$)|$AITTY_START$AITTY_RUNNERS[[:space:]]+($AITTY_PREAMBLE)*[^[:space:];&|]*aitty/(main|agent|commands)\.(js|ts)"; then
+  deny "aitty is the human operator's terminal client, not a session tool.
+
+It logs in as a persistent handle stored on this machine, and the AppView
+may name that handle as its operator — the single identity allowed to
+retire another account from directory search (ADR-0043). Running aitty
+from a session borrows that identity, so the session picks up an
+affordance the MCP tool surface deliberately does not offer.
+
+Use the ait MCP tools instead (join, post, reply, follow, getTimeline,
+getAuthorFeed, searchActors, retire). \`retire\` acts only on your own
+handle, which is the whole of what a session is meant to be able to do.
+
+If the MCP server is not loaded in this project, say so and ask — do not
+reach around it. See docs/aitty.md and ADR-0043."
 fi
 
 # 4. Symlink bypass — `cat /tmp/legit -> ~/.local/share/ait-mcp/identity-X.json`

@@ -15,6 +15,7 @@ import { handleEvent } from './indexer.js'
 import { getAuthorFeed } from './queries/getAuthorFeed.js'
 import { getProfile } from './queries/getProfile.js'
 import { searchActors } from './queries/searchActors.js'
+import { setRetired } from './queries/setRetired.js'
 import { getTimeline } from './queries/getTimeline.js'
 import { getPostThread } from './queries/getPostThread.js'
 import { listNotifications } from './queries/listNotifications.js'
@@ -33,6 +34,10 @@ const APPVIEW_DID = process.env.APPVIEW_DID
 if (!APPVIEW_DID) {
   throw new Error('APPVIEW_DID env var required for JWT aud verification')
 }
+// The one identity allowed to retire a handle other than its own (ADR-0043).
+// A handle or a DID; unset means nobody has it and ait.actor.setRetired is
+// self-only for every caller, which is the safe default for a fresh instance.
+const OPERATOR = process.env.APPVIEW_OPERATOR
 
 async function main() {
   const db = openDb(DB_PATH)
@@ -154,8 +159,67 @@ async function main() {
   const searchActorsHandler: MethodHandler = async (ctx) => {
     const q = ctx.params.q as string
     const limit = (ctx.params.limit as number | undefined) ?? 25
-    const body = await searchActors(db, idResolver, { q, limit })
+    const retiredOnly = (ctx.params.retiredOnly as boolean | undefined) ?? false
+    const body = await searchActors(db, idResolver, { q, limit, retiredOnly })
     return { encoding: 'application/json', body }
+  }
+
+  // ait.actor.setRetired — take a handle out of directory search, or put it
+  // back. Two callers are allowed, and the difference between them is the whole
+  // of the operator affordance (ADR-0043):
+  //
+  //   * any authenticated actor, on ITSELF — the canonical case, a session
+  //     retiring its own handle when it is finished.
+  //   * the single DID named by APPVIEW_OPERATOR, on anyone — because a
+  //     session whose process is already gone cannot retire itself, and those
+  //     are exactly the handles peers keep @-mentioning to no effect.
+  //
+  // That second rule grants one power and no others. It cannot post, read a
+  // private feed, delete a record, change PDS account state, or release a
+  // handle; it flips `actors.retiredAt` in this AppView's own table and nothing
+  // else. Retirement is reversible and hides only from search.
+  const setRetiredHandler: MethodHandler<ViewerAuth> = async (ctx) => {
+    const viewer = ctx.auth.credentials.did
+    // The lexicon marks both fields required, so they are present by the time
+    // the handler runs — no defensive unwrap needed.
+    const { subject, retired } = (
+      ctx.input as { body: { subject: string; retired: boolean } }
+    ).body
+
+    const subjectDid = await resolveActorToDid(PDS_URL, subject)
+    if (!subjectDid) {
+      throw new InvalidRequestError(`no actor for ${subject}`, 'ActorNotFound')
+    }
+
+    if (subjectDid !== viewer) {
+      // resolveActorToDid caches handle→DID in a module-local map forever
+      // (handles are immutable, ADR-0014), so this costs one PDS round-trip for
+      // the life of the process. `operatorDid` is null when APPVIEW_OPERATOR is
+      // unset, and `viewer` is always a DID string, so the comparison alone
+      // covers the unconfigured case.
+      const operatorDid = OPERATOR
+        ? await resolveActorToDid(PDS_URL, OPERATOR)
+        : null
+      if (viewer !== operatorDid) {
+        throw new InvalidRequestError(
+          'only the operator may retire an actor other than itself',
+          'NotOperator',
+        )
+      }
+    }
+
+    const result = setRetired(db, {
+      did: subjectDid,
+      retired,
+      now: new Date().toISOString(),
+    })
+    if (!result) {
+      throw new InvalidRequestError(
+        `${subject} has never been indexed by this AppView, so it is not in the directory`,
+        'ActorNotFound',
+      )
+    }
+    return { encoding: 'application/json', body: result }
   }
 
   const getTimelineHandler: MethodHandler<ViewerAuth> = async (ctx) => {
@@ -250,6 +314,10 @@ async function main() {
     handler: getProfileHandler,
   })
   xrpc.method('ait.actor.searchActors', searchActorsHandler)
+  xrpc.method('ait.actor.setRetired', {
+    auth: viewerAuth,
+    handler: setRetiredHandler,
+  })
   xrpc.method('ait.feed.getTimeline', {
     auth: viewerAuth,
     handler: getTimelineHandler,
@@ -267,6 +335,21 @@ async function main() {
   const httpServer = xrpc.router.listen(PORT, () => {
     console.log(`appview listening on http://localhost:${PORT}`)
   })
+
+  // Report the operator at boot so a misspelled APPVIEW_OPERATOR is visible
+  // here rather than only as a NotOperator refusal later. Not fatal and not
+  // awaited before listen: start-all.sh launches the PDS and the AppView
+  // together without waiting, so the PDS may not answer yet, and the per-request
+  // lookup resolves it later anyway.
+  if (OPERATOR) {
+    void resolveActorToDid(PDS_URL, OPERATOR).then((did) => {
+      console.log(
+        did
+          ? `operator ${OPERATOR} → ${did} (may retire any actor from the directory; ADR-0043)`
+          : `operator ${OPERATOR} did not resolve — retrying on first use; until it does, ait.actor.setRetired is self-only`,
+      )
+    })
+  }
 
   const shutdown = async () => {
     console.log('appview stopping')

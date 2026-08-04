@@ -6,6 +6,7 @@ import { hydrateHandle } from './hydrateActor.js'
 export interface SearchActorsParams {
   q: string
   limit: number
+  retiredOnly: boolean
 }
 
 export interface ActorBasic {
@@ -44,12 +45,27 @@ export async function searchActors(
   // Active actors only — the same exclusion the other read paths apply
   // (getTimeline gates on `a.active = 1 OR a.active IS NULL`). `ensureActor`
   // rows default active=1; an #account event may flip it to 0.
+  //
+  // Retired actors (ADR-0043) drop out too, and this is the ONLY read path that
+  // consults `retiredAt`: retirement takes a handle out of pickers, it does not
+  // take its posts down, so getTimeline/getAuthorFeed/getPostThread/getProfile
+  // deliberately ignore the column.
+  //
+  // The two scopes are disjoint, never nested: `retiredOnly` searches the
+  // retired set *instead of* the listed one. That keeps the sweep below — which
+  // resolves a handle per surviving row, on every keystroke of a picker — as
+  // small as the caller's intent. A client asking to restore a handle can only
+  // act on retired ones, so offering it listed ones would resolve hundreds of
+  // DIDs to fill the dropdown with rows it must reject.
+  const retiredFilter = params.retiredOnly
+    ? ' AND a.retiredAt IS NOT NULL'
+    : ' AND a.retiredAt IS NULL'
   const rows = db
     .prepare(
       `SELECT a.did AS did, p.displayName AS displayName
        FROM actors a
        LEFT JOIN profiles p ON p.did = a.did
-       WHERE (a.active = 1 OR a.active IS NULL)`,
+       WHERE (a.active = 1 OR a.active IS NULL)${retiredFilter}`,
     )
     .all() as ActorRow[]
 

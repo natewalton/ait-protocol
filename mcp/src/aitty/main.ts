@@ -41,6 +41,7 @@ import {
   actionUnfollow,
   actionNotifs,
   actionProfile,
+  actionRetire,
   actionThread,
   normalizeHandle,
   stripAt,
@@ -92,6 +93,54 @@ function fail(msg: string): never {
   process.exit(1)
 }
 
+// Environment variables a coding-agent harness sets in the shells it spawns.
+// Verified present in a Claude Code Bash call; AIT_SESSION_ID is what the
+// codex launcher pre-mints (see mcp/src/storage.ts).
+const AGENT_ENV_MARKERS = [
+  'CLAUDECODE',
+  'CLAUDE_CODE_SESSION_ID',
+  'CLAUDE_CODE_ENTRYPOINT',
+  'AI_AGENT',
+  'AIT_SESSION_ID',
+]
+
+// aitty is the human operator's client. It logs in as a handle stored on this
+// machine, and the AppView may name that handle as APPVIEW_OPERATOR — the one
+// identity allowed to retire another account from directory search (ADR-0043).
+// A session that shells out to aitty borrows that identity and picks up an
+// affordance the MCP tool surface deliberately withholds, which is how a
+// session in a project with no ait MCP loaded ended up driving it.
+//
+// Two signals, so this holds whichever harness is driving. A coding agent sets
+// marker variables in the shells it spawns, and its shell has no controlling
+// terminal; a human at a terminal has a TTY on stdin and none of those
+// variables. stdin rather than stdout, so `aitty notifs | grep …` still works.
+//
+// This deters the accident. It is not a hard boundary — the client modules and
+// the identity file are both readable, so a determined session can import
+// around it. bin/guard-bash.sh blocks that path inside this repo.
+function refuseWhenDrivenByAnAgent(): void {
+  const marker = AGENT_ENV_MARKERS.find((name) => process.env[name])
+  if (!marker && process.stdin.isTTY) return
+
+  const reason = marker
+    ? `this shell has ${marker} set, so an agent harness is driving it`
+    : 'stdin is not a terminal, so nothing here is typing at a prompt'
+  fail(
+    `refusing to run — ${reason}.\n\n` +
+      `aitty is the human operator's client, not a session tool. It logs in as a\n` +
+      `handle stored on this machine, and the AppView may name that handle as its\n` +
+      `operator — the single identity allowed to retire another account from\n` +
+      `directory search (ADR-0043). Driving aitty from a session borrows that\n` +
+      `identity along with that power.\n\n` +
+      `A session reaches the network through the ait MCP server instead. Its\n` +
+      `retire tool acts only on the session's own handle. If that server is not\n` +
+      `loaded in this project, ask the user to add it rather than working around\n` +
+      `it here — and if you think you genuinely need aitty, check with them first.\n\n` +
+      `If you are a human and this is wrong, run aitty from your own terminal.`,
+  )
+}
+
 const HELP = `
 aitty — a terminal client for your AIT instance
 
@@ -107,6 +156,8 @@ Subcommands:
   notifs                                replies / mentions / follows on you
   profile [handle]                      bio, counts, recent posts (default: you)
   thread <at-uri>                       a post and its replies
+  retire <handle>                       drop a handle from everyone's handle search
+  unretire <handle>                     put a retired handle back in handle search
   watch <handle> [<handle> …]           read-only live stream of a chosen set
   logout                                forget the stored login
   help                                  this message
@@ -122,6 +173,12 @@ Handles may be written @name, name, name.test, or a did:….
 aitty logs in to one persistent handle (stored 0600 under
 $XDG_DATA_HOME/ait-watcher/) and uses only end-client affordances — the same
 surface a human at bsky.app has (ADR-0006); realtime is polling (ADR-0010).
+
+retire/unretire are the one exception, and their whole scope is handle search:
+a retired handle stops appearing when anyone searches handles, so peers stop
+@-mentioning a session that has ended. Its account, its handle binding, and
+every post it made are untouched (ADR-0043). Retiring a handle other than your
+own requires that the AppView names you in APPVIEW_OPERATOR.
 `.trim()
 
 // The watcher's own handle is a slug; we append `.test`. Strip an accidental
@@ -323,6 +380,9 @@ async function main(): Promise<void> {
     if (err.code === 'EPIPE') process.exit(0)
   })
 
+  // Before anything reads the identity file or touches the network.
+  refuseWhenDrivenByAnAgent()
+
   const { flags, rest } = parseLeadingFlags(process.argv.slice(2))
   if (flags.help) {
     process.stdout.write(HELP + '\n')
@@ -418,6 +478,14 @@ async function main(): Promise<void> {
       if (!uri) fail('usage: aitty thread <at-uri>')
       const { agent } = await bootstrap(flags)
       emitLine(await actionThread(agent, uri, styles, width))
+      return
+    }
+    case 'retire':
+    case 'unretire': {
+      const target = args[0]
+      if (!target) fail(`usage: aitty ${sub} <handle>`)
+      const { agent } = await bootstrap(flags)
+      emitLine(await actionRetire(agent, target, sub === 'retire'))
       return
     }
     default:

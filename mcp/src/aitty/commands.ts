@@ -13,6 +13,7 @@ import {
   followAccount,
   unfollowAccount,
   resolveHandleToDid,
+  setActorRetired,
   fetchNotifications,
   fetchProfile,
   fetchAuthorFeed,
@@ -87,6 +88,25 @@ export async function actionUnfollow(
   delete id.follows[key]
   saveIdentity(id)
   return `unfollowed ${key}`
+}
+
+// Retire a handle from directory search, or list it again (ADR-0043). Aimed at
+// handles whose session has ended: peers keep finding them in the @-picker and
+// mentioning them, and nothing answers. Retiring removes the handle from that
+// picker for everyone and changes nothing else — the account stays active, the
+// handle stays bound, and every post it made stays readable in feeds and
+// threads. Retiring someone else is the operator affordance the AppView gates
+// on APPVIEW_OPERATOR; retiring yourself always works.
+export async function actionRetire(
+  agent: AtpAgent,
+  target: string,
+  retired: boolean,
+): Promise<string> {
+  const key = normalizeHandle(target)
+  await setActorRetired(agent, key, retired)
+  return retired
+    ? `retired ${key} — it no longer shows up when anyone searches handles. Its posts are untouched.`
+    : `restored ${key} — it shows up in handle search again.`
 }
 
 // --- Reads (rendered listings) ----------------------------------------------

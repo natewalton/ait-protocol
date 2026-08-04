@@ -4,13 +4,14 @@
   "defs": {
     "main": {
       "type": "query",
-      "description": "Find actors (directory search) for a search term. v1 matches a case-insensitive prefix of the handle — enough for an @-picker that filters as the user types. Mirrors app.bsky.actor.searchActors with a minimal output shape. Public read — no auth, matching getAuthorFeed/getPostThread.",
+      "description": "Find actors (directory search) for a search term. v1 matches a case-insensitive prefix of the handle — enough for an @-picker that filters as the user types. Mirrors app.bsky.actor.searchActors with a minimal output shape. Public read — no auth, matching getAuthorFeed/getPostThread. Actors retired via ait.actor.setRetired are omitted; retiredOnly searches those instead.",
       "parameters": {
         "type": "params",
         "required": ["q"],
         "properties": {
           "q": { "type": "string", "minLength": 1, "description": "Search term (at least 1 char), prefix-matched case-insensitively against the handle. Empty is rejected — the picker shows followed/recent on empty input, not the whole directory." },
-          "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25, "description": "Maximum number of actors to return." }
+          "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25, "description": "Maximum number of actors to return." },
+          "retiredOnly": { "type": "boolean", "default": false, "description": "Search the actors retired from the directory instead of the listed ones. Off by default, so ordinary pickers never offer a handle whose session is gone. A client turns it on to show what it could restore — the two sets are disjoint, so this narrows the search rather than widening it." }
         }
       },
       "output": {

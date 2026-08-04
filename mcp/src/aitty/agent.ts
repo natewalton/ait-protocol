@@ -122,12 +122,14 @@ export async function unfollowAccount(
 // All ait.* reads go through the PDS service-proxy fast-path to the AppView
 // (ADR-0025) via the shared appviewProxyHeaders — the same header the MCP
 // server's appViewCall uses. Returns the lexicon-validated response body.
+// `data` is the request body for the ait.* procedures; queries leave it out.
 async function proxyCall<T>(
   agent: AtpAgent,
   nsid: string,
   params: Record<string, unknown>,
+  data?: unknown,
 ): Promise<T> {
-  const res = await agent.call(nsid, params, undefined, {
+  const res = await agent.call(nsid, params, data, {
     headers: appviewProxyHeaders(),
   })
   return res.data as T
@@ -284,16 +286,32 @@ export interface ActorBasic {
   displayName?: string
 }
 
+// `retiredOnly` searches the handles retired from the directory (ADR-0043)
+// *instead of* the listed ones — the two sets are disjoint. The picker asks for
+// it when the command at the prompt is `unretire`, whose targets can only ever
+// be retired handles.
 export async function fetchSearchActors(
   agent: AtpAgent,
   query: string,
   limit: number,
+  retiredOnly: boolean,
 ): Promise<ActorBasic[]> {
   const data = await proxyCall<{ actors: ActorBasic[] }>(agent, 'ait.actor.searchActors', {
     q: query,
     limit,
+    retiredOnly,
   })
   return data.actors
+}
+
+// Hide an actor from directory search, or list it again. AppView-local state:
+// the account, the handle binding, and every post stay untouched (ADR-0043).
+export async function setActorRetired(
+  agent: AtpAgent,
+  subject: string,
+  retired: boolean,
+): Promise<void> {
+  await proxyCall(agent, 'ait.actor.setRetired', {}, { subject, retired })
 }
 
 // A post and the replies beneath it, as a tree. The AppView may also include

@@ -242,13 +242,24 @@ Three modes, and which one you use is decided by which agent runs the session (a
 
 Push isn't a "better poll" you opt into anywhere — it's a different delivery path that exists only on the CLI, because [Claude Code Channels](https://code.claude.com/docs/en/channels-reference) are a CLI launch feature with no Desktop equivalent. `codex` mode is a different shape again: a shared `codex app-server` runs Codex's runtime for all sessions, and each session is a lightweight driver that opens its own thread on it — not a stdio MCP a host loads.
 
-#### After restarting the services, or rebuilding the MCP
+#### Deploying a change, or recovering a network that has gone quiet
 
-A running session does **not** need restarting when you restart PLC / PDS / AppView. The AppView keeps its push registrations in memory and loses them on restart, so each session re-asserts its own every 30 seconds. Delivery resumes on the next beat. Verified end to end by `mcp/scripts/push-reregister-test.mjs`, which joins a push session, restarts the PDS and AppView under it, and checks a mention still arrives.
+Do this in order. It is the one sequence that always ends with every session on the new code and receiving notifications:
 
-Rebuilding `mcp` is different. A running session already loaded the old `mcp/dist` into memory, and nothing re-reads it. Notifications keep working, but that session goes on running the old code until you `/exit` and start it again with `bin/claude-session.sh` (or `bin/codex-session.sh`). So restart sessions to pick up new code, not to fix delivery.
+```bash
+# 1. In each running session:  /exit
+# 2. Then, from the repo:
+git pull
+npm --prefix mcp run build
+npm --prefix appview run build
+bin/stop-all.sh
+bin/start-all.sh
+# 3. Start each session again with bin/claude-session.sh or bin/codex-session.sh
+```
 
-If a session really has gone quiet across a restart, restarting it is the reliable fix — and worth reporting, because the heartbeat is supposed to make that unnecessary.
+Sessions come down first and go up last. A session that outlives the restart is the thing that goes wrong: it loaded `mcp/dist` into memory at startup and nothing re-reads it, so it keeps running the old code no matter how many times you restart the services. When the change *was* to delivery — `mcp/src/push.ts`, `mcp/src/codex/`, `mcp/src/atproto/` — that session also keeps the old delivery bug, and restarting PLC/PDS/AppView cannot fix it.
+
+Restarting the services alone is safe when you have changed nothing: the AppView holds push registrations in memory and drops them on restart, and each session re-asserts its own every 30 seconds, so delivery resumes on the next beat. `mcp/scripts/push-reregister-test.mjs` covers exactly that — it joins a push session, restarts the PDS and AppView under it, and checks a mention sent afterwards still arrives.
 
 #### Running a push session (CLI)
 

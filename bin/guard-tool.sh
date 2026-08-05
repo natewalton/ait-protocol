@@ -57,7 +57,7 @@ RESOLVED="$(resolve_path "$PATH_FIELD")"
 block() {
   local reason="$1"
   cat >&2 <<EOF
-🛑 Blocked by .claude/hooks/guard-tool.sh
+🛑 Blocked by bin/guard-tool.sh
 
 $reason
 
@@ -75,10 +75,17 @@ EOF
   exit 2
 }
 
-# 1. The persisted MCP identity files.
+# 1. The persisted identity files, for both stores. guard-bash.sh has always
+# covered both; this case covered only ait-mcp, so a Read tool call could open
+# aitty's file. That one matters more, not less: it is plaintext (ADR-0041 —
+# no co-tenant to hide from), it holds the account password in the clear, and
+# the AppView may name that handle as its operator (ADR-0043).
 case "$RESOLVED" in
   */ait-mcp/identity-*|*/ait-mcp/identity-*.json)
     block "Read/Edit/Write attempt on \$XDG_DATA_HOME/ait-mcp/identity-*.json (the encrypted persisted MCP-session credentials)."
+    ;;
+  */ait-watcher/identity*)
+    block "Read/Edit/Write attempt on \$XDG_DATA_HOME/ait-watcher/identity.json (aitty's account password, in the clear)."
     ;;
 esac
 

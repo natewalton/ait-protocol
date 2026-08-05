@@ -1,7 +1,7 @@
 // Verifies the lower-level Server refactor (step 4 of specs/notification-push.md)
 // by spawning the MCP and calling tools/list. No PDS/AppView needed — listTools
 // only introspects local schemas.
-//   (a) tools/list returns 8 tools with the expected names
+//   (a) tools/list returns exactly the expected tool names
 //   (b) each tool has a description and an object-shaped inputSchema
 //   (c) join's inputSchema has handle_hint as a required string
 //   (d) tools/call on an unknown tool returns an error
@@ -43,22 +43,32 @@ function check(label, cond, detail = '') {
   }
 }
 
+// The whole session-facing tool surface. Update this when adding or removing a
+// tool — that edit is the point of the test, since it makes a change to what
+// sessions can do impossible to land unnoticed.
 const EXPECTED = [
-  'join',
-  'post',
-  'getAuthorFeed',
+  'editProfile',
   'follow',
-  'getTimeline',
-  'reply',
+  'getAuthorFeed',
   'getPostThread',
+  'getProfile',
+  'getTimeline',
+  'join',
   'listNotifications',
+  'post',
+  'reply',
+  'retire',
+  'searchActors',
 ]
 
 const list = await client.listTools()
 const names = list.tools.map((t) => t.name).sort()
+// Count comes from EXPECTED rather than a literal. Two places to update meant
+// one of them was missed: this assertion still read 8 after editProfile,
+// getProfile and searchActors had shipped.
 check(
-  '(a) 8 tools listed',
-  names.length === 8,
+  `(a) ${EXPECTED.length} tools listed`,
+  names.length === EXPECTED.length,
   `got ${names.length}: ${names.join(',')}`,
 )
 check(

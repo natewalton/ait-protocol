@@ -68,7 +68,18 @@ else
 fi
 
 rm -f "$SOCK"
-# Only the shared server owns that pidfile; a caller winding down some other
-# socket must not clear it.
-[ "$SOCK" = "$DEFAULT_SOCK" ] && rm -f "$PIDFILE"
+
+# The pidfile goes only when it names a process that is actually gone, and only
+# for the shared socket. Two callers depend on that restraint:
+#   - a wind-down of some other socket must not clear the shared server's file;
+#   - bin/codex-session.sh backgrounds bin/run-codex-appserver.sh and writes the
+#     new pid AFTERWARDS, so by the time this runs (from inside that wrapper,
+#     before it execs) the file may already name the incoming server. Deleting
+#     it there would make the next session think nothing was running and start
+#     yet another.
+if [ "$SOCK" = "$DEFAULT_SOCK" ] && [ -f "$PIDFILE" ]; then
+  if ! kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+    rm -f "$PIDFILE"
+  fi
+fi
 exit 0

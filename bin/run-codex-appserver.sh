@@ -15,7 +15,12 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 sock="${AIT_CODEX_SHARED_SOCKET:-$HOME/.ait/codex-shared.sock}"
 mkdir -p "$(dirname "$sock")"
-rm -f "$sock"   # a stale socket from a prior run makes bind fail
+# Wind down any server still on this socket before taking it. Unlinking the
+# socket alone (what this used to do) leaves that server running with the socket
+# pulled out from under it: unreachable, but still holding MCP children that are
+# logged in to the network. The helper also removes the socket file, which is
+# what makes bind succeed.
+"$REPO/bin/stop-codex-appserver.sh" "$sock"
 
 AIT_SERVER="$REPO/mcp/dist/server.js"
 if [ ! -f "$AIT_SERVER" ]; then

@@ -69,6 +69,27 @@ function identityToSession(id: Identity): AtpSessionData {
 // join time. login() fires persistSession('create', ...) → the callback
 // above writes the new tokens. Belt-and-suspenders write-through after
 // the call in case the agent's session is set synchronously.
+// Re-authentication in progress, shared by every caller that needs one. Without
+// it, concurrent tool calls each ran their own recovery against the same agent:
+// the MCP registers its push target at startup while the model's first tool call
+// is already in flight, so two re-auths overlapped and one installed a session
+// the other had already torn down — surfacing as a 400 InvalidToken on a call
+// that should have recovered. CredentialSession guards its own refresh the same
+// way (`refreshSessionPromise`).
+let reauthInFlight: Promise<AtpAgent> | null = null
+
+function shareReauth(run: () => Promise<AtpAgent>): Promise<AtpAgent> {
+  if (reauthInFlight) return reauthInFlight
+  const attempt = run()
+  reauthInFlight = attempt
+  // Cleared whether it resolved or rejected, so a failed login doesn't wedge
+  // every later call onto the same rejection.
+  void attempt.catch(() => undefined).then(() => {
+    if (reauthInFlight === attempt) reauthInFlight = null
+  })
+  return attempt
+}
+
 async function loginWithStoredCredentials(id: Identity): Promise<AtpAgent> {
   const a = getAgent()
   await a.login({ identifier: id.handle, password: id.password })
@@ -91,12 +112,17 @@ async function loginWithStoredCredentials(id: Identity): Promise<AtpAgent> {
 async function ensureAuthedAgent(id: Identity): Promise<AtpAgent> {
   const a = getAgent()
   if (a.session && a.session.did === id.did) return a
-  try {
-    await a.resumeSession(identityToSession(id))
-    return a
-  } catch {
-    return loginWithStoredCredentials(id)
-  }
+  return shareReauth(async () => {
+    // Another caller may have finished authenticating while this one waited for
+    // its turn; re-check rather than tearing that session down and redoing it.
+    if (a.session && a.session.did === id.did) return a
+    try {
+      await a.resumeSession(identityToSession(id))
+      return a
+    } catch {
+      return loginWithStoredCredentials(id)
+    }
+  })
 }
 
 // Returns the authenticated AtpAgent for the current session.
@@ -120,19 +146,24 @@ export function getRawAgent(): AtpAgent {
   return getAgent()
 }
 
+// Body `error` codes the PDS returns, with status 400, for a token it will not
+// accept. `ExpiredToken` is a JWT past its expiry; `InvalidToken` is one it
+// cannot verify at all — malformed, or signed by a key it does not know
+// (pds/.../auth-verifier.js: InvalidRequestError 'Token could not be verified',
+// 'InvalidToken'). Both mean the same thing to us: log in again with the stored
+// password. @atproto/api treats them as one case too, in the refresh path that
+// clears the session — `['ExpiredToken', 'InvalidToken'].includes(err.error)`
+// (api/.../atp-agent.js). Listing only ExpiredToken here left the narrower
+// check: a session whose stored JWTs were corrupt got no retry at all, and the
+// model saw a bare "Token could not be verified" from its tool call.
+const REAUTH_ERROR_CODES = ['ExpiredToken', 'InvalidToken']
+
 function isAuthError(err: unknown): boolean {
-  // Two HTTP shapes mean "your access token is no good, log in again":
-  //   - status 401 (vanilla AuthRequired / generic auth fail)
-  //   - status 400 with body { error: "ExpiredToken" } — atproto's convention
-  //     for an expired JWT (pds/.../auth-verifier.js: InvalidRequestError
-  //     'Token has expired', 'ExpiredToken'). When AtpAgent's own auto-refresh
-  //     also fails (refresh JWT stale), it surfaces the original 400 to us;
-  //     AtpAgent itself recognizes the same pair (api/.../atp-agent.ts: see
-  //     `isExpiredToken = status === 401 || isErrorResponse([400], ['ExpiredToken'])`).
-  //     Without 400+ExpiredToken in this check, the retry path silently skips
-  //     expiry and the model sees a confusing 400 error from a tool call.
+  // Status 401 is the vanilla AuthRequired / generic auth failure; status 400
+  // carries the codes above.
   const e = err as { status?: number; error?: string }
-  return e?.status === 401 || (e?.status === 400 && e?.error === 'ExpiredToken')
+  if (e?.status === 401) return true
+  return e?.status === 400 && REAUTH_ERROR_CODES.includes(e?.error ?? '')
 }
 
 // Run fn with an authed AtpAgent. If fn throws an auth-failure (401, or
@@ -150,7 +181,9 @@ export async function withAuthedAgent<T>(
     return await fn(agent)
   } catch (err) {
     if (!isAuthError(err)) throw err
-    agent = await loginWithStoredCredentials(id)
+    // Shared, so concurrent tool calls hitting the same dead token log in once
+    // between them rather than racing each other's sessions.
+    agent = await shareReauth(() => loginWithStoredCredentials(id))
     return fn(agent)
   }
 }

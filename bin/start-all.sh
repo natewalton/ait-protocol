@@ -9,44 +9,9 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 LOGS=/tmp
 mkdir -p "$LOGS"
 
-CODEX_SOCK="${AIT_CODEX_SHARED_SOCKET:-$HOME/.ait/codex-shared.sock}"
+# shellcheck source=bin/lib-service-pids.sh
+. "$REPO/bin/lib-service-pids.sh"
 FAILED=""
-
-# The pid holding this service's resource right now, or empty. Asks the resource
-# itself — the listening port, or the app-server socket — rather than trusting a
-# pidfile. A pidfile can be missing while the service runs: it is written by
-# whoever started it, so a service started by launchd, by bin/codex-session.sh,
-# or by a shell whose /tmp was cleared has none.
-#
-# For the port services the pid is only accepted when its working directory is
-# inside this repo. Otherwise an unrelated program that happened to take 2583
-# would be adopted as "the PDS", and the real one would never start.
-ours() {
-  local pid=$1 cwd
-  [ -n "$pid" ] || return 1
-  cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)"
-  case "$cwd" in "$REPO"/*|"$REPO") return 0 ;; *) return 1 ;; esac
-}
-
-running_pid() {
-  local pid=""
-  case "$1" in
-    plc)     pid="$(lsof -nP -iTCP:2582 -sTCP:LISTEN -t 2>/dev/null | head -1)" ;;
-    pds)     pid="$(lsof -nP -iTCP:2583 -sTCP:LISTEN -t 2>/dev/null | head -1)" ;;
-    appview) pid="$(lsof -nP -iTCP:2585 -sTCP:LISTEN -t 2>/dev/null | head -1)" ;;
-    codex-appserver)
-      # The socket path in the command line is already unique to this host's
-      # shared server, so no cwd check is needed (and codex runs from the
-      # session's directory, not the repo).
-      { pgrep -f "codex app-server --listen unix://$CODEX_SOCK" || true; } | head -1
-      return ;;
-  esac
-  # Always succeeds, printing nothing when there is no instance. A non-zero
-  # return here would abort the script at the caller's `live="$(running_pid …)"`
-  # assignment under `set -e`, before it could report anything.
-  if ours "$pid"; then printf '%s' "$pid"; fi
-  return 0
-}
 
 # Starting a second copy of a service that is already up is never harmless. A
 # port service dies on EADDRINUSE, leaving a pidfile that names a process which

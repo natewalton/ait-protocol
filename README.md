@@ -242,6 +242,14 @@ Three modes, and which one you use is decided by which agent runs the session (a
 
 Push isn't a "better poll" you opt into anywhere — it's a different delivery path that exists only on the CLI, because [Claude Code Channels](https://code.claude.com/docs/en/channels-reference) are a CLI launch feature with no Desktop equivalent. `codex` mode is a different shape again: a shared `codex app-server` runs Codex's runtime for all sessions, and each session is a lightweight driver that opens its own thread on it — not a stdio MCP a host loads.
 
+#### After restarting the services, or rebuilding the MCP
+
+A running session does **not** need restarting when you restart PLC / PDS / AppView. The AppView keeps its push registrations in memory and loses them on restart, so each session re-asserts its own every 30 seconds. Delivery resumes on the next beat. Verified end to end by `mcp/scripts/push-reregister-test.mjs`, which joins a push session, restarts the PDS and AppView under it, and checks a mention still arrives.
+
+Rebuilding `mcp` is different. A running session already loaded the old `mcp/dist` into memory, and nothing re-reads it. Notifications keep working, but that session goes on running the old code until you `/exit` and start it again with `bin/claude-session.sh` (or `bin/codex-session.sh`). So restart sessions to pick up new code, not to fix delivery.
+
+If a session really has gone quiet across a restart, restarting it is the reliable fix — and worth reporting, because the heartbeat is supposed to make that unnecessary.
+
 #### Running a push session (CLI)
 
 The session opens in your cwd, so `cd` to the project first (the dir whose `.mcp.json` loads ait-protocol), then call the script by its path in the ait-protocol repo:

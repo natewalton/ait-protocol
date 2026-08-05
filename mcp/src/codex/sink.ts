@@ -1,23 +1,36 @@
-// The codex notification sink: turn a pushed AIT NotificationView into a
-// model-visible codex turn. This is the codex analog of push.ts's channelSink —
+// The codex notification sink: turn pushed AIT NotificationViews into
+// model-visible codex input. This is the codex analog of push.ts's channelSink —
 // it plugs into the same startPushListener(deliver) seam.
 //
-// Delivery semantics replicate the Claude channel exactly (non-preemptive, "on
-// the model's next turn"): while a turn is running — ours OR the operator's,
-// tracked from the app-server's turn lifecycle — new notifications enqueue and
-// drain one turn/start per turn boundary, never cutting into in-flight work.
+// Delivery has two paths, and which one runs decides how long a notification
+// waits:
+//
+//   idle thread   → turn/start carrying EVERY pending notification at once.
+//   running turn  → turn/steer appends them to the turn already in flight, so
+//                   the model reads them during that turn.
+//
+// Both exist because the earlier design — one turn/start per notification, and
+// nothing sent while a turn ran — made arrival time depend on the length of
+// whatever was already running. A 84-minute turn with a backlog behind it
+// delivered its last notification 89 minutes late, and each notification then
+// cost a whole model turn of its own, so the backlog drained one slow turn at a
+// time. Batching removes the per-notification turn; steering removes the wait.
 //
 // Cursor discipline (crash-replay): the opaque AppView cursor advances only
-// after the matching Codex turn completes successfully. A turn/start response
-// is only an in-memory acceptance ACK; committing there loses the notification
-// if app-server dies before execution.
+// after the codex turn carrying a notification completes successfully. A
+// turn/start or turn/steer response is only an in-memory acceptance ACK;
+// committing there loses the notification if app-server dies before execution.
 
 import type { AppServerClient } from './appServerClient.js'
 import type { NotificationSink, NotificationView } from '../push.js'
 import { updateLastSeenNotificationCursor } from '../storage.js'
 
-// Delay before re-pumping after a hard (non-backoff) turn/start failure.
+// Delay before re-pumping after a hard (non-backoff) failure.
 const INJECT_RETRY_DELAY_MS = 3000
+
+// Most notifications carried by a single turn. A backlog of hundreds would
+// otherwise build one enormous prompt; the remainder rides the next turn.
+const MAX_BATCH = 20
 
 // Render a NotificationView as the plain-text user turn the model reads. Codex
 // has no <channel> XML convention, so the metadata (reason, author, uri,
@@ -44,78 +57,131 @@ export function formatTurn(view: NotificationView): string {
   return `[AIT notification] ${author} ${verb}:\n${quoted}\n\n${meta}`
 }
 
+// One notification reads as itself; several are numbered under a count, so the
+// model can see it is catching up rather than reacting to a single event.
+export function formatBatch(views: NotificationView[]): string {
+  if (views.length === 1) return formatTurn(views[0])
+  const header = `[AIT] ${views.length} notifications arrived:`
+  const bodies = views.map((view, i) => `--- ${i + 1} of ${views.length} ---\n${formatTurn(view)}`)
+  return [header, ...bodies].join('\n\n')
+}
+
 // Build the deliver() sink for one thread. Registers a turn-completion listener
 // on the client to drain the queue at each turn boundary.
 export function createCodexSink(
   client: AppServerClient,
   threadId: string,
 ): NotificationSink {
+  // Notifications accepted but not yet handed to codex.
   const queue: NotificationView[] = []
   // Notification URIs accepted this process-lifetime, for replay dedup (below).
   const seen = new Set<string>()
-  // True from when we issue a turn/start until its turn/completed. Covers the
-  // window between turnStart resolving and the turn/started event, during which
-  // isTurnActive() still reads false — without it we'd inject a second turn.
-  let pendingInjection = false
-  let pendingTurnId: string | null = null
+
+  // True while a turn/start or turn/steer call is in flight. Only one at a time,
+  // so batches never race each other onto the wire.
+  let sending = false
+  // Notifications handed to codex and awaiting their turn's completion. More can
+  // join `views` while that same turn is still running — that is what lets a
+  // second, third, … notification skip the wait rather than only the first.
+  let inflight: { turnId: string; views: NotificationView[] } | null = null
+  // Completions seen while `sending` was true, before we learned the turn id.
   const earlyCompletions = new Map<string, string | undefined>()
 
   function finishTurn(turnId: string, status: string | undefined): void {
-    if (!pendingInjection || pendingTurnId !== turnId) return
-    pendingTurnId = null
+    if (!inflight || inflight.turnId !== turnId) return
+    const delivered = inflight.views
+    inflight = null
+
     if (status === 'completed') {
-      const view = queue.shift()
-      if (view) updateLastSeenNotificationCursor(view.cursor)
-      pendingInjection = false
+      // Commit the newest cursor carried by the turn: everything up to it has
+      // now been read, and the AppView delivers these in seq order per
+      // recipient, so the last one is always the newest.
+      const last = delivered[delivered.length - 1]
+      if (last) updateLastSeenNotificationCursor(last.cursor)
       void pump()
       return
     }
 
-    // Failed/interrupted is not delivery. Keep the head in place: allowing a
-    // later item to commit would skip this notification on crash replay.
-    pendingInjection = false
+    // Failed or interrupted is not delivery. Put them back at the FRONT, in
+    // order: committing anything later would skip these on crash replay.
+    queue.unshift(...delivered)
     setTimeout(() => void pump(), INJECT_RETRY_DELAY_MS)
   }
 
+  // Hand pending notifications to codex. Steers into the running turn when there
+  // is one — including a turn this sink already steered into, so a long turn
+  // keeps taking new notifications instead of only its first — and otherwise
+  // starts a turn.
   async function pump(): Promise<void> {
-    // All three guards are synchronous (no await before pendingInjection is
-    // set), so concurrent pump() calls can't both pass — injections serialize.
-    if (pendingInjection || queue.length === 0) return
-    // Only turns WE injected — turn notifications route to the initiator, so the
-    // launcher's client never sees an operator (attached TUI) turn. Those are
-    // serialized by the app-server's own turn queue (a turn/start during an
-    // operator turn enqueues, non-preemptive), so we needn't track them here.
-    if (client.isTurnActive(threadId)) return
+    // Synchronous, with no await before `sending` is set, so concurrent pump()
+    // calls cannot both pass.
+    if (sending || queue.length === 0) return
 
-    pendingInjection = true
-    pendingTurnId = null
-    const view = queue[0]
+    const runningTurnId = client.activeTurnId(threadId)
+    // A batch already awaiting completion can only take more when the turn it
+    // rides is still the running one. Otherwise wait: its turn/completed both
+    // commits the cursor and re-drives this.
+    if (inflight && inflight.turnId !== runningTurnId) return
+
+    const batch = queue.splice(0, MAX_BATCH)
+    sending = true
     try {
-      const turnId = await client.turnStart(threadId, formatTurn(view))
-      pendingTurnId = turnId
-      // App-server may emit turn/completed before its turn/start response is
-      // observed on this client. Reconcile that event after learning the id.
-      if (earlyCompletions.has(turnId)) {
-        const status = earlyCompletions.get(turnId)
-        earlyCompletions.delete(turnId)
-        finishTurn(turnId, status)
+      const text = formatBatch(batch)
+      let turnId: string
+      if (runningTurnId) {
+        try {
+          turnId = await client.turnSteer(threadId, runningTurnId, text)
+        } catch (err) {
+          // Two ways a steer fails, told apart by whether a turn is STILL
+          // running. Gone: it ended mid-call, so start a turn now. Still there:
+          // it is a kind that refuses steering (review, compact) — and those
+          // refuse turn/start for the same reason, so retrying that here would
+          // just fail twice. Wait for the turn to end instead. Neither is a drop.
+          if (client.activeTurnId(threadId)) {
+            console.error('codex turn refuses steering, waiting for it to end:', err)
+            queue.unshift(...batch)
+            setTimeout(() => void pump(), INJECT_RETRY_DELAY_MS)
+            return
+          }
+          console.error('codex turn/steer lost its turn, starting one instead:', err)
+          turnId = await client.turnStart(threadId, text)
+        }
+      } else {
+        turnId = await client.turnStart(threadId, text)
       }
+
+      if (inflight && inflight.turnId === turnId) inflight.views.push(...batch)
+      else inflight = { turnId, views: batch }
+
+      // App-server may emit turn/completed before its response is observed on
+      // this client. Reconcile that event now the id is known, and drop the
+      // rest: no completion recorded before this turn can still matter.
+      const early = earlyCompletions.get(turnId)
+      const hadEarly = earlyCompletions.has(turnId)
+      earlyCompletions.clear()
+      if (hadEarly) finishTurn(turnId, early)
     } catch (err) {
-      // Hard failure (not the retried -32001). Free the gate and schedule a
-      // retry: pump() is otherwise only re-driven by deliver() or turn/completed,
-      // neither of which a rejected turn/start produces, so the head-of-queue
-      // view would strand forever.
-      console.error('codex turn injection failed, retrying shortly:', err)
-      pendingInjection = false
-      pendingTurnId = null
+      // Hard failure (not the retried -32001). Return the batch and retry:
+      // pump() is otherwise only re-driven by deliver() or turn/completed,
+      // neither of which a rejected send produces, so the batch would strand.
+      // A send the server accepted but answered malformed replays here, which
+      // risks showing it twice — losing it would be worse.
+      console.error('codex notification injection failed, retrying shortly:', err)
+      queue.unshift(...batch)
       setTimeout(() => void pump(), INJECT_RETRY_DELAY_MS)
+    } finally {
+      sending = false
     }
+
+    // Anything that arrived during the call, or left over past MAX_BATCH, goes
+    // out now if its turn still accepts more.
+    void pump()
   }
 
   client.onTurnCompleted((event) => {
     if (event.threadId !== threadId || !event.turn?.id) return
     const { id, status } = event.turn
-    if (pendingInjection && pendingTurnId === null) {
+    if (sending) {
       earlyCompletions.set(id, status)
       return
     }

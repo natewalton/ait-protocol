@@ -1,9 +1,10 @@
 // JSON-RPC client for a codex `app-server`, spoken over a websocket-framed unix
 // socket (`ws+unix://PATH:/`). This is the launcher's control channel: it opens
 // the connection, runs the initialize handshake, starts/resumes the thread, and
-// injects notification turns via turn/start. It also tracks active-turn status
-// from the app-server's own turn lifecycle events so the sink can enqueue while
-// a turn (ours or the operator's) is running.
+// delivers notifications — turn/start when the thread is idle, turn/steer to
+// join a turn already running. It tracks the running turn's id from the
+// app-server's own lifecycle events, which is what turn/steer needs as its
+// precondition.
 //
 // Two things the live handshake against codex-cli 0.144.3 taught us, both load-
 // bearing (see specs/notification-codex.md, Transport):
@@ -23,6 +24,8 @@ import {
   type TurnEvent,
   type TurnStartParams,
   type TurnStartResponse,
+  type TurnSteerParams,
+  type TurnSteerResponse,
 } from './appServerTypes.js'
 
 const CLIENT_INFO = {
@@ -44,9 +47,11 @@ export class AppServerClient {
   private ws: WebSocket | null = null
   private nextId = 1
   private readonly pending = new Map<number, Pending>()
-  // Threads with a turn currently running (from turn/started .. turn/completed).
-  // A thread runs one turn at a time, so membership = "busy".
-  private readonly activeThreads = new Set<string>()
+  // threadId → the id of the turn currently running on it (from turn/started ..
+  // turn/completed). A thread runs one turn at a time, so presence = "busy".
+  // The id is kept, not just the fact of being busy, because turn/steer needs it
+  // as its expectedTurnId precondition.
+  private readonly activeTurns = new Map<string, string>()
   private readonly turnCompletedListeners: Array<(event: TurnEvent) => void> = []
   private readonly closeListeners: Array<(err?: Error) => void> = []
   private closed = false
@@ -138,8 +143,41 @@ export class AppServerClient {
     await this.request('thread/name/set', params)
   }
 
-  isTurnActive(threadId: string): boolean {
-    return this.activeThreads.has(threadId)
+  // Append input to the turn already running on this thread, so the model reads
+  // it during that turn instead of after it. Same overload backoff as turnStart.
+  // Throws when `expectedTurnId` is no longer the active turn, or when the turn
+  // is one that refuses steering (review, compact) — callers fall back to
+  // starting a fresh turn rather than treating either as a drop.
+  async turnSteer(
+    threadId: string,
+    expectedTurnId: string,
+    text: string,
+  ): Promise<string> {
+    const params: TurnSteerParams = {
+      threadId,
+      expectedTurnId,
+      input: [{ type: 'text', text, text_elements: [] }],
+    }
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const response = (await this.request(
+          'turn/steer',
+          params,
+        )) as TurnSteerResponse
+        if (!response.turnId) throw new Error('turn/steer response missing turnId')
+        return response.turnId
+      } catch (err) {
+        if (!isOverloaded(err) || attempt >= OVERLOAD_MAX_RETRIES) throw err
+        await delay(backoffMs(attempt))
+      }
+    }
+  }
+
+  // The running turn's id, or null when the thread is idle. Only turns THIS
+  // client started are tracked: turn notifications route to the initiator, so an
+  // attached TUI's own turns are invisible here and cannot be steered.
+  activeTurnId(threadId: string): string | null {
+    return this.activeTurns.get(threadId) ?? null
   }
 
   onTurnCompleted(listener: (event: TurnEvent) => void): void {
@@ -223,12 +261,13 @@ export class AppServerClient {
 
   private onNotification(method: string, params: unknown): void {
     if (method === 'turn/started') {
-      const threadId = (params as TurnEvent)?.threadId
-      if (threadId) this.activeThreads.add(threadId)
+      const event = params as TurnEvent
+      const turnId = event?.turn?.id
+      if (event?.threadId && turnId) this.activeTurns.set(event.threadId, turnId)
     } else if (method === 'turn/completed') {
       const threadId = (params as TurnEvent)?.threadId
       if (threadId) {
-        this.activeThreads.delete(threadId)
+        this.activeTurns.delete(threadId)
         const event = params as TurnEvent
         for (const listener of this.turnCompletedListeners) listener(event)
       }

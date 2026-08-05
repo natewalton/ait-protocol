@@ -5,8 +5,9 @@
 //   codex app-server generate-ts --experimental --out <dir>
 //
 // Regenerate and re-reconcile these shapes on a codex-cli bump (the surface is
-// version-specific by design; verified against codex-cli 0.144.3). Vendoring all
-// ~576 generated files would bury the handful we use, so we mirror just those.
+// version-specific by design; the thread and turn shapes were verified against
+// 0.144.3, the turn/steer shapes against 0.146.0). Vendoring all ~576 generated
+// files would bury the handful we use, so we mirror just those.
 
 // --- initialize ---------------------------------------------------------------
 
@@ -87,6 +88,21 @@ export interface TurnStartParams {
 
 export interface TurnStartResponse {
   turn: { id: string }
+}
+
+// turn/steer appends user input to a turn that is ALREADY RUNNING, instead of
+// waiting for it to finish. `expectedTurnId` is a precondition: the app-server
+// rejects the call when it is not the currently active turn, so a stale id can
+// never append to the wrong turn. Review and compact turns refuse steering
+// outright (the protocol's NonSteerableTurnKind), so callers need a fallback.
+export interface TurnSteerParams {
+  threadId: string
+  expectedTurnId: string
+  input: UserInputText[]
+}
+
+export interface TurnSteerResponse {
+  turnId: string
 }
 
 // turn/started and turn/completed both carry { threadId, turn }. We only read

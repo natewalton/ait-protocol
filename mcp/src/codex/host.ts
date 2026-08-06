@@ -52,6 +52,14 @@ const PUSH_REREGISTER_INTERVAL_MS = 30_000
 // spinning hot.
 const RECONNECT_BACKOFF_MS = 2000
 
+// "This thread does not exist" from thread/resume. The app-server answers a
+// missing rollout with InvalidRequest (-32600) and a message naming the id;
+// the code alone is too broad, so both are required.
+function isUnknownThread(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err)
+  return message.includes('-32600') && /no rollout found/i.test(message)
+}
+
 // The display name given to a new session's thread on start. Setting it is also
 // how we persist the thread's on-disk rollout so `codex resume` can attach — see
 // AppServerClient.setName.
@@ -127,10 +135,31 @@ export async function runCodexSession(): Promise<void> {
       const closed = new Promise<Error | undefined>((resolve) => client.onClose(resolve))
       await client.connect() // rejects if the shared server isn't accepting yet
 
-      // First lifecycle honours --session; every reconnect resumes our thread.
-      const started = threadId
-        ? await client.threadResume({ threadId, ...threadParams })
-        : await client.threadStart(threadParams)
+      // First lifecycle honours --resume; every reconnect resumes our thread.
+      // A resume target that does not exist is permanent — the reconnect loop
+      // below would otherwise retry it forever, reporting "not connected to
+      // shared app-server" every two seconds while the real fault is the id the
+      // operator typed. Fail fast on the first attempt instead, and only there:
+      // once we have run a lifecycle, the same error means the rollout vanished
+      // under a live session, which reconnecting can still recover from.
+      const firstAttempt = !openingTurnDone && threadId === resumeThreadId
+      let started
+      if (threadId) {
+        try {
+          started = await client.threadResume({ threadId, ...threadParams })
+        } catch (err) {
+          if (firstAttempt && isUnknownThread(err)) {
+            console.error(
+              `ait codex session: no codex thread ${threadId}. Check the id, or ` +
+                `launch without --resume to start a new session.`,
+            )
+            process.exit(1)
+          }
+          throw err
+        }
+      } else {
+        started = await client.threadStart(threadParams)
+      }
       threadId = started.thread.id
       writeThreadSessionId(threadId, sessionId) // idempotent; enables --session rebind
       // New session: create the on-disk rollout the TUI attaches to (a bare

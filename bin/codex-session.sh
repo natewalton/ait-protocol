@@ -31,6 +31,23 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 mcp_dir="$repo_root/mcp"
 
+# `--resume` with nothing after it used to start a NEW session and mint a NEW
+# handle, silently orphaning the one you meant to resume. Refuse it, the way
+# bin/claude-session.sh refuses a bare `claude --resume`.
+# The flag can only be missing its value by being the last argument.
+case "${!#:-}" in
+  --resume|--session)
+    cat >&2 <<'EOF'
+error: --resume needs a codex thread id.
+A bare --resume would start a NEW session and mint a NEW AIT handle, orphaning
+the one you meant to resume — refusing.
+The id is printed when a session starts ("→ thread <id>"), and by:
+  ls ~/.local/share/ait-mcp/codex-thread-*.json
+Launch with no flag at all to start a new session on purpose.
+EOF
+    exit 2 ;;
+esac
+
 if [ ! -f "$mcp_dir/dist/server.js" ]; then
   echo "codex-session: building mcp…" >&2
   (cd "$mcp_dir" && npm run build >&2)

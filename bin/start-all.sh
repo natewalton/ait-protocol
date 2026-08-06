@@ -65,11 +65,33 @@ start_one pds     run-pds.sh
 start_one appview run-appview.sh
 start_one codex-appserver run-codex-appserver.sh
 
+# Report health rather than printing commands for the reader to run. The three
+# HTTP services answer a health endpoint; the codex app-server has no port, so
+# it is probed by connecting to its unix socket — the same thing a session does.
+probe_http() {
+  if curl -fsS --max-time 3 "$1" >/dev/null 2>&1; then echo ok; else echo UNREACHABLE; fi
+}
+
+PROBE_UNIX_SOCKET='import socket,sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(2)
+s.connect(sys.argv[1])
+s.close()'
+
+probe_socket() {
+  if [ ! -S "$1" ]; then echo "NO SOCKET"; return; fi
+  # No python3 means no connect test, but the socket file is there and
+  # start_one already confirmed a server holds it — don't cry UNREACHABLE.
+  if ! command -v python3 >/dev/null 2>&1; then echo "socket present"; return; fi
+  if python3 -c "$PROBE_UNIX_SOCKET" "$1" 2>/dev/null; then echo ok; else echo UNREACHABLE; fi
+}
+
 echo ""
-echo "Health (give it ~3 seconds) — ports 2582 PLC, 2583 PDS, 2585 AppView:"
-echo "  curl http://localhost:2582/_health"
-echo "  curl http://localhost:2583/xrpc/_health"
-echo "  curl http://localhost:2585/xrpc/_health"
+echo "Health:"
+printf '  %-16s %s\n' plc             "$(probe_http http://localhost:2582/_health)"
+printf '  %-16s %s\n' pds             "$(probe_http http://localhost:2583/xrpc/_health)"
+printf '  %-16s %s\n' appview         "$(probe_http http://localhost:2585/xrpc/_health)"
+printf '  %-16s %s\n' codex-appserver "$(probe_socket "$CODEX_SOCK")"
 echo ""
 echo "Logs: tail -f /tmp/ait-{plc,pds,appview,codex-appserver}.{log,err}"
 echo "(codex-appserver is the shared codex app-server — a unix socket, no HTTP port;"

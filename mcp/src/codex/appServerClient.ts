@@ -43,7 +43,7 @@ const OVERLOAD_BASE_DELAY_MS = 200
 // while allowing recovery of unusually large histories without a code change.
 const DEFAULT_MAX_PAYLOAD_BYTES = 1024 * 1024 * 1024
 
-function maxPayloadBytes(): number {
+export function codexMaxPayloadBytes(): number {
   const raw = process.env.AIT_CODEX_MAX_PAYLOAD_BYTES
   if (raw === undefined || raw === '') return DEFAULT_MAX_PAYLOAD_BYTES
 
@@ -86,7 +86,7 @@ export class AppServerClient {
     const path = this.socketPath.replace(/\/{2,}/g, '/')
     const ws = new WebSocket(`ws+unix://${path}:/`, {
       perMessageDeflate: false,
-      maxPayload: maxPayloadBytes(),
+      maxPayload: codexMaxPayloadBytes(),
     })
     this.ws = ws
 

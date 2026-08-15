@@ -48,7 +48,7 @@ EOF
     exit 2 ;;
 esac
 
-if [ ! -f "$mcp_dir/dist/server.js" ]; then
+if [ ! -f "$mcp_dir/dist/server.js" ] || [ ! -f "$mcp_dir/dist/codex/tuiRelay.js" ]; then
   echo "codex-session: building mcp…" >&2
   (cd "$mcp_dir" && npm run build >&2)
 fi
@@ -66,6 +66,16 @@ fi
 
 sock_file="$(mktemp -t ait-codex-sock)"
 log_file="$(mktemp -t ait-codex-log)"
+relay_pid=""
+relay_dir=""
+relay_sock=""
+
+resume_requested=0
+for arg in "$@"; do
+  case "$arg" in
+    --resume|--session) resume_requested=1; break ;;
+  esac
+done
 
 # Start THIS session's driver in the background. It connects to the shared
 # app-server, opens our thread, and writes the socket + threadId to
@@ -76,8 +86,11 @@ env AIT_NOTIFICATION_MODE=codex AIT_CODEX_SOCKET_FILE="$sock_file" \
 driver_pid=$!
 
 cleanup() {
+  [ -z "$relay_pid" ] || kill "$relay_pid" 2>/dev/null || true
   kill "$driver_pid" 2>/dev/null || true   # stop only OUR session; shared server keeps running
   rm -f "$sock_file"
+  [ -z "$relay_sock" ] || rm -f "$relay_sock"
+  [ -z "$relay_dir" ] || rmdir "$relay_dir" 2>/dev/null || true
   echo "codex-session: session stopped (log kept at $log_file; shared server still running)" >&2
 }
 trap cleanup EXIT INT TERM
@@ -108,4 +121,44 @@ done
 # the terminal to the TUI resumed into that exact thread on the shared server.
 cat "$log_file" >&2
 echo "codex-session: attaching TUI — exit it (or Ctrl-C) to stop this session." >&2
-codex resume "$tid" --remote "unix://$sock"
+attach_status=0
+codex resume "$tid" --remote "unix://$sock" || attach_status=$?
+
+# Codex 0.147.0's remote TUI asks for the entire transcript in one `thread/read`
+# websocket message during resume. Very long sessions can exceed the TUI's own
+# receive ceiling even though our driver and the app-server resumed successfully.
+# Preserve the ordinary path for every successful attach. On a failed RESUME,
+# retry through a tightly-scoped relay that changes only this thread's full-history
+# reads to metadata-only reads. The already-resumed app-server/model context stays
+# complete; only the old transcript is absent from the TUI display.
+if [ "$attach_status" -ne 0 ] && [ "$resume_requested" -eq 1 ]; then
+  echo "codex-session: direct TUI attach failed; retrying large-history recovery." >&2
+  echo "codex-session: full model context is preserved; old turns may be omitted from the TUI display." >&2
+  # Put the relay beside the already-working shared socket. Its parent is known
+  # to be a real, writable directory (unlike macOS /tmp, which is a symlink and
+  # is rejected by Codex's unix-socket listener).
+  relay_dir="$(mktemp -d "$(dirname "$sock")/ait-codex-tui-relay.XXXXXX")"
+  relay_sock="$relay_dir/relay.sock"
+  node --enable-source-maps "$mcp_dir/dist/codex/tuiRelay.js" \
+    "$sock" "$relay_sock" "$tid" >>"$log_file" 2>&1 &
+  relay_pid=$!
+
+  relay_ticks=0
+  while [ ! -S "$relay_sock" ]; do
+    if ! kill -0 "$relay_pid" 2>/dev/null; then
+      echo "codex-session: large-history recovery relay failed to start —" >&2
+      tail -20 "$log_file" >&2
+      exit "$attach_status"
+    fi
+    if [ "$relay_ticks" -ge 100 ]; then
+      echo "codex-session: timed out starting large-history recovery relay" >&2
+      exit "$attach_status"
+    fi
+    sleep 0.1
+    relay_ticks=$((relay_ticks + 1))
+  done
+
+  codex resume "$tid" --remote "unix://$relay_sock"
+elif [ "$attach_status" -ne 0 ]; then
+  exit "$attach_status"
+fi

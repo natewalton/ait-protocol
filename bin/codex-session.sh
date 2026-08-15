@@ -82,9 +82,14 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Wait (up to ~30s) for the driver to report its socket + threadId, or bail.
-sock=""; tid=""
-for _ in $(seq 1 60); do
+# Wait for the driver to report its socket + threadId. The driver deliberately
+# retries the shared app-server forever, and resuming a large persisted thread
+# can take longer than 30 seconds, so the wrapper must not impose a shorter
+# deadline and kill an otherwise healthy recovery. A dead driver still fails
+# immediately; while it is alive, report progress so a long resume does not look
+# hung and Ctrl-C remains available to stop it.
+sock=""; tid=""; wait_ticks=0
+while [ -z "$sock" ] || [ -z "$tid" ]; do
   if [ -s "$sock_file" ]; then
     sock="$(sed -n 1p "$sock_file")"; tid="$(sed -n 2p "$sock_file")"
     [ -n "$sock" ] && [ -n "$tid" ] && break
@@ -93,14 +98,11 @@ for _ in $(seq 1 60); do
     echo "codex-session: session driver exited during startup —" >&2; cat "$log_file" >&2; exit 1
   fi
   sleep 0.5
+  wait_ticks=$((wait_ticks + 1))
+  if [ $((wait_ticks % 60)) -eq 0 ]; then
+    echo "codex-session: still waiting for thread to become ready ($((wait_ticks / 2))s); driver log: $log_file" >&2
+  fi
 done
-if [ -z "$sock" ] || [ -z "$tid" ]; then
-  echo "codex-session: shared app-server not reachable in time. Driver log:" >&2
-  cat "$log_file" >&2
-  echo "--- shared app-server log (/tmp/ait-codex-appserver.err) ---" >&2
-  tail -20 /tmp/ait-codex-appserver.err 2>/dev/null || true
-  exit 1
-fi
 
 # Show the driver's startup output (session id, thread, join/register), then hand
 # the terminal to the TUI resumed into that exact thread on the shared server.

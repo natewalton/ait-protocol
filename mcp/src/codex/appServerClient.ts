@@ -37,6 +37,26 @@ const CLIENT_INFO = {
 // turn/start backoff on SERVER_OVERLOADED (-32001). Never a drop — always retry.
 const OVERLOAD_MAX_RETRIES = 6
 const OVERLOAD_BASE_DELAY_MS = 200
+// `ws` defaults to 100 MiB for incoming messages. A large `thread/resume`
+// response can legitimately exceed that when recovering a long-lived Codex
+// session. Keep a high bounded default for the local unix-socket transport,
+// while allowing recovery of unusually large histories without a code change.
+const DEFAULT_MAX_PAYLOAD_BYTES = 1024 * 1024 * 1024
+
+function maxPayloadBytes(): number {
+  const raw = process.env.AIT_CODEX_MAX_PAYLOAD_BYTES
+  if (raw === undefined || raw === '') return DEFAULT_MAX_PAYLOAD_BYTES
+
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(
+      `AIT_CODEX_MAX_PAYLOAD_BYTES must be a non-negative integer (got ${raw})`,
+    )
+  }
+  // ws treats zero as unlimited. This is useful as a last-resort recovery
+  // switch for a trusted local unix socket, but is deliberately opt-in.
+  return value
+}
 
 interface Pending {
   resolve: (result: unknown) => void
@@ -64,7 +84,10 @@ export class AppServerClient {
     // Collapse repeated slashes (e.g. a $TMPDIR ending in '/') so the ws+unix
     // parser splits the socket path from the request path on the ':' correctly.
     const path = this.socketPath.replace(/\/{2,}/g, '/')
-    const ws = new WebSocket(`ws+unix://${path}:/`, { perMessageDeflate: false })
+    const ws = new WebSocket(`ws+unix://${path}:/`, {
+      perMessageDeflate: false,
+      maxPayload: maxPayloadBytes(),
+    })
     this.ws = ws
 
     await new Promise<void>((resolve, reject) => {

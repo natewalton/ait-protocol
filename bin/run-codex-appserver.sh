@@ -11,6 +11,11 @@
 # server and every session process agree on it regardless of launcher (see
 # mcp/src/codex/paths.ts); AIT_CODEX_SHARED_SOCKET overrides it.
 set -euo pipefail
+
+# launchd defaults to a 256-descriptor soft limit. The shared app-server owns
+# every session's MCP children, so raise its inherited capacity before exec.
+ulimit -Sn 8192
+
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 sock="${AIT_CODEX_SHARED_SOCKET:-$HOME/.ait/codex-shared.sock}"

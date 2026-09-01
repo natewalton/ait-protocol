@@ -1,0 +1,4 @@
+interface:
+  display_name: "Delivery Coordination"
+  short_description: "Ship verified, user-visible outcomes safely"
+  default_prompt: "Use $delivery-coordination to carry this work through exact review, live verification, and truthful completion."

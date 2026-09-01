@@ -62,13 +62,22 @@ export interface ThreadResumeParams {
   sandbox?: SandboxMode | null
 }
 
-// thread/name/set — sets a thread's display name. The launcher calls it purely
-// for its side effect: it forces the app-server to persist the thread's on-disk
-// rollout (a bare thread/start writes none) so `codex resume` can attach. The
-// param is `name` (verified live) — not `title`, the term the picker UI uses.
+// thread/name/set — sets a thread's display name (what the TUI picker shows).
+// The param is `name` (verified live) — not `title`, the term the picker UI uses.
 export interface ThreadNameSetParams {
   threadId: string
   name: string
+}
+
+// thread/inject_items — appends raw Responses-API items to the thread's
+// model-visible history without starting a turn. The launcher calls it for its
+// side effect: it is the lightest write that makes the app-server persist the
+// thread's on-disk rollout, which `codex resume` needs (see host.ts). `items`
+// must be non-empty (the server rejects [] with -32600).
+export type InjectItem = Record<string, unknown>
+export interface ThreadInjectItemsParams {
+  threadId: string
+  items: InjectItem[]
 }
 
 // --- turns --------------------------------------------------------------------

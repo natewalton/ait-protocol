@@ -37,6 +37,7 @@
 import * as fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { AppServerClient } from './appServerClient.js'
+import type { InjectItem } from './appServerTypes.js'
 import { sharedAppServerSocketPath } from './paths.js'
 import { createCodexSink } from './sink.js'
 import { startPushListener, tryRegister, type NotificationSink } from '../push.js'
@@ -60,10 +61,18 @@ function isUnknownThread(err: unknown): boolean {
   return message.includes('-32600') && /no rollout found/i.test(message)
 }
 
-// The display name given to a new session's thread on start. Setting it is also
-// how we persist the thread's on-disk rollout so `codex resume` can attach — see
-// AppServerClient.setName.
+// The display name given to a new session's thread on start (the TUI picker
+// title). The on-disk rollout is persisted separately by ROLLOUT_SEED_ITEMS.
 const CODEX_THREAD_NAME = 'AIT codex session'
+// The one item injected into a new thread to persist its rollout. Model-visible
+// for the thread's whole life, so it states one fact and asks for nothing.
+const ROLLOUT_SEED_ITEMS: InjectItem[] = [
+  {
+    type: 'message',
+    role: 'developer',
+    content: [{ type: 'input_text', text: 'Thread opened by the AIT launcher (bin/codex-session.sh).' }],
+  },
+]
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms))
@@ -164,16 +173,28 @@ export async function runCodexSession(): Promise<void> {
       writeThreadSessionId(threadId, sessionId) // idempotent; enables --session rebind
       // New session: create the on-disk rollout the TUI attaches to (a bare
       // thread/start writes none) — BEFORE announcing, so the wrapper's `codex
-      // resume <threadId>` finds a rollout. Naming the thread is the lightest write
-      // that persists one; unlike thread/inject_items it leaves no `auto-compact-0`
-      // turn_context (which a resumed TUI renders as a phantom "Working" spinner
-      // that never clears) and runs no model turn. No orientation is injected: the
-      // operator controls how the session engages — joining by typing in the TUI —
-      // rather than the model being auto-oriented on attach. (The per-thread ait
-      // tool-MCP runs poll mode, which ships no `instructions`, so there's no
-      // MCP-level orientation either; that's deliberate, not an oversight.)
+      // resume <threadId>` finds a rollout. thread/name/set used to be enough;
+      // codex-cli 0.152 (paginated history) records the name in its state DB
+      // without writing the rollout, and the TUI then fails to resume with
+      // "missing source rollout". thread/inject_items with one developer note is
+      // the lightest write that still persists it, and runs no model turn. (On
+      // 0.144.4 inject left a dangling `auto-compact-0` turn_context that the TUI
+      // showed as a phantom "Working" spinner; verified gone on 0.152.) No
+      // orientation is injected: the operator controls how the session engages —
+      // joining by typing in the TUI — rather than the model being auto-oriented
+      // on attach. (The per-thread ait tool-MCP runs poll mode, which ships no
+      // `instructions`, so there's no MCP-level orientation either.)
       if (!openingTurnDone && !resumeThreadId) {
-        await client.setName(threadId, CODEX_THREAD_NAME)
+        try {
+          await client.setName(threadId, CODEX_THREAD_NAME)
+          await client.injectItems(threadId, ROLLOUT_SEED_ITEMS)
+        } catch (err) {
+          // The seed did not land, so this thread has no rollout. Forget it: the
+          // retry below would otherwise thread/resume a rollout-less id forever
+          // ("no rollout found") instead of starting a fresh thread.
+          threadId = null
+          throw err
+        }
       }
       if (socketFile && !socketAnnounced) {
         fs.writeFileSync(socketFile, `${socketPath}\n${threadId}\n`)

@@ -6,8 +6,9 @@
 //
 // Regenerate and re-reconcile these shapes on a codex-cli bump (the surface is
 // version-specific by design; the thread and turn shapes were verified against
-// 0.144.3, the turn/steer shapes against 0.146.0). Vendoring all ~576 generated
-// files would bury the handful we use, so we mirror just those.
+// 0.144.3, the turn/steer shapes against 0.146.0, and history/MCP readiness
+// against 0.152.0). Vendoring all ~576 generated files would bury the handful
+// we use, so we mirror just those.
 
 // --- initialize ---------------------------------------------------------------
 
@@ -36,18 +37,25 @@ export interface InitializeParams {
 // The launcher only uses the string variants.
 export type AskForApproval = 'untrusted' | 'on-request' | 'never'
 export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
+export type ThreadHistoryMode = 'legacy' | 'paginated'
 
 export interface ThreadStartParams {
   cwd?: string | null
   approvalPolicy?: AskForApproval | null
   sandbox?: SandboxMode | null
   model?: string | null
+  historyMode?: ThreadHistoryMode | null
   // All fields optional; app-server generates the threadId (no client-supplied id).
 }
 
-// thread/start returns the full thread object; we only need its id.
+// thread/start/resume return the full thread object. The rollout regression also
+// inspects the history mode and path returned by the installed app-server.
 export interface ThreadStartResponse {
-  thread: { id: string }
+  thread: {
+    id: string
+    historyMode?: ThreadHistoryMode
+    path?: string | null
+  }
   model?: string
   modelProvider?: string
 }
@@ -69,15 +77,42 @@ export interface ThreadNameSetParams {
   name: string
 }
 
-// thread/inject_items — appends raw Responses-API items to the thread's
-// model-visible history without starting a turn. The launcher calls it for its
-// side effect: it is the lightest write that makes the app-server persist the
-// thread's on-disk rollout, which `codex resume` needs (see host.ts). `items`
-// must be non-empty (the server rejects [] with -32600).
-export type InjectItem = Record<string, unknown>
-export interface ThreadInjectItemsParams {
+// --- MCP runtime readiness ----------------------------------------------------
+
+// mcpServerStatus/list plus mcpServer/startupStatus/updated. The launcher uses
+// the snapshot to identify only runtimes which are genuinely still starting,
+// then waits for their terminal app-server events before exposing the thread to
+// a remote TUI. No elapsed-time heuristic participates in this state decision.
+export type McpServerConnectionStatus =
+  | 'notStarted'
+  | 'starting'
+  | 'connected'
+  | 'authenticationRequired'
+  | 'failed'
+  | 'cancelled'
+  | 'disabled'
+
+export type McpServerStartupState = 'starting' | 'ready' | 'failed' | 'cancelled'
+
+export interface ListMcpServerStatusParams {
   threadId: string
-  items: InjectItem[]
+  cursor?: string | null
+  limit?: number | null
+  detail?: 'full' | 'toolsAndAuthOnly' | null
+}
+
+export interface ListMcpServerStatusResponse {
+  data: Array<{
+    name: string
+    runtimeStatus?: McpServerConnectionStatus | null
+  }>
+  nextCursor?: string | null
+}
+
+export interface McpServerStatusUpdatedEvent {
+  threadId?: string | null
+  name: string
+  status: McpServerStartupState
 }
 
 // --- turns --------------------------------------------------------------------

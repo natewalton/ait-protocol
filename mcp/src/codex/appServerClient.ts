@@ -21,13 +21,14 @@ import {
   type ThreadStartResponse,
   type ThreadResumeParams,
   type ThreadNameSetParams,
+  type ListMcpServerStatusParams,
+  type ListMcpServerStatusResponse,
+  type McpServerStatusUpdatedEvent,
   type TurnEvent,
   type TurnStartParams,
   type TurnStartResponse,
   type TurnSteerParams,
   type TurnSteerResponse,
-  type InjectItem,
-  type ThreadInjectItemsParams,
 } from './appServerTypes.js'
 
 const CLIENT_INFO = {
@@ -75,7 +76,8 @@ export class AppServerClient {
   // as its expectedTurnId precondition.
   private readonly activeTurns = new Map<string, string>()
   private readonly turnCompletedListeners: Array<(event: TurnEvent) => void> = []
-  private readonly closeListeners: Array<(err?: Error) => void> = []
+  private readonly mcpStatusListeners = new Set<(event: McpServerStatusUpdatedEvent) => void>()
+  private readonly closeListeners = new Set<(err?: Error) => void>()
   private closed = false
 
   constructor(private readonly socketPath: string) {}
@@ -155,21 +157,90 @@ export class AppServerClient {
     }
   }
 
-  // Name a thread — the title the TUI's thread picker shows. Up to codex-cli
-  // 0.149 this write also persisted the thread's on-disk rollout; from 0.152
-  // (paginated history) it only records the thread in the state DB, so the
-  // rollout seed below is a separate call.
+  // Name a thread — the title the TUI's thread picker shows. On an explicitly
+  // legacy thread this is also the smallest write that persists the one-record
+  // rollout `codex resume` needs, with no turn context and no model turn.
   async setName(threadId: string, name: string): Promise<void> {
     const params: ThreadNameSetParams = { threadId, name }
     await this.request('thread/name/set', params)
   }
 
-  // Append raw Responses-API items to the thread's model-visible history WITHOUT
-  // starting a turn. Used once per new thread to make the app-server write the
-  // on-disk rollout `codex resume <threadId>` needs (see host.ts for why).
-  async injectItems(threadId: string, items: InjectItem[]): Promise<void> {
-    const params: ThreadInjectItemsParams = { threadId, items }
-    await this.request('thread/inject_items', params)
+  // Do not expose a just-started or cold-resumed thread to the remote TUI while
+  // its MCP runtime is still emitting startup notifications. A TUI which joins
+  // in the middle can observe only part of that round and retain a phantom
+  // running indicator even though the thread itself is idle.
+  //
+  // Readiness is protocol-driven, never elapsed-time-driven: take the server's
+  // status snapshot, then wait without a deadline for terminal status events
+  // for exactly the runtimes reported as notStarted/starting. The connection
+  // closing rejects the wait and lets the host's reconnect supervisor retry.
+  // Returns the initially pending names so production validation can distinguish
+  // an exercised gate from an already-settled no-op.
+  async waitForMcpStartup(threadId: string): Promise<string[]> {
+    const observed = new Map<string, McpServerStatusUpdatedEvent['status']>()
+    let wake: (() => void) | null = null
+    let closedReason: Error | null = null
+    const statusListener = (event: McpServerStatusUpdatedEvent) => {
+      if (event.threadId !== threadId) return
+      observed.set(event.name, event.status)
+      wake?.()
+      wake = null
+    }
+    const closeListener = (err?: Error) => {
+      closedReason = err ?? new Error('app-server connection closed during MCP startup')
+      wake?.()
+      wake = null
+    }
+    this.mcpStatusListeners.add(statusListener)
+    this.closeListeners.add(closeListener)
+
+    try {
+      const pending = new Set<string>()
+      let cursor: string | null = null
+      do {
+        const params: ListMcpServerStatusParams = {
+          threadId,
+          cursor,
+          limit: 100,
+          detail: 'toolsAndAuthOnly',
+        }
+        let response: ListMcpServerStatusResponse
+        try {
+          response = (await this.request(
+            'mcpServerStatus/list',
+            params,
+          )) as ListMcpServerStatusResponse
+        } catch (err) {
+          // Older supported Codex app-servers do not expose the readiness API.
+          // Their explicit -32601 capability response is the only fallback
+          // signal; never substitute a delay or retry budget.
+          if (err instanceof RpcError && err.code === -32601) return []
+          throw err
+        }
+        for (const status of response.data) {
+          if (status.runtimeStatus === 'notStarted' || status.runtimeStatus === 'starting') {
+            pending.add(status.name)
+          }
+        }
+        cursor = response.nextCursor ?? null
+      } while (cursor)
+
+      const initiallyPending = [...pending].sort()
+      for (;;) {
+        for (const name of pending) {
+          const status = observed.get(name)
+          if (status === 'ready' || status === 'failed' || status === 'cancelled') {
+            pending.delete(name)
+          }
+        }
+        if (pending.size === 0) return initiallyPending
+        if (closedReason) throw closedReason
+        await new Promise<void>((resolve) => { wake = resolve })
+      }
+    } finally {
+      this.mcpStatusListeners.delete(statusListener)
+      this.closeListeners.delete(closeListener)
+    }
   }
 
   // Append input to the turn already running on this thread, so the model reads
@@ -214,7 +285,7 @@ export class AppServerClient {
   }
 
   onClose(listener: (err?: Error) => void): void {
-    this.closeListeners.push(listener)
+    this.closeListeners.add(listener)
   }
 
   close(): void {
@@ -299,6 +370,11 @@ export class AppServerClient {
         this.activeTurns.delete(threadId)
         const event = params as TurnEvent
         for (const listener of this.turnCompletedListeners) listener(event)
+      }
+    } else if (method === 'mcpServer/startupStatus/updated') {
+      const event = params as McpServerStatusUpdatedEvent
+      if (typeof event?.name === 'string' && typeof event?.status === 'string') {
+        for (const listener of this.mcpStatusListeners) listener(event)
       }
     }
     // All other notifications (thread/*, item/* deltas, token usage, …) are

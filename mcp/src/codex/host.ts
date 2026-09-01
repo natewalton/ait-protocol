@@ -37,7 +37,6 @@
 import * as fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { AppServerClient } from './appServerClient.js'
-import type { InjectItem } from './appServerTypes.js'
 import { sharedAppServerSocketPath } from './paths.js'
 import { createCodexSink } from './sink.js'
 import { startPushListener, tryRegister, type NotificationSink } from '../push.js'
@@ -62,17 +61,9 @@ function isUnknownThread(err: unknown): boolean {
 }
 
 // The display name given to a new session's thread on start (the TUI picker
-// title). The on-disk rollout is persisted separately by ROLLOUT_SEED_ITEMS.
+// title). On a legacy-history thread, setting the name also persists the clean
+// one-record rollout the TUI needs.
 const CODEX_THREAD_NAME = 'AIT codex session'
-// The one item injected into a new thread to persist its rollout. Model-visible
-// for the thread's whole life, so it states one fact and asks for nothing.
-const ROLLOUT_SEED_ITEMS: InjectItem[] = [
-  {
-    type: 'message',
-    role: 'developer',
-    content: [{ type: 'input_text', text: 'Thread opened by the AIT launcher (bin/codex-session.sh).' }],
-  },
-]
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms))
@@ -167,36 +158,43 @@ export async function runCodexSession(): Promise<void> {
           throw err
         }
       } else {
-        started = await client.threadStart(threadParams)
+        // Codex 0.152 defaults app-server-created threads to paginated history.
+        // Pin legacy: thread/name/set then writes an attachable one-record
+        // rollout, without thread/inject_items and its dangling auto-compact
+        // context.
+        started = await client.threadStart({ ...threadParams, historyMode: 'legacy' })
       }
       threadId = started.thread.id
-      writeThreadSessionId(threadId, sessionId) // idempotent; enables --session rebind
       // New session: create the on-disk rollout the TUI attaches to (a bare
       // thread/start writes none) — BEFORE announcing, so the wrapper's `codex
-      // resume <threadId>` finds a rollout. thread/name/set used to be enough;
-      // codex-cli 0.152 (paginated history) records the name in its state DB
-      // without writing the rollout, and the TUI then fails to resume with
-      // "missing source rollout". thread/inject_items with one developer note is
-      // the lightest write that still persists it, and runs no model turn. (On
-      // 0.144.4 inject left a dangling `auto-compact-0` turn_context that the TUI
-      // showed as a phantom "Working" spinner; verified gone on 0.152.) No
-      // orientation is injected: the operator controls how the session engages —
-      // joining by typing in the TUI — rather than the model being auto-oriented
-      // on attach. (The per-thread ait tool-MCP runs poll mode, which ships no
-      // `instructions`, so there's no MCP-level orientation either.)
+      // resume <threadId>` finds a rollout. The explicit legacy history mode
+      // makes thread/name/set persist a session_meta-only rollout on Codex 0.152,
+      // with no synthetic turn context and no model turn. No orientation is
+      // injected: the operator controls how the session engages.
       if (!openingTurnDone && !resumeThreadId) {
         try {
           await client.setName(threadId, CODEX_THREAD_NAME)
-          await client.injectItems(threadId, ROLLOUT_SEED_ITEMS)
         } catch (err) {
-          // The seed did not land, so this thread has no rollout. Forget it: the
+          // The name did not land, so this thread has no rollout. Forget it: the
           // retry below would otherwise thread/resume a rollout-less id forever
           // ("no rollout found") instead of starting a fresh thread.
           threadId = null
           throw err
         }
       }
+      writeThreadSessionId(threadId, sessionId) // idempotent; enables --session rebind
       if (socketFile && !socketAnnounced) {
+        // A cold thread/resume response can arrive while one or more MCP
+        // runtimes are still starting. Exposing the socket in that window lets
+        // the TUI join partway through the notification round and retain a
+        // phantom Working indicator. Gate publication on the app-server's own
+        // status snapshot + terminal events; no timeout decides readiness.
+        const pendingMcpServers = await client.waitForMcpStartup(threadId)
+        if (pendingMcpServers.length > 0) {
+          console.error(
+            `ait codex session: MCP startup settled (${pendingMcpServers.join(', ')})`,
+          )
+        }
         fs.writeFileSync(socketFile, `${socketPath}\n${threadId}\n`)
         socketAnnounced = true
       }

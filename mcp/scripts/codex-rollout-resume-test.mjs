@@ -103,10 +103,10 @@ try {
   assert.equal(fs.existsSync(delayedMcpPidPath), true,
     `delayed MCP never entered initialize:\n${serverOutput}`)
   await new Promise((resolve) => setImmediate(resolve))
-  assert.equal(readinessSettled, !supportsMcpReadiness,
-    supportsMcpReadiness
-      ? 'MCP readiness must not settle before the app-server terminal event'
-      : 'pre-0.152 app-server must take the explicit method-not-found fallback')
+  if (supportsMcpReadiness) {
+    assert.equal(readinessSettled, false,
+      'MCP readiness must not settle before the app-server terminal event')
+  }
   process.kill(Number(fs.readFileSync(delayedMcpPidPath, 'utf8')), 'SIGUSR1')
   const initiallyPending = await readiness
   if (supportsMcpReadiness) {

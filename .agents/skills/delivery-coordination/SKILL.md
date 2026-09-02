@@ -52,7 +52,11 @@ Stop when any answer is **yes**:
 5. Are main or live systems being used as candidate workspaces?
 6. Are synthetic or broad tests substituting for the production-shaped oracle?
 7. Is anyone reviewing a moving, stale, dirty, or differently based revision?
-8. Is this a third candidate for the same acceptance vector or invariant class?
+8. Is this a third or later candidate without demonstrated convergence? The
+   two-candidate checkpoint may be crossed when remaining blockers are
+   code-level, independently reproduced, covered by deterministic regression
+   tests, and shrinking without changing the acceptance vector. Otherwise stop
+   and obtain explicit user or release-policy authority.
 9. Are status, acknowledgment, receipt, or hash posts being emitted without
    changing authority, evidence, or the decision?
 10. Are we waiting on external work that is safe to split and schedule?
@@ -128,10 +132,15 @@ first inspection. Never pause or extend it.
 4. Merge and release an approved slice immediately.
 5. At minute twenty, choose exactly one: **ship**, **schedule**, or **stop**.
 
-Allow at most two candidates for the same vector and invariant class, even
-across later clocks. A second NO-GO means stop. Another same-vector attempt
-requires explicit user or real release-policy authority; do not evade the cap by
-renaming scope, replacing roles, or opening another branch.
+Treat two candidates for the same vector and invariant class as a decision
+checkpoint, even across later clocks. Continue iterating past it when the
+remaining NO-GO findings are code-level, independently reproduced, protected by
+deterministic regression tests, and demonstrably converging: the blocker set is
+shrinking, the acceptance vector is unchanged, and no design or scope dispute
+remains. Record that evidence before reopening the editor lease. Otherwise a
+second NO-GO means stop, and another same-vector attempt requires explicit user
+or real release-policy authority. Do not evade the checkpoint by renaming scope,
+replacing roles, or opening another branch.
 
 ## Prove the real workflow
 

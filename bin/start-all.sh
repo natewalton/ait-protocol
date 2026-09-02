@@ -16,6 +16,7 @@ FAILED=""
 STARTING_NAME=""
 STARTING_PID=""
 STARTING_PIDFILE=""
+STARTING_ADOPTED=""
 
 interrupt_start() {
   local live=""
@@ -25,6 +26,13 @@ interrupt_start() {
     if [ -n "$live" ]; then
       echo "$live" > "$STARTING_PIDFILE"
       echo "Interrupted while waiting for $STARTING_NAME; it is bound with pid $live (pidfile retained at $STARTING_PIDFILE)" >&2
+    elif [ "${STARTING_ADOPTED:-0}" = 1 ]; then
+      if [ -n "$STARTING_PID" ] && kill -0 "$STARTING_PID" 2>/dev/null; then
+        echo "Interrupted while waiting for $STARTING_NAME; adopted pid $STARTING_PID remains running without its socket; no pidfile retained" >&2
+      else
+        echo "Interrupted while waiting for $STARTING_NAME; adopted pid ${STARTING_PID:-unknown} is no longer running; no pidfile retained" >&2
+      fi
+      rm -f "$STARTING_PIDFILE"
     else
       rm -f "$STARTING_PIDFILE"
       if [ -n "$STARTING_PID" ] && kill -0 "$STARTING_PID" 2>/dev/null; then
@@ -61,6 +69,44 @@ service_event_pid() {
   running_pid "$1"
 }
 
+wait_for_codex() {
+  local pid=$1 pidfile=$2 adopted=$3
+  STARTING_NAME="codex-appserver"
+  STARTING_PID="$pid"
+  STARTING_PIDFILE="$pidfile"
+  STARTING_ADOPTED="$adopted"
+  if [ "$adopted" -eq 1 ]; then
+    if [ "$4" = discovered ]; then
+      echo "codex-appserver already running (pid $pid, adopted — it had no pidfile); waiting for socket"
+    else
+      echo "codex-appserver already running (pid $pid); waiting for socket"
+    fi
+  fi
+  while :; do
+    if codex_socket_ready; then
+      echo "$pid" > "$pidfile"
+      echo "codex-appserver ready (pid $pid)"
+      STARTING_NAME=""
+      STARTING_PID=""
+      STARTING_PIDFILE=""
+      STARTING_ADOPTED=""
+      return 0
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "codex-appserver process exited before binding socket; see $LOGS/ait-codex-appserver.err" >&2
+      rm -f "$pidfile"
+      FAILED="$FAILED codex-appserver"
+      STARTING_NAME=""
+      STARTING_PID=""
+      STARTING_PIDFILE=""
+      STARTING_ADOPTED=""
+      return 0
+    fi
+    echo "waiting for codex-appserver socket ${AIT_CODEX_SHARED_SOCKET:-$HOME/.ait/codex-shared.sock}; log: $LOGS/ait-codex-appserver.log (errors: $LOGS/ait-codex-appserver.err)"
+    sleep 1
+  done
+}
+
 # Starting a second copy of a service that is already up is never harmless. A
 # port service dies on EADDRINUSE, leaving a pidfile that names a process which
 # is already gone. The codex app-server is worse: bin/run-codex-appserver.sh
@@ -71,6 +117,10 @@ start_one() {
   local name=$1 wrapper=$2
   local pidfile="$LOGS/ait-$name.pid" observable live
   if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+    if [ "$name" = codex-appserver ]; then
+      wait_for_codex "$(cat "$pidfile")" "$pidfile" 1 pidfile
+      return
+    fi
     echo "$name already running (pid $(cat "$pidfile"))"
     return
   fi
@@ -78,6 +128,10 @@ start_one() {
   live="$(running_pid "$name")"
   if [ -n "$live" ]; then
     echo "$live" > "$pidfile"
+    if [ "$name" = codex-appserver ]; then
+      wait_for_codex "$live" "$pidfile" 1 discovered
+      return
+    fi
     echo "$name already running (pid $live, adopted — it had no pidfile)"
     return
   fi
@@ -87,7 +141,13 @@ start_one() {
   STARTING_NAME="$name"
   STARTING_PID="$pid"
   STARTING_PIDFILE="$pidfile"
+  STARTING_ADOPTED=0
   disown
+
+  if [ "$name" = codex-appserver ]; then
+    wait_for_codex "$pid" "$pidfile" 0 launched
+    return
+  fi
 
   # Wait for the service's process/resource event before claiming success. The
   # sleep is only a progress cadence; there is no elapsed-time failure verdict.

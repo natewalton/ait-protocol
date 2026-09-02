@@ -1,6 +1,6 @@
 # Install and run AIT through one CLI
 
-Status: reviewed, 2026-09-01.
+Status: reviewed, 2026-09-02.
 
 ## Why
 
@@ -11,9 +11,9 @@ The recurring path is fragmented too. Starting or stopping AIT requires a reposi
 The install path also has two correctness traps:
 
 - The environment block refuses to run when any one of the four `.env` files exists (`README.md:54-93`). That protects secrets from overwrite, but makes an ordinary rerun fail instead of verifying and reusing the install.
-- The required tools are discovered at different stages. `bin/start-all.sh` correctly starts the Codex app-server as part of the complete stack (`bin/start-all.sh:63-66`), but its wrapper is where a missing Codex CLI finally fails (`bin/run-codex-appserver.sh:30-53`). The product should keep the complete stack and detect every prerequisite before writes, with one copy-pasteable recovery instruction per missing tool.
+- The required tools are discovered at different stages. `bin/start-all.sh` unconditionally starts the Codex app-server (`bin/start-all.sh:63-66`), and its wrapper is where a missing Codex CLI finally fails (`bin/run-codex-appserver.sh:30-53`). That is an active negative on a Claude-only machine. The product should require at least one supported harness, detect both before writes, and start only the installed harness integration.
 
-Current polished developer tools converge on a small interaction pattern: Codex, Claude Code, OpenCode, Goose, and uv each put a standalone curl installer at or near the front of their setup; the installer leaves one command on `PATH`; and the next action is expressed through that command rather than another repository-relative script. AIT should match that experience without pretending its PostgreSQL, Node, and dual-harness prerequisites do not exist. The elegant path is one public install command, four short progress phases, one project command, and complete built-in help; internal checkout and service details appear only when recovery needs them.
+Current polished developer tools converge on a small interaction pattern: Codex, Claude Code, OpenCode, Goose, and uv each put a standalone curl installer at or near the front of their setup; the installer leaves one command on `PATH`; and the next action is expressed through that command rather than another repository-relative script. AIT should match that experience without pretending its PostgreSQL, Node, and harness-specific behavior do not exist. The elegant path is one public install command, four short progress phases, one project command, and complete built-in help; internal checkout and service details appear only when recovery needs them.
 
 There is no universal project configuration to write instead. MCP standardizes transport, while harnesses own discovery and trust: Claude project scope uses `.mcp.json` and a trust gate; AIT's Codex path uses the project as the launcher's working directory and injects a distinct AIT identity per app-server thread (`mcp/src/codex/host.ts:223-241`). The user should express “enable AIT in this project”; the AIT CLI should absorb those differences.
 
@@ -72,7 +72,7 @@ The README begins with exactly this command:
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/natewalton/ait-protocol/main/install.sh)"
 ```
 
-The fetched root `install.sh` is a small delivery wrapper around the checkout's installer. The command-substitution form is part of the contract: `curl` must finish successfully before Bash receives any installer source, so a truncated download executes nothing and child commands inherit the terminal's stdin rather than the remainder of a piped script. Before writing, the wrapper verifies macOS, Git, Homebrew, Node and npm, Claude Code, Codex, OpenSSL, curl, the destination, and the future CLI link. It reports every missing prerequisite in one stable list and exits nonzero without cloning, linking, provisioning, or starting anything. Each failure includes one concise copy-paste command and the official documentation URL:
+The fetched root `install.sh` is a small delivery wrapper around the checkout's installer. The command-substitution form is part of the contract: `curl` must finish successfully before Bash receives any installer source, so a truncated download executes nothing and child commands inherit the terminal's stdin rather than the remainder of a piped script. Before writing, the wrapper verifies macOS, Git, Homebrew, Node and npm, Claude Code and Codex availability, OpenSSL, curl, the destination, and the future CLI link. Claude and Codex are independently optional, but at least one must be installed. The wrapper reports every missing required prerequisite in one stable list and exits nonzero without cloning, linking, provisioning, or starting anything. When neither harness exists, that list includes both official harness remedies. Each failure includes one concise copy-paste command and the official documentation URL:
 
 - Homebrew: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
 - Node and npm: `brew install node`
@@ -92,17 +92,19 @@ ait help
 
 Normal output is deliberately short and phase-based: `Prerequisites`, `AIT files`, `Services`, and `CLI`, each ending in a checkmark or one actionable error. It does not expose npm sub-builds, database plumbing, adapter names, or internal script paths unless a phase fails. The success banner appears only after `ait`, `ait help`, and the real service probes succeed from the installed path.
 
+The success result includes one plain row per supported harness. An installed harness reports `ready`; an unavailable one reports, for example, `codex   skipped (not installed)`, with no warning styling, failure exit, or launch next-step for that harness. Nothing is hidden and no unavailable platform is treated as broken.
+
 ### Install AIT on the machine
 
 The checkout's machine installer has this contract:
 
-1. Recheck macOS, Git, Homebrew, Node, npm, Claude Code, Codex, OpenSSL, curl, the checkout shape, the four-file environment state, running AIT processes, and the proposed `$(brew --prefix)/bin/ait` target before writes. Use the same complete prerequisite report and remedies as the remote wrapper. Do not download or execute prerequisite installers.
+1. Recheck macOS, Git, Homebrew, Node, npm, Claude Code and Codex availability, OpenSSL, curl, the checkout shape, the four-file environment state, running AIT processes, and the proposed `$(brew --prefix)/bin/ait` target before writes. Require at least one of Claude or Codex. Use the same complete prerequisite report, skip rows, and remedies as the remote wrapper. Do not download or execute prerequisite installers.
 2. Accept an absent command link or an existing link which resolves to this checkout's root `ait`. Refuse a regular file, directory, or link to another checkout; print the exact collision and do not replace it. Create the link only after preflight. If later provisioning fails, keep the valid link deliberately, report the incomplete stack, and print the original README curl command as the recovery.
 3. Install `postgresql@17` through Homebrew only when absent, start its service idempotently, resolve clients below `$(brew --prefix postgresql@17)/bin`, and create `plc_directory` only when absent. Preserve an existing database and rows.
 4. Treat `plc/.env`, `pds/.env`, `appview/.env`, and `mcp/.env` as one set. None present starts one resumable transaction: create an owner-only install-state directory containing all four staged files plus a manifest of target paths and hashes before publishing any target, then publish the staged files in one loop with owner-only permissions. Remove the transaction only after all four targets exist and match the manifest. On SIGINT or another interruption, exit nonzero and retain that state. A rerun with a partial target set resumes only when the install-state manifest is complete, every present target matches its staged hash, and every missing target still has its staged source; it publishes the missing targets without regenerating secrets. A partial set without that exact installer-owned proof, or with any mismatch, fails unchanged and lists present and missing files. All four present means preserve their bytes; a matching leftover transaction may then be cleared.
 5. With no AIT service from this checkout running, run `npm ci` in `plc`, `pds`, `appview`, and `mcp`; build `appview` and `mcp`; and run `bin/check-single-lexicon.sh`. A complete healthy running stack with all dependency trees and built entry points is verified without running npm or build. A partial, unhealthy, or different-checkout service set fails before dependency writes and names the conflicting processes plus `ait stop` recovery.
-6. Start the complete stack through `bin/start-all.sh`: PLC, PDS, AppView, and the shared Codex app-server. Do not add harness-selection flags or a Claude-only partial-success state.
-7. Declare success only after `ait status` receives successful JSON from the three HTTP health endpoints and connects to the Codex Unix socket. Elapsed time alone never means ready. Print the linked CLI path, checkout path, concise service table, logs on failure, and `ait init` as the next project command.
+6. Start the core stack through `bin/start-all.sh`: PLC, PDS, and AppView. Start the shared Codex app-server only when Codex is installed; a Claude-only machine creates no Codex socket or background process. This is automatic discovery, not a harness-selection flag.
+7. Declare success only after `ait status` receives successful JSON from the three HTTP health endpoints and, when Codex is installed, connects to the Codex Unix socket. Elapsed time alone never means ready. Print the linked CLI path, checkout path, concise service and harness tables, logs on failure, `ait init`, and only the installed harness launch commands.
 
 Re-running the README command or the installed checkout's private machine installer preserves the database and every environment-file byte, including a verified resume of an interrupted four-file publication. It verifies a complete healthy live stack without changing dependencies or builds; a stopped stack takes the clean locked install/build path and then starts.
 
@@ -115,18 +117,18 @@ Re-running the README command or the installed checkout's private machine instal
 3. Outside Git, walk upward from the current directory, stopping before `$HOME` and `/`, and select the nearest directory containing an existing boundary: `.mcp.json`, `.codex/config.toml`, `.claude/`, `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `pom.xml`, or `Gemfile`.
 4. If no boundary is found, fail before writes, show the directory inspected, and offer `ait init "$PWD"` as the explicit override. Never infer `$HOME` as a project.
 
-The CLI prints the resolved project before mutation and verifies that the shared stack and built MCP are ready. It does not prompt for a harness or expose harness-specific install flags. Claude and Codex are handled directly:
+The CLI prints the resolved project before mutation and verifies that the shared core stack and built MCP are ready. It does not prompt for a harness or expose harness-specific install flags. At least one supported harness was established during machine installation; each is handled directly when present:
 
-- If either Claude Code or Codex is missing or no longer exposes the capability AIT verified during installation, fail before project writes and print that tool's single official recovery command. One AIT install delivers both supported harness paths; project setup never silently produces a partial installation.
 - If Claude is installed, inspect only `mcpServers.ait-protocol` in the target `.mcp.json`. An exact entry naming `node --enable-source-maps <this-checkout>/mcp/dist/server.js` is already configured. A conflicting entry fails unchanged with expected/actual values and the native removal remedy. When absent, invoke `claude mcp add --scope project` from the target. There is no pretend dry-run: the native add is the mutation and its failure propagates. Afterward, require the exact entry and a successful `claude mcp get ait-protocol`. `Connected` and `Pending approval` are both valid configured states; the CLI never bypasses the first-session trust gate.
 - If Codex is installed, create no `.codex/config.toml`. Verify the shared app-server, built MCP, and executable `bin/codex-session.sh`, then report `ready (no project file required)`. The Codex launcher already uses the caller's working directory and supplies identity per thread.
-- Complete the Codex read-only readiness checks before asking Claude's native CLI to write, avoiding a late Codex failure after `.mcp.json` changes.
+- For each missing harness, print the same plain `skipped (not installed)` row used by machine installation and omit its launch next-step. This is a successful project result when the other harness is ready.
+- When both are installed, complete the Codex read-only readiness checks before asking Claude's native CLI to write, avoiding a late Codex failure after `.mcp.json` changes.
 
 A project rerun preserves unrelated `.mcp.json` entries and an exact AIT entry, repeats consumer-visible health and harness checks, and returns the same summary.
 
 ### Operate AIT and launch sessions
 
-`ait start`, `ait stop`, and `ait status` are thin dispatchers. Start retains current process adoption and duplicate prevention; stop retains current port/socket ownership checks; status is read-only and shows the same three HTTP probes plus `running` or `unreachable` for the required Codex app-server. `bin/start-all.sh` calls the same status script so installation and daily operation cannot disagree about health.
+`ait start`, `ait stop`, and `ait status` are thin dispatchers. Start retains current process adoption and duplicate prevention; stop retains current port/socket ownership checks; status is read-only and shows the same three HTTP probes plus `running`, `unreachable`, or `skipped (not installed)` for the Codex app-server. `bin/start-all.sh` calls the same status script so installation and daily operation cannot disagree about health.
 
 `ait claude` and `ait codex` preserve the caller's working directory, reject an unhealthy core stack with `run: ait start`, verify the selected native CLI exists, and then `exec` the existing launcher with every remaining argument unchanged. `ait claude` also requires `claude mcp get ait-protocol` to find the current project's configured entry; pending trust remains valid. Because dispatch uses `exec`, the harness owns the terminal, exit status, and signals exactly as it does under direct launcher invocation. The launchers' user-facing examples and errors change to the canonical `ait claude` / `ait codex` spelling while direct script invocation remains supported for development.
 
@@ -141,7 +143,7 @@ Nine implementation files:
 3. `bin/ait-test.sh` covers bootstrap fixtures, CLI parsing, complete help, root discovery, dispatch, and install behavior without touching live state.
 4. `bin/install.sh` contains private machine and project install operations called by the bootstrap and CLI.
 5. `bin/status.sh` owns the read-only service probes used by the CLI and supervisor.
-6. `bin/start-all.sh` delegates its final health table to `bin/status.sh` while retaining the complete four-service start.
+6. `bin/start-all.sh` delegates its final health table to `bin/status.sh`, always starts the three core services, and starts the Codex app-server only when Codex is installed.
 7. `bin/claude-session.sh` renders CLI-native launch and recovery examples while retaining session behavior.
 8. `bin/codex-session.sh` renders CLI-native launch and recovery examples while retaining session behavior.
 9. `README.md` puts the curl command first, shows the three-line first-project journey, points to CLI help, and keeps manual commands as diagnosis/reference.
@@ -161,7 +163,6 @@ No package manifest, lockfile, application source, environment template, service
 - Destructive database/environment repair, uninstall, or removal of another checkout's command link.
 - Updating dependencies or builds underneath running sessions.
 - Auto-starting services as a side effect of `ait claude` or `ait codex`.
-- Making Claude Code or Codex optional. The first supported AIT install promises both harness paths and fails early with the missing tool's remedy rather than creating a partial product.
 
 ## Tests
 
@@ -172,13 +173,13 @@ No package manifest, lockfile, application source, environment template, service
 - `ait version` and `ait --version` agree on the installed checkout's exact revision, make no network call, and work while every service is stopped;
 - the fetched bootstrap's fresh install, exact-checkout rerun, destination collision, clone failure, and private-installer failure preserve the declared boundaries and only the successful path prints the next project commands; an HTTP fixture that truncates the script after a syntactically valid write-capable prefix proves no prefix executes, while a successful installer child reads a sentinel from the caller's stdin rather than installer source;
 - direct root and globally linked invocations resolve the same checkout, including paths with spaces and relative symlink targets;
-- install preflight reports every missing prerequisite before writes in the declared stable order, with the exact official command and URL for Git, Homebrew, Node/npm, Claude Code, and Codex; an absent/exact command link is accepted and any other target is preserved with a collision error;
+- install preflight reports every missing required prerequisite before writes in the declared stable order, with the exact official command and URL for Git, Homebrew, Node/npm, Claude Code, and Codex; Claude-only and Codex-only installs succeed with one ready and one plain skipped row, while neither-harness fails with both remedies; an absent/exact command link is accepted and any other target is preserved with a collision error;
 - a failure after linking leaves the valid command usable for a nonzero rerun and never prints a healthy stack;
 - fresh, healthy-rerun, conflicting partial-env, conflicting-process, database, npm, build, lexicon, HTTP, and socket cases implement the machine install contract; interruption before each of the four environment publishes leaves no false success, and the next invocation resumes from the exact staged manifest, preserves already-published hashes, and removes transaction state only after all four targets match;
-- missing or unsupported Claude Code or Codex fails before machine or project writes with its specific remedy; a complete install requires a connectable Codex socket;
+- Claude-only, Codex-only, and dual-harness machine and project paths expose the exact ready/skipped rows, start no unavailable harness process, and offer only valid launch next-steps; an explicitly selected missing launcher still fails with its specific install remedy;
 - `ait init` from a Git subdirectory chooses the worktree root; outside Git it chooses the nearest listed marker; it stops before home/root; an unrecognized location fails before writes; an explicit path is used exactly;
 - Claude absent/exact/conflicting/add-failure/add-success cases preserve unrelated entries and accept native `get` output reporting either connected or pending approval;
-- project installation creates no Codex project file and completes Codex readiness before Claude mutation;
+- project installation creates no Codex project file and, when both harnesses exist, completes Codex readiness before Claude mutation;
 - repeat `ait init` leaves complete `.mcp.json` and environment hashes unchanged;
 - `ait start`, `stop`, and `status` call the intended repository scripts and propagate their exits;
 - `ait claude` and `ait codex` preserve cwd, arguments, exit status, and environment; unhealthy stack and missing native CLI fail before launcher execution; Claude pending approval may launch;
@@ -191,7 +192,7 @@ bash -n install.sh ait bin/ait-test.sh bin/install.sh bin/status.sh bin/start-al
 bin/ait-test.sh
 ```
 
-The production oracle is a clean macOS user or disposable macOS VM with the declared prerequisites, no AIT checkout, and a separate Git target containing one unrelated MCP entry. Paste the README curl command into the terminal twice; both runs succeed, `ait --help` works from an unrelated directory, and the second run preserves database rows and environment hashes. From a nested target directory, run `ait init` twice and confirm it chooses the Git root and preserves the complete second-run `.mcp.json` hash. Accept Claude's normal pending trust state, then open the project and call a read-only AIT tool through `ait claude`. Launch two `ait codex` sessions from the same project and verify distinct AIT identities. Stop, inspect nonzero/unreachable status, start, and inspect healthy status again. In isolated fixtures, remove each prerequisite one at a time and together and prove the complete remedy list appears before any write.
+The production oracle is a clean macOS user or disposable macOS VM with the declared prerequisites, no AIT checkout, and a separate Git target containing one unrelated MCP entry. Paste the README curl command into the terminal twice; both runs succeed, `ait --help` works from an unrelated directory, and the second run preserves database rows and environment hashes. From a nested target directory, run `ait init` twice and confirm it chooses the Git root and preserves the complete second-run `.mcp.json` hash. Run this journey with Claude only, Codex only, and both installed; verify exact ready/skipped rows, no unavailable-harness process or configuration, and only valid launch next-steps. In the dual case, accept Claude's normal pending trust state, call a read-only AIT tool through `ait claude`, and launch two `ait codex` sessions with distinct AIT identities. Stop, inspect nonzero/unreachable status, start, and inspect healthy status again. In isolated fixtures, remove each required prerequisite one at a time and together, and remove both harnesses, to prove the complete remedy list appears before any write.
 
 ## Sequencing or rollout
 
@@ -212,7 +213,7 @@ Rollback is the prior commit plus `ait stop`. Do not delete databases, environme
 - **Always use the literal current directory:** rejected because running from `src/` should configure the project root. Git's worktree root is authoritative; the bounded marker fallback handles non-Git projects without wandering into home.
 - **Silently treat an unrecognized or empty directory as a project:** rejected because creating harness config there is surprising. The error gives an explicit path override.
 - **Expose harness-specific project-install flags:** rejected because enablement intent is project-level. Harness names belong on launch commands, where the user is genuinely choosing an agent.
-- **Make a missing Codex or Claude installation a successful partial setup:** rejected because AIT's first supported install promises both launch paths. Early prerequisite diagnosis is simpler and more truthful than a mode matrix that changes the meaning of “AIT installed.”
+- **Require both Claude and Codex:** rejected because either harness reaches the AIT network independently. Requiring a second vendor's CLI and, on Claude-only machines, a permanent unused Codex app-server is an active negative; one direct availability conditional delivers more value without a mode framework.
 - **Build an adapter registry or generalized framework for two harnesses:** rejected because direct Claude and Codex branches are smaller and easier to verify. Agent-neutral UX does not require framework machinery.
 - **Prove `claude mcp add` through a read-only capability probe:** rejected because the installed command exposes no dry-run. Inspect conflicts first, let the native add apply, and verify exact state afterward.
 - **Require Claude to report `Connected` immediately:** rejected because an untrusted project validly reports `Pending approval`; configuration is complete even though the user trust gate has not fired.
@@ -234,7 +235,7 @@ Rollback is the prior commit plus `ait stop`. Do not delete databases, environme
 - `bin/claude-session.sh:11-25,73-149`, inspected 2026-09-01: cwd selection, argument forwarding, and resume identity behavior.
 - `bin/codex-session.sh:17-28,51-125`, inspected 2026-09-01: cwd selection, build/app-server prerequisites, argument forwarding, and TUI attachment.
 - `mcp/src/codex/host.ts:223-241`, inspected 2026-09-01: per-thread AIT MCP identity configuration.
-- Operator direction recorded in the AIT design-thread handoff on 2026-09-01 (`at://did:plc:4wb764wvax73immdu23azics/ait.feed.post/3muizuxkiyc27`): the complete supported stack includes the shared Codex app-server and both Claude and Codex launch paths; neither harness is an optional install mode.
+- Operator correction recorded on 2026-09-02 (`at://did:plc:eunzexjghq6b4zx2y2oj7f57/ait.feed.post/3muj2ra22ds27` and wording clarification `at://did:plc:eunzexjghq6b4zx2y2oj7f57/ait.feed.post/3muj2roeo4s27`): Claude and Codex are independently optional; an unavailable harness is a visible plain skipped row, not a hidden condition or failure, and a Claude-only install must not run an unused Codex app-server.
 - Installed Claude CLI probe on 2026-09-01: `claude mcp add --help` has no dry-run; `claude mcp get ait-protocol` exits zero with `Pending approval` before project trust and `Connected` after approval.
 - Throwaway-project probe on 2026-09-01: `claude mcp add --scope project` preserved an unrelated entry, wrote the canonical AIT entry, and refused a duplicate name unchanged.
 - [npm CLI directories](https://docs.npmjs.com/cli-commands/npm/), inspected 2026-09-01: local operations default to the current project while broader global scope is explicit; AIT uses that locality convention within the project command rather than inventing an install mode for its shared stack.

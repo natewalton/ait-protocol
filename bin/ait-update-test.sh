@@ -6,6 +6,13 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
 ORIGINAL_PATH="$PATH"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/ait-update-test.XXXXXX")"
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+export GIT_AUTHOR_NAME="AIT update fixture"
+export GIT_AUTHOR_EMAIL="ait-update-fixture@example.test"
+export GIT_COMMITTER_NAME="AIT update fixture"
+export GIT_COMMITTER_EMAIL="ait-update-fixture@example.test"
 cleanup() { rm -rf "$TMP_ROOT"; }
 trap cleanup EXIT INT TERM
 PASS_COUNT=0
@@ -14,6 +21,10 @@ fail() { echo "not ok - $1: $2" >&2; exit 1; }
 assert_contains() { case "$1" in *"$2"*) ;; *) fail "$3" "missing $2" ;; esac; }
 assert_status() { local expected=$1 actual=$2 name=$3; [ "$actual" -eq "$expected" ] || fail "$name" "expected $expected, got $actual"; }
 assert_nonzero() { local actual=$1 name=$2; [ "$actual" -ne 0 ] || fail "$name" "expected nonzero status"; }
+
+identity_config="$(git config --show-origin --get-regexp '^user\.(name|email)$' 2>/dev/null || true)"
+[ -z "$identity_config" ] || fail "fixture Git identity" "global/system identity unexpectedly present: $identity_config"
+pass "fixture-owned Git identity works without global or system config"
 
 if ! bash -n "$REPO/install.sh" "$REPO/ait" "$REPO/bin/install.sh" "$REPO/bin/update.sh" "$REPO/bin/ait-update-test.sh"; then
   fail "syntax" "bash -n failed"

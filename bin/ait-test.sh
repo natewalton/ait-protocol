@@ -1,0 +1,617 @@
+#!/bin/bash
+# Local, isolated regression suite for the public AIT CLI and installer.
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+REAL_CURL="$(command -v curl)"
+TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/ait-test.XXXXXX")"
+cleanup_fixture_processes() {
+  local pid_file pid
+  set +e
+  if [ -n "${start_pid:-}" ]; then kill "$start_pid" 2>/dev/null || true; fi
+  if [ -n "${http_pid:-}" ]; then
+    kill "$http_pid" 2>/dev/null || true
+    wait "$http_pid" 2>/dev/null || true
+  fi
+  for pid_file in "$TMP_ROOT"/start-wrapper-pids/* "$TMP_ROOT"/*wrapper-pids/*; do
+    [ -f "$pid_file" ] || continue
+    pid="$(sed -n '1p' "$pid_file")"
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  done
+  rm -rf "$TMP_ROOT"
+}
+trap cleanup_fixture_processes EXIT
+trap 'cleanup_fixture_processes; exit 130' INT TERM
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+pass() { echo "ok - $*"; }
+assert_file() { [ -e "$1" ] || fail "missing $1"; }
+assert_absent() { [ ! -e "$1" ] || fail "unexpected file $1"; }
+assert_contains() { printf '%s\n' "$1" | grep -Fq -- "$2" || fail "expected '$2'"; }
+assert_not_contains() { if printf '%s\n' "$1" | grep -Fq -- "$2"; then fail "unexpected '$2'"; fi; }
+assert_same() { [ "$1" = "$2" ] || fail "expected '$1', got '$2'"; }
+process_alive() {
+  local state
+  state="$(ps -p "$1" -o stat= 2>/dev/null | tr -d ' ')"
+  case "$state" in ''|Z*) return 1 ;; *) return 0 ;; esac
+}
+
+for f in install.sh ait bin/ait-test.sh bin/install.sh bin/status.sh bin/start-all.sh bin/claude-session.sh bin/codex-session.sh; do
+  bash -n "$REPO/$f" || fail "syntax: $f"
+done
+pass "shell syntax"
+
+help="$("$REPO/ait" --help)"
+assert_contains "$help" "init [path]"
+assert_contains "$help" "Manual update sequence"
+assert_contains "$help" 'git -C "$HOME/.local/share/ait-protocol" pull --ff-only'
+assert_same "$help" "$("$REPO/ait")"
+assert_same "$help" "$("$REPO/ait" help)"
+for topic in init start stop status claude codex help version; do
+  page="$("$REPO/ait" help "$topic")"
+  assert_contains "$page" "Usage:"
+  assert_contains "$page" "Prerequisites:"
+  assert_contains "$page" "Changes:"
+  assert_contains "$page" "Recovery:"
+done
+assert_contains "$("$REPO/ait" version --help)" "Usage: ait version"
+assert_same "$("$REPO/ait" help help)" "$("$REPO/ait" help --help)"
+version="$("$REPO/ait" version)"
+[ "${#version}" -eq 40 ] || fail "version is not a full Git revision"
+pass "help, version, and bare CLI help"
+
+space_dir="$TMP_ROOT/path with spaces"
+mkdir -p "$space_dir/bin"
+ln -s "$REPO/ait" "$space_dir/bin/ait"
+assert_same "$help" "$("$space_dir/bin/ait" --help)"
+pass "symlink-aware root discovery"
+
+set +e
+invalid="$("$REPO/ait" no-such-command 2>&1)"
+invalid_status=$?
+set -e
+[ "$invalid_status" -eq 2 ] || fail "unknown command exit"
+assert_contains "$invalid" "Run: ait help"
+pass "invalid command exit"
+
+make_fixture() {
+  local dir="$1" shim="$1/shim" f
+  mkdir -p "$dir/bin" "$dir/plc" "$dir/pds" "$dir/appview" "$dir/mcp" "$shim" "$dir/home"
+  cp "$REPO/ait" "$dir/ait"
+  cp "$REPO/bin/install.sh" "$dir/bin/install.sh"
+  cp "$REPO/bin/status.sh" "$dir/bin/status.sh"
+  cp "$REPO/bin/start-all.sh" "$dir/bin/start-all.sh"
+  cp "$REPO/bin/lib-service-pids.sh" "$dir/bin/lib-service-pids.sh"
+  cp "$REPO/bin/claude-session.sh" "$dir/bin/claude-session.sh"
+  cp "$REPO/bin/codex-session.sh" "$dir/bin/codex-session.sh"
+  cp "$REPO/bin/check-single-lexicon.sh" "$dir/bin/check-single-lexicon.sh"
+  chmod +x "$dir/ait" "$dir/bin/"*.sh
+  for f in plc/package.json plc/package-lock.json pds/package.json pds/package-lock.json appview/package.json appview/package-lock.json mcp/package.json mcp/package-lock.json; do
+    : > "$dir/$f"
+  done
+  cp "$REPO/appview/.env.example" "$dir/appview/.env.example"
+  cp "$REPO/mcp/.env.example" "$dir/mcp/.env.example"
+  cat > "$shim/brew" <<'EOF'
+#!/bin/bash
+case "$1" in
+  --prefix) echo "${AIT_BREW_PREFIX:-/tmp/ait-test-homebrew}" ;;
+  list) exit 1 ;;
+  services) exit 0 ;;
+  install) exit 0 ;;
+  *) exit 0 ;;
+esac
+EOF
+  cat > "$shim/claude" <<'EOF'
+#!/bin/bash
+if [ "$1" = mcp ] && [ "$2" = get ]; then
+  exit 0
+fi
+exit 0
+EOF
+  cat > "$shim/lsof" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+  cat > "$shim/pgrep" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+  for f in git node npm openssl curl; do
+    command -v "$f" >/dev/null 2>&1 && ln -s "$(command -v "$f")" "$shim/$f" || true
+  done
+  chmod +x "$shim/brew" "$shim/claude" "$shim/lsof" "$shim/pgrep"
+}
+
+fixture="$TMP_ROOT/fixture"
+make_fixture "$fixture"
+export AIT_SKIP_PLATFORM_CHECK=1
+export AIT_BREW_PREFIX="$TMP_ROOT/homebrew"
+export AIT_CLI_LINK="$TMP_ROOT/bin/ait"
+export AIT_INSTALL_STATE_DIR="$TMP_ROOT/install-state"
+export AIT_INSTALL_SKIP_PROVISION=1
+PATH="$fixture/shim:/usr/bin:/bin"
+export PATH HOME="$TMP_ROOT/home"
+machine_output="$("$fixture/bin/install.sh" --machine)"
+assert_contains "$machine_output" "Prerequisites: ✓"
+assert_contains "$machine_output" "codex    skipped (not installed)"
+assert_contains "$machine_output" "Environment: ✓"
+assert_file "$fixture/plc/.env"
+assert_file "$fixture/pds/.env"
+assert_file "$fixture/appview/.env"
+assert_file "$fixture/mcp/.env"
+[ -L "$AIT_CLI_LINK" ] || fail "CLI link not created"
+pass "isolated machine install and optional harness row"
+
+prereq_failure="$TMP_ROOT/prereq-failure"
+make_fixture "$prereq_failure"
+rm -f "$prereq_failure/shim/brew"
+export PATH="$prereq_failure/shim:/usr/bin:/bin"
+set +e
+prereq_failure_output="$(AIT_SUPPRESS_PREFLIGHT_OUTPUT=1 "$prereq_failure/bin/install.sh" --machine 2>&1)"
+prereq_failure_status=$?
+set -e
+[ "$prereq_failure_status" -ne 0 ] || fail "suppressed prerequisite failure unexpectedly succeeded"
+assert_contains "$prereq_failure_output" "missing: Homebrew"
+assert_contains "$prereq_failure_output" "Prerequisites: FAILED"
+pass "suppressed preflight failure retains diagnosis"
+
+export PATH="$fixture/shim:/usr/bin:/bin"
+bare_update_output="$("$fixture/bin/install.sh")"
+assert_contains "$bare_update_output" "AIT files:"
+pass "bare private installer update command performs a machine install"
+
+codex_only="$TMP_ROOT/codex-only"
+make_fixture "$codex_only"
+rm -f "$codex_only/shim/claude"
+cat > "$codex_only/shim/codex" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+chmod +x "$codex_only/shim/codex"
+export PATH="$codex_only/shim:/usr/bin:/bin"
+export AIT_CLI_LINK="$TMP_ROOT/codex-only-bin/ait"
+export AIT_INSTALL_STATE_DIR="$TMP_ROOT/codex-only-state"
+codex_only_output="$("$codex_only/bin/install.sh" --machine)"
+assert_not_contains "$codex_only_output" "missing: Claude Code"
+assert_contains "$codex_only_output" "claude   skipped (not installed)"
+assert_contains "$codex_only_output" "codex    ready"
+pass "Codex-only machine preflight and plain Claude skip"
+
+export PATH="$fixture/shim:/usr/bin:/bin"
+export AIT_CLI_LINK="$TMP_ROOT/bin/ait"
+export AIT_INSTALL_STATE_DIR="$TMP_ROOT/install-state"
+before="$(shasum -a 256 "$fixture/plc/.env" | awk '{print $1}')"
+rerun_output="$("$fixture/bin/install.sh" --machine)"
+after="$(shasum -a 256 "$fixture/plc/.env" | awk '{print $1}')"
+assert_same "$before" "$after"
+assert_contains "$rerun_output" "existing four-file set preserved"
+pass "safe machine rerun preserves env bytes"
+
+partial="$TMP_ROOT/partial"
+make_fixture "$partial"
+printf 'operator-owned\n' > "$partial/plc/.env"
+export AIT_CLI_LINK="$TMP_ROOT/partial-bin/ait"
+set +e
+partial_output="$("$partial/bin/install.sh" --machine 2>&1)"
+partial_status=$?
+set -e
+[ "$partial_status" -ne 0 ] || fail "partial environment unexpectedly succeeded"
+assert_contains "$partial_output" "partial environment set"
+assert_absent "$partial/pds/.env"
+pass "unproven partial environment fails unchanged"
+
+resume="$TMP_ROOT/resume"
+make_fixture "$resume"
+export AIT_CLI_LINK="$TMP_ROOT/resume-bin/ait"
+export AIT_INSTALL_STATE_DIR="$TMP_ROOT/resume-state"
+set +e
+AIT_INSTALL_INTERRUPT_AFTER=1 "$resume/bin/install.sh" --machine >/tmp/ait-test-interrupt.out 2>&1
+interrupt_status=$?
+set -e
+[ "$interrupt_status" -ne 0 ] || fail "interruption unexpectedly succeeded"
+assert_file "$resume/plc/.env"
+assert_absent "$resume/pds/.env"
+assert_file "$AIT_INSTALL_STATE_DIR/manifest"
+saved="$(shasum -a 256 "$resume/plc/.env" | awk '{print $1}')"
+resume_output="$("$resume/bin/install.sh" --machine)"
+assert_same "$saved" "$(shasum -a 256 "$resume/plc/.env" | awk '{print $1}')"
+assert_absent "$AIT_INSTALL_STATE_DIR"
+assert_contains "$resume_output" "Environment: ✓"
+pass "interrupted environment publication resumes without regeneration"
+
+status_fixture="$TMP_ROOT/status"
+make_fixture "$status_fixture"
+rm -f "$status_fixture/shim/curl"
+cat > "$status_fixture/shim/curl" <<'EOF'
+#!/bin/bash
+echo '{}'
+EOF
+chmod +x "$status_fixture/shim/curl"
+cat > "$status_fixture/shim/codex" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+chmod +x "$status_fixture/shim/codex"
+export PATH="$status_fixture/shim:/usr/bin:/bin"
+status_output="$("$status_fixture/bin/status.sh")"
+assert_contains "$status_output" "plc"
+assert_contains "$status_output" "codex-appserver"
+pass "status table and Codex optional probe"
+
+mkdir -p "$status_fixture/mcp/dist" "$status_fixture/project dir"
+: > "$status_fixture/mcp/dist/server.js"
+rm -f "$status_fixture/shim/claude"
+export AIT_FAKE_MCP_ROOT="$(cd "$status_fixture" && pwd -P)"
+cat > "$status_fixture/shim/claude" <<EOF
+#!/bin/bash
+if [ "\$1" = mcp ] && [ "\$2" = get ]; then exit 0; fi
+if [ "\$1" = mcp ] && [ "\$2" = add ]; then
+  repo="$AIT_FAKE_MCP_ROOT"
+  printf '{"mcpServers":{"ait-protocol":{"command":"node","args":["--enable-source-maps","%s/mcp/dist/server.js"]}}}\n' "\$repo" > .mcp.json
+  exit 0
+fi
+exit 0
+EOF
+chmod +x "$status_fixture/shim/claude"
+export AIT_CLI_LINK="$TMP_ROOT/dual-bin/ait"
+export AIT_INSTALL_STATE_DIR="$TMP_ROOT/dual-state"
+dual_output="$("$status_fixture/bin/install.sh" --machine)"
+assert_contains "$dual_output" "claude   ready"
+assert_contains "$dual_output" "codex    ready"
+pass "dual-harness machine matrix"
+
+export AIT_CLI_LINK="$TMP_ROOT/init-bin/ait"
+set +e
+init_output="$("$status_fixture/ait" init "$status_fixture/project dir" 2>&1)"
+init_status=$?
+set -e
+[ "$init_status" -eq 0 ] || fail "$init_output"
+assert_contains "$init_output" "Project: ✓ AIT enabled"
+assert_file "$status_fixture/project dir/.mcp.json"
+pass "explicit project init preserves the native boundary"
+
+conflict_project="$TMP_ROOT/conflict-project"
+mkdir -p "$conflict_project"
+printf '{"mcpServers":{"ait-protocol":{"command":"wrong","args":["unchanged"]}}}\n' > "$conflict_project/.mcp.json"
+conflict_hash_before="$(shasum -a 256 "$conflict_project/.mcp.json" | awk '{print $1}')"
+set +e
+conflict_output="$("$status_fixture/ait" init "$conflict_project" 2>&1)"
+conflict_status=$?
+set -e
+[ "$conflict_status" -ne 0 ] || fail "conflicting Claude entry unexpectedly succeeded"
+assert_contains "$conflict_output" "conflicting ait-protocol"
+assert_contains "$conflict_output" '"args":["unchanged"]'
+assert_same "$conflict_hash_before" "$(shasum -a 256 "$conflict_project/.mcp.json" | awk '{print $1}')"
+pass "conflicting Claude entry remains unchanged"
+
+git_project="$TMP_ROOT/git-project"
+mkdir -p "$git_project/src"
+git_project="$(cd "$git_project" && pwd -P)"
+git init -q "$git_project"
+set +e
+git_init_output="$(cd "$git_project/src" && AIT_FAKE_MCP_ROOT="$status_fixture" "$status_fixture/ait" init 2>&1)"
+git_init_status=$?
+set -e
+[ "$git_init_status" -eq 0 ] || fail "$git_init_output"
+assert_contains "$git_init_output" "Project: $git_project"
+assert_file "$git_project/.mcp.json"
+pass "nested Git init selects the worktree root"
+
+git init -q "$HOME"
+home_child="$HOME/child"
+mkdir -p "$home_child"
+set +e
+home_git_output="$(cd "$home_child" && "$status_fixture/ait" init 2>&1)"
+home_git_status=$?
+set -e
+[ "$home_git_status" -ne 0 ] || fail "Git HOME was incorrectly selected as a project"
+assert_contains "$home_git_output" 'Run: ait init'
+assert_absent "$HOME/.mcp.json"
+pass "Git HOME root is rejected before writes"
+
+uninitialized="$TMP_ROOT/uninitialized-project"
+mkdir -p "$uninitialized"
+set +e
+uninitialized_output="$(cd "$uninitialized" && "$status_fixture/ait" claude 2>&1)"
+uninitialized_status=$?
+set -e
+[ "$uninitialized_status" -ne 0 ] || fail "Claude launched without a project entry"
+assert_contains "$uninitialized_output" "run ait init"
+pass "Claude launch rejects user-scope-only configuration"
+
+cat > "$status_fixture/bin/codex-session.sh" <<'EOF'
+#!/bin/bash
+printf '%s\n' "$PWD" "$@" > "$AIT_CAPTURE"
+exit 7
+EOF
+chmod +x "$status_fixture/bin/codex-session.sh"
+codex_capture="$TMP_ROOT/codex-capture"
+set +e
+(cd "$git_project/src" && AIT_CAPTURE="$codex_capture" "$status_fixture/ait" codex "hello world" second)
+codex_exit=$?
+set -e
+[ "$codex_exit" -eq 7 ] || fail "Codex launcher exit status was not preserved"
+assert_same "$(sed -n '1p' "$codex_capture")" "$(cd "$git_project/src" && pwd)"
+assert_same "$(sed -n '2p' "$codex_capture")" "hello world"
+assert_same "$(sed -n '3p' "$codex_capture")" "second"
+pass "Codex launcher cwd, arguments, and exit status"
+
+cat > "$status_fixture/bin/claude-session.sh" <<'EOF'
+#!/bin/bash
+printf '%s\n' "$PWD" "$@" > "$AIT_CAPTURE"
+exit 7
+EOF
+chmod +x "$status_fixture/bin/claude-session.sh"
+capture="$TMP_ROOT/claude-capture"
+set +e
+(cd "$status_fixture/project dir" && AIT_CAPTURE="$capture" "$status_fixture/ait" claude "hello world" second)
+launch_exit=$?
+set -e
+[ "$launch_exit" -eq 7 ] || fail "Claude launcher exit status was not preserved"
+assert_same "$(sed -n '1p' "$capture")" "$(cd "$status_fixture/project dir" && pwd)"
+assert_same "$(sed -n '2p' "$capture")" "hello world"
+assert_same "$(sed -n '3p' "$capture")" "second"
+pass "Claude launcher cwd, arguments, and exit status"
+
+start_fixture="$TMP_ROOT/start"
+make_fixture "$start_fixture"
+start_state="$TMP_ROOT/start-state"
+start_logs="$TMP_ROOT/start-logs"
+mkdir -p "$start_state" "$start_logs"
+rm -f "$start_fixture/shim/codex"
+cat > "$start_fixture/shim/curl" <<'EOF'
+#!/bin/bash
+echo '{}'
+EOF
+cat > "$start_fixture/shim/lsof" <<'EOF'
+#!/bin/bash
+case "$*" in
+  *-iTCP:2582*) name=plc ;;
+  *-iTCP:2583*) name=pds ;;
+  *-iTCP:2585*) name=appview ;;
+  *) name= ;;
+esac
+if [ -n "$name" ]; then
+  [ -f "$AIT_START_STATE/$name" ] && cat "$AIT_START_STATE/$name"
+elif [[ "$*" = *"-d cwd"* ]]; then
+  echo "n$AIT_START_REPO"
+fi
+EOF
+for wrapper in plc pds appview; do
+  cat > "$start_fixture/bin/run-$wrapper.sh" <<EOF
+#!/bin/bash
+printf '%s' "\$\$" > "\$AIT_START_WRAPPER_PID_DIR/$wrapper"
+if [ "\${AIT_START_MODE:-delayed}" = exit ]; then
+  exit 1
+fi
+if [ "\${AIT_START_MODE:-delayed}" = delayed ]; then
+  sleep 1
+  printf '%s' "\$\$" > "\$AIT_START_STATE/$wrapper"
+fi
+trap 'rm -f "\$AIT_START_STATE/$wrapper"; exit 0' INT TERM
+while :; do sleep 1; done
+EOF
+  chmod +x "$start_fixture/bin/run-$wrapper.sh"
+done
+chmod +x "$start_fixture/shim/curl" "$start_fixture/shim/lsof"
+export PATH="$start_fixture/shim:/usr/bin:/bin"
+export AIT_START_STATE="$start_state"
+export AIT_START_WRAPPER_PID_DIR="$TMP_ROOT/start-wrapper-pids"
+export AIT_START_REPO="$(cd "$start_fixture" && pwd)"
+export AIT_LOG_DIR="$start_logs"
+mkdir -p "$AIT_START_WRAPPER_PID_DIR"
+
+export AIT_START_MODE=delayed
+start_output="$("$start_fixture/bin/start-all.sh" 2>&1)"
+assert_contains "$start_output" "waiting for plc TCP port 2582"
+assert_contains "$start_output" "log: $start_logs/ait-plc.log"
+for wrapper in plc pds appview; do
+  pid="$(cat "$AIT_START_STATE/$wrapper")"
+  kill "$pid" 2>/dev/null || true
+  rm -f "$start_logs/ait-$wrapper.pid" "$AIT_START_STATE/$wrapper"
+done
+pass "delayed readiness reports listener progress and succeeds on resource events"
+
+export AIT_START_MODE=exit
+set +e
+exit_output="$("$start_fixture/bin/start-all.sh" 2>&1)"
+exit_status=$?
+set -e
+[ "$exit_status" -ne 0 ] || fail "wrapper exit unexpectedly succeeded"
+assert_contains "$exit_output" "wrapper exited before binding"
+for wrapper in plc pds appview; do
+  assert_absent "$start_logs/ait-$wrapper.pid"
+done
+pass "wrapper exit is a failure event without a false pidfile"
+
+export AIT_START_MODE=pending
+interrupt_output="$TMP_ROOT/start-interrupt.out"
+rm -f "$start_logs/ait-plc.pid" "$AIT_START_WRAPPER_PID_DIR/plc"
+set +e
+"$start_fixture/bin/start-all.sh" >"$interrupt_output" 2>&1 &
+start_pid=$!
+set -e
+while ! grep -Fq "waiting for plc TCP port 2582" "$interrupt_output"; do
+  kill -0 "$start_pid" 2>/dev/null || fail "start-all exited before interrupt test"
+  sleep 0.1
+done
+kill -TERM "$start_pid"
+set +e
+wait "$start_pid"
+interrupt_status=$?
+set -e
+[ "$interrupt_status" -eq 130 ] || fail "start-all interrupt exit was not 130"
+interrupt_text="$(sed -n '1,$p' "$interrupt_output")"
+assert_contains "$interrupt_text" "stopped wrapper pid"
+assert_absent "$start_logs/ait-plc.pid"
+wrapper_pid="$(cat "$AIT_START_WRAPPER_PID_DIR/plc")"
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  process_alive "$wrapper_pid" || break
+  sleep 0.1
+done
+if process_alive "$wrapper_pid"; then
+  kill -KILL "$wrapper_pid" 2>/dev/null || true
+  fail "interrupted wrapper still running"
+fi
+pass "interrupt stops an unbound wrapper and leaves no pidfile"
+
+http_root="$TMP_ROOT/http"
+http_port_file="$TMP_ROOT/http-port"
+http_marker="$TMP_ROOT/http-marker"
+mkdir -p "$http_root"
+cat > "$http_root/install.sh" <<'EOF'
+#!/bin/bash
+read -r input
+[ "$input" = caller-sentinel ] || exit 9
+printf executed > "$AIT_HTTP_BOOTSTRAP_MARKER"
+EOF
+python3 - "$http_root" "$http_port_file" <<'PY' &
+import http.server
+import socketserver
+import sys
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=sys.argv[1], **kwargs)
+
+with socketserver.TCPServer(("127.0.0.1", 0), Handler) as server:
+    with open(sys.argv[2], "w") as port_file:
+        port_file.write(str(server.server_address[1]))
+    server.serve_forever()
+PY
+http_pid=$!
+while [ ! -s "$http_port_file" ]; do sleep 0.1; done
+http_port="$(sed -n '1p' "$http_port_file")"
+export AIT_HTTP_BOOTSTRAP_MARKER="$http_marker"
+printf 'caller-sentinel\n' | /bin/bash -c "$("$REAL_CURL" -fsSL "http://127.0.0.1:$http_port/install.sh")"
+assert_file "$http_marker"
+assert_same "$(sed -n '1p' "$http_marker")" executed
+kill "$http_pid" 2>/dev/null || true
+pass "local HTTP command-substitution bootstrap preserves caller stdin"
+
+codex_start_fixture="$TMP_ROOT/codex-start"
+make_fixture "$codex_start_fixture"
+codex_start_state="$TMP_ROOT/codex-start-state"
+codex_start_logs="$TMP_ROOT/codex-start-logs"
+codex_start_wrapper_pids="$TMP_ROOT/codex-start-wrapper-pids"
+mkdir -p "$codex_start_state" "$codex_start_logs" "$codex_start_wrapper_pids"
+cat > "$codex_start_fixture/shim/curl" <<'EOF'
+#!/bin/bash
+echo '{}'
+EOF
+cat > "$codex_start_fixture/shim/lsof" <<'EOF'
+#!/bin/bash
+case "$*" in
+  *-iTCP:2582*) name=plc ;;
+  *-iTCP:2583*) name=pds ;;
+  *-iTCP:2585*) name=appview ;;
+  *) name= ;;
+esac
+if [ -n "$name" ]; then
+  [ -f "$AIT_START_STATE/$name" ] && cat "$AIT_START_STATE/$name"
+elif [[ "$*" = *"-d cwd"* ]]; then
+  echo "n$AIT_START_REPO"
+fi
+EOF
+cat > "$codex_start_fixture/shim/pgrep" <<'EOF'
+#!/bin/bash
+case "$*" in
+  *codex*) [ -f "$AIT_START_WRAPPER_PID_DIR/codex-appserver" ] && cat "$AIT_START_WRAPPER_PID_DIR/codex-appserver" ;;
+esac
+EOF
+for wrapper in plc pds appview; do
+  cp "$start_fixture/bin/run-$wrapper.sh" "$codex_start_fixture/bin/run-$wrapper.sh"
+done
+cat > "$codex_start_fixture/bin/run-codex-appserver.sh" <<'EOF'
+#!/bin/bash
+printf '%s' "$$" > "$AIT_START_WRAPPER_PID_DIR/codex-appserver"
+if [ "${AIT_START_MODE:-delayed}" = delayed ]; then sleep 1; fi
+python3 - "$AIT_CODEX_SHARED_SOCKET" <<'PY' &
+import socket
+import sys
+
+path = sys.argv[1]
+try:
+    import os
+    os.unlink(path)
+except FileNotFoundError:
+    pass
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(path)
+server.listen(8)
+while True:
+    client, _ = server.accept()
+    client.close()
+PY
+server_pid=$!
+trap 'kill "$server_pid" 2>/dev/null || true; rm -f "$AIT_CODEX_SHARED_SOCKET"; exit 0' INT TERM
+while :; do sleep 1; done
+EOF
+cat > "$codex_start_fixture/shim/codex" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+chmod +x "$codex_start_fixture/shim/"* "$codex_start_fixture/bin/run-codex-appserver.sh"
+export PATH="$codex_start_fixture/shim:/usr/bin:/bin"
+export AIT_START_STATE="$codex_start_state"
+export AIT_START_WRAPPER_PID_DIR="$codex_start_wrapper_pids"
+export AIT_START_REPO="$(cd "$codex_start_fixture" && pwd)"
+export AIT_CODEX_SHARED_SOCKET="$codex_start_state/codex.sock"
+export AIT_LOG_DIR="$codex_start_logs"
+export AIT_START_MODE=delayed
+sleep 30 &
+adopted_codex_pid=$!
+printf '%s' "$adopted_codex_pid" > "$codex_start_wrapper_pids/codex-appserver"
+adoption_output="$("$codex_start_fixture/bin/start-all.sh" 2>&1)"
+assert_contains "$adoption_output" "codex-appserver already running (pid $adopted_codex_pid, adopted"
+assert_same "$(cat "$codex_start_logs/ait-codex-appserver.pid")" "$adopted_codex_pid"
+kill "$adopted_codex_pid" 2>/dev/null || true
+wait "$adopted_codex_pid" 2>/dev/null || true
+for wrapper in plc pds appview; do
+  kill "$(cat "$codex_start_wrapper_pids/$wrapper" 2>/dev/null)" 2>/dev/null || true
+done
+rm -f "$codex_start_state"/* "$codex_start_wrapper_pids"/* "$codex_start_logs"/*.pid
+pass "Codex adoption precedes socket readiness"
+
+codex_start_output="$("$codex_start_fixture/bin/start-all.sh" 2>&1)"
+assert_contains "$codex_start_output" "waiting for codex-appserver socket"
+assert_contains "$codex_start_output" "codex-appserver  running"
+codex_start_pid="$(cat "$codex_start_wrapper_pids/codex-appserver")"
+kill "$codex_start_pid" 2>/dev/null || true
+for wrapper in plc pds appview; do
+  kill "$(cat "$codex_start_wrapper_pids/$wrapper" 2>/dev/null)" 2>/dev/null || true
+done
+rm -f "$codex_start_state"/plc "$codex_start_state"/pds "$codex_start_state"/appview
+rm -f "$codex_start_wrapper_pids"/plc "$codex_start_wrapper_pids"/pds "$codex_start_wrapper_pids"/appview "$codex_start_wrapper_pids"/codex-appserver
+pass "Codex start waits for the socket event and status treats it as informational"
+
+public_source="$TMP_ROOT/public-source"
+mkdir -p "$public_source"
+tar -C "$REPO" --exclude .git -cf - . | tar -C "$public_source" -xf -
+git -C "$public_source" init -q
+git -C "$public_source" config user.email ait-test@example.invalid
+git -C "$public_source" config user.name ait-test
+git -C "$public_source" add -A
+git -C "$public_source" commit -qm snapshot
+public_install_root="$TMP_ROOT/public-install"
+public_output="$(
+  AIT_REPO_URL="file://$public_source" \
+  AIT_INSTALL_ROOT="$public_install_root" \
+  AIT_CLI_LINK="$TMP_ROOT/public-bin/ait" \
+  AIT_INSTALL_STATE_DIR="$TMP_ROOT/public-state" \
+  AIT_INSTALL_SKIP_PROVISION=1 \
+  "$REPO/install.sh"
+)"
+assert_same "$(printf '%s\n' "$public_output" | grep -c '^Prerequisites$')" 1
+assert_same "$(printf '%s\n' "$public_output" | grep -c '^AIT files:')" 1
+assert_same "$(printf '%s\n' "$public_output" | grep -c '^Services:')" 1
+assert_same "$(printf '%s\n' "$public_output" | grep -c '^CLI:')" 1
+assert_same "$(printf '%s\n' "$public_output" | grep -c '^  claude')" 1
+assert_same "$(printf '%s\n' "$public_output" | grep -c '^  codex')" 1
+assert_not_contains "$public_output" "Environment:"
+assert_file "$TMP_ROOT/public-bin/ait"
+pass "public bootstrap has one concise phase and harness table"
+
+echo "AIT test suite passed"

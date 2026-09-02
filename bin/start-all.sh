@@ -1,17 +1,65 @@
 #!/bin/bash
-# Starts PLC, PDS, AppView as nohup+disown background processes from the current
-# shell. They survive shell exit (reparented to init) but do NOT auto-restart
-# on crash and do NOT survive reboot. Use bin/install-services.sh for that —
+# Starts PLC, PDS, and AppView (plus Codex app-server when Codex is installed)
+# as nohup+disown background processes from the current shell. They survive
+# shell exit (reparented to init) but do NOT auto-restart on crash and do NOT
+# survive reboot. Use bin/install-services.sh for that —
 # requires granting bash Full Disk Access if the project lives under ~/Desktop.
 
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-LOGS=/tmp
+LOGS="${AIT_LOG_DIR:-/tmp}"
 mkdir -p "$LOGS"
 
 # shellcheck source=bin/lib-service-pids.sh
 . "$REPO/bin/lib-service-pids.sh"
 FAILED=""
+STARTING_NAME=""
+STARTING_PID=""
+STARTING_PIDFILE=""
+
+interrupt_start() {
+  local live=""
+  trap - INT TERM
+  if [ -n "$STARTING_NAME" ]; then
+    live="$(service_event_pid "$STARTING_NAME")"
+    if [ -n "$live" ]; then
+      echo "$live" > "$STARTING_PIDFILE"
+      echo "Interrupted while waiting for $STARTING_NAME; it is bound with pid $live (pidfile retained at $STARTING_PIDFILE)" >&2
+    else
+      rm -f "$STARTING_PIDFILE"
+      if [ -n "$STARTING_PID" ] && kill -0 "$STARTING_PID" 2>/dev/null; then
+        kill "$STARTING_PID" 2>/dev/null || true
+        echo "Interrupted while waiting for $STARTING_NAME; stopped wrapper pid $STARTING_PID" >&2
+      else
+        echo "Interrupted while waiting for $STARTING_NAME; wrapper pid ${STARTING_PID:-unknown} is no longer running; no pidfile retained" >&2
+      fi
+    fi
+  fi
+  exit 130
+}
+trap interrupt_start INT TERM
+
+codex_socket_ready() {
+  local sock="${AIT_CODEX_SHARED_SOCKET:-$HOME/.ait/codex-shared.sock}"
+  [ -S "$sock" ] || return 1
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import socket,sys
+s=socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect(sys.argv[1])
+s.close()' "$sock" >/dev/null 2>&1
+  elif command -v nc >/dev/null 2>&1; then
+    nc -zU "$sock" >/dev/null 2>&1
+  else
+    return 1
+  fi
+}
+
+service_event_pid() {
+  if [ "$1" = codex-appserver ]; then
+    codex_socket_ready || return 0
+  fi
+  running_pid "$1"
+}
 
 # Starting a second copy of a service that is already up is never harmless. A
 # port service dies on EADDRINUSE, leaving a pidfile that names a process which
@@ -21,13 +69,12 @@ FAILED=""
 # adopt it into the pidfile rather than starting anything.
 start_one() {
   local name=$1 wrapper=$2
-  local pidfile="$LOGS/ait-$name.pid"
+  local pidfile="$LOGS/ait-$name.pid" observable live
   if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
     echo "$name already running (pid $(cat "$pidfile"))"
     return
   fi
 
-  local live
   live="$(running_pid "$name")"
   if [ -n "$live" ]; then
     echo "$live" > "$pidfile"
@@ -37,69 +84,68 @@ start_one() {
 
   nohup "$REPO/bin/$wrapper" > "$LOGS/ait-$name.log" 2> "$LOGS/ait-$name.err" &
   local pid=$!
+  STARTING_NAME="$name"
+  STARTING_PID="$pid"
+  STARTING_PIDFILE="$pidfile"
   disown
 
-  # Wait for the service to take its port or socket before claiming success.
-  # Writing the pidfile unconditionally is how a crashed start used to leave a
-  # pidfile naming a dead process.
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    live="$(running_pid "$name")"
+  # Wait for the service's process/resource event before claiming success. The
+  # sleep is only a progress cadence; there is no elapsed-time failure verdict.
+  while :; do
+    live="$(service_event_pid "$name")"
     if [ -n "$live" ]; then break; fi
-    # Wrapper already exited, so it failed — stop waiting on it.
-    if ! kill -0 "$pid" 2>/dev/null; then break; fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "$name wrapper exited before binding its listener/socket; see $LOGS/ait-$name.err" >&2
+      rm -f "$pidfile"
+      FAILED="$FAILED $name"
+      STARTING_NAME=""
+      STARTING_PID=""
+      STARTING_PIDFILE=""
+      return 0
+    fi
+    case "$name" in
+      plc) observable="TCP port 2582" ;;
+      pds) observable="TCP port 2583" ;;
+      appview) observable="TCP port 2585" ;;
+      codex-appserver) observable="socket ${AIT_CODEX_SHARED_SOCKET:-$HOME/.ait/codex-shared.sock}" ;;
+    esac
+    echo "waiting for $name $observable; log: $LOGS/ait-$name.log (errors: $LOGS/ait-$name.err)"
     sleep 1
   done
 
-  if [ -z "$live" ]; then
-    echo "$name FAILED to start — see $LOGS/ait-$name.err" >&2
-    rm -f "$pidfile"
-    FAILED="$FAILED $name"
-    return 0   # keep going: one dead service must not skip the others
-  fi
   echo "$live" > "$pidfile"
   echo "started $name (pid $live)"
+  STARTING_NAME=""
+  STARTING_PID=""
+  STARTING_PIDFILE=""
 }
 
 start_one plc     run-plc.sh
 start_one pds     run-pds.sh
 start_one appview run-appview.sh
-start_one codex-appserver run-codex-appserver.sh
+if command -v codex >/dev/null 2>&1; then
+  start_one codex-appserver run-codex-appserver.sh
+else
+  echo "codex-appserver skipped (not installed)"
+fi
 
-# Report health rather than printing commands for the reader to run. The three
-# HTTP services answer a health endpoint; the codex app-server has no port, so
-# it is probed by connecting to its unix socket — the same thing a session does.
-probe_http() {
-  if curl -fsS --max-time 3 "$1" >/dev/null 2>&1; then echo ok; else echo UNREACHABLE; fi
-}
-
-PROBE_UNIX_SOCKET='import socket,sys
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.settimeout(2)
-s.connect(sys.argv[1])
-s.close()'
-
-probe_socket() {
-  if [ ! -S "$1" ]; then echo "NO SOCKET"; return; fi
-  # No python3 means no connect test, but the socket file is there and
-  # start_one already confirmed a server holds it — don't cry UNREACHABLE.
-  if ! command -v python3 >/dev/null 2>&1; then echo "socket present"; return; fi
-  if python3 -c "$PROBE_UNIX_SOCKET" "$1" 2>/dev/null; then echo ok; else echo UNREACHABLE; fi
-}
-
+# Keep one read-only health implementation for the supervisor and public CLI.
 echo ""
-echo "Health:"
-printf '  %-16s %s\n' plc             "$(probe_http http://localhost:2582/_health)"
-printf '  %-16s %s\n' pds             "$(probe_http http://localhost:2583/xrpc/_health)"
-printf '  %-16s %s\n' appview         "$(probe_http http://localhost:2585/xrpc/_health)"
-printf '  %-16s %s\n' codex-appserver "$(probe_socket "$CODEX_SOCK")"
+status=0
+if "$REPO/bin/status.sh"; then
+  status=0
+else
+  status=$?
+fi
 echo ""
-echo "Logs: tail -f /tmp/ait-{plc,pds,appview,codex-appserver}.{log,err}"
+echo "Logs: tail -f $LOGS/ait-{plc,pds,appview,codex-appserver}.{log,err}"
 echo "(codex-appserver is the shared codex app-server — a unix socket, no HTTP port;"
 echo " needs mcp built: npm --prefix mcp run build. Codex sessions attach via bin/codex-session.sh.)"
 echo "Stop: bin/stop-all.sh"
 
 if [ -n "$FAILED" ]; then
   echo ""
-  echo "DID NOT START:$FAILED — check /tmp/ait-<name>.err" >&2
+  echo "DID NOT START:$FAILED — check $LOGS/ait-<name>.err" >&2
   exit 1
 fi
+exit "$status"

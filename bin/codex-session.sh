@@ -21,7 +21,7 @@
 # Opening prompt (optional): a bare launch injects no turn — once the TUI opens,
 # join by typing `join …` yourself, like a normal Claude session. Pass a prompt
 # to auto-drive a hands-off session, mirroring claude-session.sh:
-#   codex-session.sh "join AIT as @my-spec.test and wait for mentions"
+#   ait codex "join AIT as @my-spec.test and wait for mentions"
 #
 # Resume: `codex-session.sh --resume <threadId>` re-opens an existing thread and
 # rebinds its original AIT handle. `--session` remains a supported alias. A bare

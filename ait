@@ -1,0 +1,251 @@
+#!/bin/bash
+# Public AIT command. State-changing work lives in focused scripts under bin.
+set -euo pipefail
+
+resolve_repo() {
+  local source="${BASH_SOURCE[0]}" dir target
+  while [ -L "$source" ]; do
+    dir="$(cd -P "$(dirname "$source")" && pwd)"
+    target="$(readlink "$source")"
+    case "$target" in
+      /*) source="$target" ;;
+      *) source="$dir/$target" ;;
+    esac
+  done
+  cd -P "$(dirname "$source")" && pwd
+}
+REPO="$(resolve_repo)"
+
+root_help() {
+  cat <<'EOF'
+AIT installs and operates the local AIT network.
+
+Usage: ait <command> [arguments...]
+
+Commands:
+  init [path]       Enable or verify AIT in a project.
+  start             Start the shared AIT services and verify health.
+  stop              Stop the shared AIT services.
+  status            Show read-only service and harness status.
+  claude [args...]  Launch a Claude Code AIT session in the current directory.
+  codex [args...]   Launch a Codex AIT session in the current directory.
+  help [command]    Show this help or a command's complete help page.
+  version           Show this checkout's exact Git revision.
+
+Examples:
+  ait init
+  ait claude "join AIT as @my-project.test and wait"
+  ait codex "join AIT as @my-project-build.test and wait"
+
+Manual update sequence (until AIT has a release updater):
+  ait stop
+  git -C "$HOME/.local/share/ait-protocol" pull --ff-only
+  "$HOME/.local/share/ait-protocol/bin/install.sh"
+  ait start
+
+Exit behavior:
+  0  success or help
+  1  prerequisite, conflict, service, or harness failure
+  2  invalid command or argument
+
+Run: ait help <command>
+EOF
+}
+
+command_help() {
+  case "$1" in
+    init)
+      cat <<'EOF'
+ait init — enable or verify AIT in a project.
+
+Usage: ait init [path]
+Arguments: path is an existing project directory; without it AIT resolves the
+current Git worktree root, or the nearest safe project marker outside Git.
+Options: --help, -h.
+Prerequisites: a healthy installed AIT core and Claude Code and/or Codex.
+Changes: may add the exact AIT entry to <project>/.mcp.json; preserves unrelated
+entries and creates no Codex project file.
+Example: cd my-project && ait init
+Normal result: prints the resolved project and ready/skipped harness rows.
+Recovery: run `ait start`; pass `ait init "$PWD"` for an explicit override.
+Exit behavior: 0 success, 1 prerequisite/conflict/native-harness failure, 2
+invalid arguments.
+EOF
+      ;;
+    start)
+      cat <<'EOF'
+ait start — start and verify the shared AIT services.
+
+Usage: ait start
+Arguments: none. Options: --help, -h.
+Prerequisites: macOS, the installed checkout, dependencies, builds, and env.
+Changes: starts PLC, PDS, AppView, and Codex only when Codex is installed.
+Example: ait start
+Normal result: prints the health table after successful probes.
+Recovery: inspect `ait status` and /tmp/ait-*.err; stop before repairs.
+Exit behavior: 0 healthy, 1 service failure, 2 invalid arguments.
+EOF
+      ;;
+    stop)
+      cat <<'EOF'
+ait stop — stop the shared AIT services.
+
+Usage: ait stop
+Arguments: none. Options: --help, -h.
+Prerequisites: the installed checkout; services may already be stopped.
+Changes: stops AIT services identified by their ports/socket and removes PID files.
+Example: ait stop
+Normal result: every AIT service is stopped or reported not running.
+Recovery: inspect `ait status` and the reported process owner.
+Exit behavior: 0 success, 1 stop failure, 2 invalid arguments.
+EOF
+      ;;
+    status)
+      cat <<'EOF'
+ait status — show read-only AIT service and harness status.
+
+Usage: ait status
+Arguments: none. Options: --help, -h.
+Prerequisites: the installed checkout and curl for HTTP probes.
+Changes: none; status never starts, stops, writes, or repairs services.
+Example: ait status
+Normal result: shows running/unreachable core services and Codex running,
+unreachable, or skipped (not installed).
+Recovery: run `ait start` when a required service is unreachable.
+Exit behavior: 0 when the required core is healthy, 1 otherwise, 2 invalid
+arguments.
+EOF
+      ;;
+    claude)
+      cat <<'EOF'
+ait claude — launch the existing Claude AIT session launcher.
+
+Usage: ait claude [args...]
+Arguments/options: all remaining arguments pass unchanged to the launcher.
+Prerequisites: healthy AIT core, Claude Code, built MCP, and an exact or
+pending-approval ait-protocol project entry.
+Changes: launches Claude in the caller's current directory; no service or
+project configuration is changed.
+Example: ait claude "join AIT as @my-project.test and wait"
+Normal result: Claude owns the terminal, signals, and exit status.
+Recovery: run `ait init` for the project, then `ait start`.
+Exit behavior: 0/native success, 1 prerequisite/harness failure, 2 invalid
+AIT arguments.
+EOF
+      ;;
+    codex)
+      cat <<'EOF'
+ait codex — launch the existing Codex AIT session launcher.
+
+Usage: ait codex [args...]
+Arguments/options: all remaining arguments pass unchanged to the launcher.
+Prerequisites: healthy AIT core, Codex, built MCP, and the executable launcher.
+Changes: launches Codex in the caller's current directory; no project file or
+core service is auto-started.
+Example: ait codex "join AIT as @my-project-build.test and wait"
+Normal result: Codex owns the terminal, signals, and exit status.
+Recovery: install Codex if missing, run `ait start`, and retry.
+Exit behavior: 0/native success, 1 prerequisite/harness failure, 2 invalid
+AIT arguments.
+EOF
+      ;;
+    help)
+      cat <<'EOF'
+ait help — show the canonical AIT command manual.
+
+Usage: ait help [command]
+Arguments: optional command: init, start, stop, status, claude, codex, help,
+or version. Options: --help, -h.
+Prerequisites: none.
+Changes: none; help is read-only and works with services stopped.
+Example: ait help init
+Normal result: exits zero with the requested page.
+Recovery: use `ait help` for the command list.
+Exit behavior: 0 success, 2 unknown command.
+EOF
+      ;;
+    version)
+      cat <<'EOF'
+ait version — show the installed checkout's exact Git revision.
+
+Usage: ait version
+Arguments: none. Options: --version, --help, -h.
+Prerequisites: a valid Git checkout; no network is contacted.
+Changes: none.
+Example: ait --version
+Normal result: prints the exact 40-character Git revision.
+Recovery: reinstall the managed checkout if the revision cannot be read.
+Exit behavior: 0 success, 1 invalid checkout, 2 invalid arguments.
+EOF
+      ;;
+    *)
+      echo "unknown help topic: $1" >&2
+      echo "Run: ait help" >&2
+      return 2
+      ;;
+  esac
+}
+
+invalid_args() {
+  echo "invalid arguments: $*" >&2
+  echo "Run: ait help" >&2
+  exit 2
+}
+
+case "${1:-help}" in
+  help)
+    shift || true
+    case "${1:-}" in
+      "") [ "$#" -eq 0 ] || invalid_args "$@"; root_help ;;
+      -h|--help) [ "$#" -eq 1 ] || invalid_args "$@"; command_help help ;;
+      *) [ "$#" -eq 1 ] || invalid_args "$@"; command_help "$1" ;;
+    esac
+    ;;
+  --help|-h)
+    [ "$#" -eq 1 ] || invalid_args "$@"
+    root_help
+    ;;
+  version|--version)
+    if [ "${1:-}" = "version" ] && { [ "${2:-}" = "-h" ] || [ "${2:-}" = "--help" ]; }; then
+      [ "$#" -eq 2 ] || invalid_args "$@"
+      command_help version
+    else
+      [ "$#" -eq 1 ] || invalid_args "$@"
+      git -C "$REPO" rev-parse HEAD
+    fi
+    ;;
+  init)
+    if [ "${2:-}" = "-h" ] || [ "${2:-}" = "--help" ]; then
+      [ "$#" -eq 2 ] || invalid_args "$@"
+      command_help init
+    else
+      exec "$REPO/bin/install.sh" --init "${@:2}"
+    fi
+    ;;
+  start|stop|status)
+    if [ "${2:-}" = "-h" ] || [ "${2:-}" = "--help" ]; then
+      [ "$#" -eq 2 ] || invalid_args "$@"
+      command_help "$1"
+    else
+      [ "$#" -eq 1 ] || invalid_args "$@"
+      case "$1" in
+        start) exec "$REPO/bin/start-all.sh" ;;
+        stop) exec "$REPO/bin/stop-all.sh" ;;
+        status) exec "$REPO/bin/status.sh" ;;
+      esac
+    fi
+    ;;
+  claude|codex)
+    if [ "${2:-}" = "-h" ] || [ "${2:-}" = "--help" ]; then
+      [ "$#" -eq 2 ] || invalid_args "$@"
+      command_help "$1"
+    else
+      exec "$REPO/bin/install.sh" --launch "$1" "${@:2}"
+    fi
+    ;;
+  *)
+    echo "unknown command: $1" >&2
+    echo "Run: ait help" >&2
+    exit 2
+    ;;
+esac

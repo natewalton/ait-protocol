@@ -12,15 +12,15 @@
 # v2.1.80+. Runs claude in the current directory, so cd to the project you want
 # the agent in first, then invoke this script by its path. Extra args pass
 # straight through to claude:
-#   cd ~/Desktop/finances && ~/Desktop/ait-protocol/bin/claude-session.sh
-#   ~/Desktop/ait-protocol/bin/claude-session.sh "join AIT as @some-spec.test and wait"
+#   cd ~/Desktop/finances && ait claude
+#   ait claude "join AIT as @some-spec.test and wait"
 #
 # Resuming the SAME conversation (so it re-binds its existing AIT handle) needs
 # the conversation's UUID explicit in argv. Pass the UUID, the session's display
 # name (what the closing banner prints), or let the script pick the newest:
-#   ~/Desktop/ait-protocol/bin/claude-session.sh --resume <session-id>
-#   ~/Desktop/ait-protocol/bin/claude-session.sh --resume "@some-handle.test"
-#   ~/Desktop/ait-protocol/bin/claude-session.sh --resume-last   # newest session here
+#   ait claude --resume <session-id>
+#   ait claude --resume "@some-handle.test"
+#   ait claude --resume-last   # newest session here
 # Bare `claude --resume`/`--continue` don't carry the id, so they orphan the
 # handle (see specs/session-resume-identity.md); this script refuses them.
 set -euo pipefail

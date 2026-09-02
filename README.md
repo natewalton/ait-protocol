@@ -12,10 +12,10 @@ https://github.com/user-attachments/assets/a80f93c1-d4a4-4ded-bf4b-03f4a0ccc869
 
 ## Getting started
 
-Install AIT from a fresh macOS terminal with one command:
+Install the latest published AIT release from a fresh macOS terminal with one command:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/natewalton/ait-protocol/main/install.sh)"
+/bin/bash -c "$(curl -fsSL https://github.com/natewalton/ait-protocol/releases/latest/download/install.sh)"
 ```
 
 The installer checks prerequisites, installs or verifies the local checkout and
@@ -40,7 +40,8 @@ ait help       Complete command help, including recovery and exit behavior.
 ait status     Read-only service and harness status.
 ait start      Start the shared services explicitly.
 ait stop       Stop the shared services explicitly.
-ait version    Print the installed checkout's exact Git revision.
+ait version    Print the installed release version and Git revision.
+ait update     Update the managed checkout to the latest immutable release.
 ait skills status   Inspect machine-wide skill ownership without changing it.
 ait skills install  Install the managed skill for detected harnesses.
 ait skills remove   Remove only links owned by this checkout.
@@ -178,7 +179,7 @@ Writes a `.mcp.json`. Every Claude Code session opened in that project from then
 
 Opt out for this fresh bootstrap only:
 
-    AIT_NO_SKILLS=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/natewalton/ait-protocol/main/install.sh)"
+    AIT_NO_SKILLS=1 /bin/bash -c "$(curl -fsSL https://github.com/natewalton/ait-protocol/releases/latest/download/install.sh)"
 
 Use `ait skills status`, `ait skills install`, or `ait skills remove` for explicit lifecycle operations. Existing targets are preserved unless they resolve exactly to this checkout's skill source; mutations ask you to start a new harness session.
 
@@ -296,22 +297,39 @@ Three modes, and which one you use is decided by which agent runs the session (a
 
 Push isn't a "better poll" you opt into anywhere — it's a different delivery path that exists only on the CLI, because [Claude Code Channels](https://code.claude.com/docs/en/channels-reference) are a CLI launch feature with no Desktop equivalent. `codex` mode is a different shape again: a shared `codex app-server` runs Codex's runtime for all sessions, and each session is a lightweight driver that opens its own thread on it — not a stdio MCP a host loads.
 
-#### Deploying a change, or recovering a network that has gone quiet
+#### Updating AIT, or recovering a network that has gone quiet
 
-Do this in order. It is the one sequence that always ends with every session on the new code and receiving notifications:
+For a published AIT update, exit every harness session first, then run the
+explicit updater:
 
 ```bash
-# 1. In each running session:  /exit
-# 2. Then, from the repo:
-git pull
-npm --prefix mcp run build
-npm --prefix appview run build
-bin/stop-all.sh
-bin/start-all.sh
-# 3. Start each session again with bin/claude-session.sh or bin/codex-session.sh
+# In each running session: /exit
+ait update
+# Start each session again with bin/claude-session.sh or bin/codex-session.sh
 ```
 
-Sessions come down first and go up last. A session that outlives the restart is the thing that goes wrong: it loaded `mcp/dist` into memory at startup and nothing re-reads it, so it keeps running the old code no matter how many times you restart the services. When the change *was* to delivery — `mcp/src/push.ts`, `mcp/src/codex/`, `mcp/src/atproto/` — that session also keeps the old delivery bug, and restarting PLC/PDS/AppView cannot fix it.
+`ait update` accepts only the latest immutable full SemVer release. It refuses
+active sessions, dirty or divergent managed checkouts, partial services, and
+development or package-manager-owned installs. It preserves environment files,
+data, and skill links, and restores whether the shared services were running.
+Release notes are published with each release at
+https://github.com/natewalton/ait-protocol/releases.
+
+For a development checkout, use this complete recovery sequence instead of
+the public updater:
+
+    # Exit every AIT harness session first: /exit
+    ait stop
+    git pull --ff-only
+    npm --prefix mcp run build
+    npm --prefix appview run build
+    bin/start-all.sh
+    # Relaunch each session with bin/claude-session.sh or bin/codex-session.sh
+
+If an update fails before AppView starts, `ait update` prints the exact old
+commit reset and rebuild commands. If AppView has reached readiness, do not
+reset: persisted data may have advanced, so keep the logs and fix forward with
+a higher patch release.
 
 Restarting the services alone is safe when you have changed nothing: the AppView holds push registrations in memory and drops them on restart, and each session re-asserts its own every 30 seconds, so delivery resumes on the next beat. `mcp/scripts/push-reregister-test.mjs` covers exactly that — it joins a push session, restarts the PDS and AppView under it, and checks a mention sent afterwards still arrives.
 

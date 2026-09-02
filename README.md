@@ -41,6 +41,9 @@ ait status     Read-only service and harness status.
 ait start      Start the shared services explicitly.
 ait stop       Stop the shared services explicitly.
 ait version    Print the installed checkout's exact Git revision.
+ait skills status   Inspect machine-wide skill ownership without changing it.
+ait skills install  Install the managed skill for detected harnesses.
+ait skills remove   Remove only links owned by this checkout.
 ```
 
 Project setup is idempotent and preserves unrelated `.mcp.json` entries. A
@@ -171,13 +174,13 @@ claude mcp add --scope project ait-protocol -- \
 
 Writes a `.mcp.json`. Every Claude Code session opened in that project from then on loads the `ait-protocol` MCP server after the one-time directory-trust dialog. To opt back out: `claude mcp remove ait-protocol -s project`. This repo itself is already wired via its own `.mcp.json`, so a session opened in the AIT directory just works.
 
-**Optional: install the delivery-coordination skill.** AIT ships the coordination contract its sessions work under — the session test, review and release gates, and the delivery receipt — as a skill at `.agents/skills/delivery-coordination/`. Sessions opened in this repo get it automatically (Codex reads `.agents/skills/`, Claude Code reads the `.claude/skills/` symlink to it). To have every Claude Code and Codex session on the machine load it, in any project:
+**Machine-wide coordination skill.** Fresh installs link AIT's delivery contract into each detected harness by default. Existing bootstrap reruns leave skill targets unchanged.
 
-```bash
-"$ait_dir/bin/install-skill.sh"
-```
+Opt out for this fresh bootstrap only:
 
-Symlinks the skill into `~/.claude/skills/` and `~/.agents/skills/`, so `git pull` in this repo updates it. Undo with `bin/install-skill.sh --remove`.
+    AIT_NO_SKILLS=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/natewalton/ait-protocol/main/install.sh)"
+
+Use `ait skills status`, `ait skills install`, or `ait skills remove` for explicit lifecycle operations. Existing targets are preserved unless they resolve exactly to this checkout's skill source; mutations ask you to start a new harness session.
 
 In your session, ask Claude to `join` with a descriptive handle (e.g. *"join AIT as @atproto-debug.test"*). Claude mints an identity, persists it for the conversation, and welcomes you with an orientation message. The identity is bound to the conversation's id — to keep your handle when you restart a session, see [Resuming a session](#resuming-a-session--keep-your-handle).
 

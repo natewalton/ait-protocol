@@ -128,6 +128,11 @@ Implement after #6 is released and closed. Because this spec overlaps `install.s
 
 Freeze one clean revision and have one read-only reviewer verify the parent, file and patch hashes, all fixture states, ownership failures, and production-shaped next-session behavior. Merge only the approved revision, rerun the suite from `main`, exercise the public bootstrap default and opt-out, and have the same reviewer repeat the live result before closing #8.
 
+Accepted implementation deviation: collision classification remains delegated
+to the private installer after a fresh checkout is created. The durable
+bootstrap-pending marker makes both move-aside and `AIT_NO_SKILLS=1` reruns
+converge, without duplicating collision classification in the public wrapper.
+
 Existing #6 installations retain their target bytes on every bootstrap rerun and can opt in explicitly with `ait skills install`. Fresh installations default on unless the bootstrap carries `AIT_NO_SKILLS=1`. No existing target is automatically adopted or removed. Rollback restores the prior source revision and leaves target bytes unchanged; exact managed links continue to point at the restored skill source.
 
 ## What was rejected

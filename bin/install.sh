@@ -8,6 +8,7 @@ PUBLIC_COMMAND='/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/nat
 ENV_TARGETS=("$REPO/plc/.env" "$REPO/pds/.env" "$REPO/appview/.env" "$REPO/mcp/.env")
 ENV_NAMES=(plc.env pds.env appview.env mcp.env)
 STATE_DIR="${AIT_INSTALL_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/ait-protocol/install-state}"
+BOOTSTRAP_MARKER="$STATE_DIR/bootstrap-pending"
 CLI_LINK=""
 BREW_PREFIX=""
 
@@ -243,6 +244,15 @@ manifest_valid() {
   [ "$(wc -l < "$STATE_DIR/manifest" | tr -d ' ')" = 4 ]
 }
 
+clear_env_transaction() {
+  local name
+  for name in "${ENV_NAMES[@]}"; do
+    rm -f "$STATE_DIR/$name"
+  done
+  rm -f "$STATE_DIR/manifest"
+  rmdir "$STATE_DIR" 2>/dev/null || true
+}
+
 env_preflight() {
   local present=0 i target actual hash
   for target in "${ENV_TARGETS[@]}"; do
@@ -263,7 +273,7 @@ env_preflight() {
         [ "$actual" = "$hash" ] || { echo "error: environment target changed since interrupted install: $target" >&2; return 1; }
       fi
     done
-  elif [ "$present" -eq 0 ] && [ -d "$STATE_DIR" ] && ! manifest_valid; then
+  elif [ "$present" -eq 0 ] && [ -d "$STATE_DIR" ] && [ ! -f "$BOOTSTRAP_MARKER" ] && ! manifest_valid; then
     echo "error: incomplete installer state at $STATE_DIR" >&2
     return 1
   fi
@@ -276,7 +286,7 @@ env_transaction() {
   done
 
   if [ "$present" -eq 4 ]; then
-    if [ -d "$STATE_DIR" ] && manifest_valid; then rm -rf "$STATE_DIR"; fi
+    if [ -d "$STATE_DIR" ] && manifest_valid; then clear_env_transaction; fi
     [ "${AIT_SUPPRESS_DETAIL_OUTPUT:-0}" = "1" ] || echo "Environment: ✓ existing four-file set preserved"
     return 0
   fi
@@ -298,8 +308,11 @@ env_transaction() {
         [ -f "$STATE_DIR/${ENV_NAMES[$i]}" ] || { echo "error: staged environment source missing: ${ENV_NAMES[$i]}" >&2; return 1; }
       fi
     done
-  elif [ -d "$STATE_DIR" ]; then
-    manifest_valid || { echo "error: incomplete installer state at $STATE_DIR" >&2; return 1; }
+  elif [ -d "$STATE_DIR" ] && manifest_valid; then
+    :
+  elif [ -d "$STATE_DIR" ] && [ ! -f "$BOOTSTRAP_MARKER" ]; then
+    echo "error: incomplete installer state at $STATE_DIR" >&2
+    return 1
   else
     umask 077
     mkdir -p "$STATE_DIR"
@@ -344,7 +357,7 @@ env_transaction() {
     hash="$(sed -n "$((i + 1))p" "$STATE_DIR/manifest" | cut -f2)"
     [ "$actual" = "$hash" ] || { echo "error: environment verification failed: ${ENV_TARGETS[$i]}" >&2; return 1; }
   done
-  rm -rf "$STATE_DIR"
+  clear_env_transaction
   [ "${AIT_SUPPRESS_DETAIL_OUTPUT:-0}" = "1" ] || echo "Environment: ✓ four files published atomically and verified"
 }
 
@@ -398,11 +411,19 @@ start_and_verify() {
 }
 
 machine_install() {
+  local fresh=0 running
   preflight || return 1
+  [ -f "$BOOTSTRAP_MARKER" ] && fresh=1
+  if [ "$fresh" -eq 1 ] && [ -n "${AIT_NO_SKILLS:-}" ] && [ "${AIT_NO_SKILLS}" != "1" ]; then
+    echo "  invalid: AIT_NO_SKILLS must be empty or 1" >&2
+    return 1
+  fi
   check_checkout || return 1
   check_cli_link || return 1
   env_preflight || return 1
-  local running
+  if [ "$fresh" -eq 1 ] && [ "${AIT_NO_SKILLS:-0}" != "1" ]; then
+    "$REPO/bin/install-skill.sh" --check || return 1
+  fi
   running="$(check_process_boundary)" || return 1
   if [ "$running" = "1" ]; then
     if ! "$REPO/bin/status.sh" >/dev/null 2>&1 || ! dependencies_ready; then
@@ -429,7 +450,6 @@ machine_install() {
       echo "AIT files: ✓ dependencies and builds ready"
     fi
   fi
-
   if [ "${AIT_INSTALL_SKIP_PROVISION:-0}" = "1" ]; then
     echo "Services: skipped by test fixture"
   else
@@ -441,6 +461,18 @@ machine_install() {
     echo "Harnesses:"
     if command -v claude >/dev/null 2>&1; then echo "  claude   ready"; else echo "  claude   skipped (not installed)"; fi
     if command -v codex >/dev/null 2>&1; then echo "  codex    ready"; else echo "  codex    skipped (not installed)"; fi
+  fi
+  if [ "$fresh" -eq 1 ]; then
+    if [ "${AIT_NO_SKILLS:-0}" = "1" ]; then
+      echo "  skills  skipped (AIT_NO_SKILLS=1)"
+    else
+      if ! "$REPO/bin/install-skill.sh" --bootstrap; then
+        echo "Skills: FAILED; AIT services and CLI are ready; rerun the bootstrap after resolving the skill target" >&2
+        return 1
+      fi
+    fi
+    rm -f "$BOOTSTRAP_MARKER"
+    rmdir "$STATE_DIR" 2>/dev/null || true
   fi
   echo "Next steps:"
   echo "  cd /path/to/your/project"

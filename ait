@@ -29,6 +29,7 @@ Commands:
   status            Show read-only service and harness status.
   claude [args...]  Launch a Claude Code AIT session in the current directory.
   codex [args...]   Launch a Codex AIT session in the current directory.
+  skills <command>  Install, remove, or inspect the delivery-coordination skill.
   help [command]    Show this help or a command's complete help page.
   version           Show this checkout's exact Git revision.
 
@@ -149,13 +150,36 @@ Exit behavior: 0/native success, 1 prerequisite/harness failure, 2 invalid
 AIT arguments.
 EOF
       ;;
+    skills)
+      cat <<'EOF'
+ait skills — manage the machine-wide delivery-coordination skill.
+
+Usage: ait skills <install|remove|status>
+Arguments: install, remove, or status. Options: --help, -h.
+Targets: ~/.claude/skills/delivery-coordination and
+~/.agents/skills/delivery-coordination.
+Prerequisites: the managed checkout and a detected Claude Code or Codex for
+install; status and remove are ownership-safe.
+Changes: install creates only missing links to this checkout's skill source;
+remove deletes only links resolving to that exact source; status never writes.
+Discovery: harness availability is checked when each command runs.
+Conflict: regular files, directories, broken links, and foreign links remain
+untouched and are reported with a safe recovery.
+Example: ait skills install
+Normal result: every mutation says to start a new harness session for a
+guaranteed result.
+Recovery: move a foreign target aside, then rerun the same command.
+Exit behavior: 0 success, 1 source/harness/conflict/filesystem failure, 2
+invalid command or arguments.
+EOF
+      ;;
     help)
       cat <<'EOF'
 ait help — show the canonical AIT command manual.
 
 Usage: ait help [command]
-Arguments: optional command: init, start, stop, status, claude, codex, help,
-or version. Options: --help, -h.
+Arguments: optional command: init, start, stop, status, claude, codex, skills,
+help, or version. Options: --help, -h.
 Prerequisites: none.
 Changes: none; help is read-only and works with services stopped.
 Example: ait help init
@@ -242,6 +266,24 @@ case "${1:-help}" in
     else
       exec "$REPO/bin/install.sh" --launch "$1" "${@:2}"
     fi
+    ;;
+  skills)
+    case "${2:-}" in
+      ""|-h|--help)
+        [ "$#" -eq 1 ] || [ "$#" -eq 2 ] || invalid_args "$@"
+        command_help skills
+        ;;
+      install|remove|status)
+        if [ "${3:-}" = "-h" ] || [ "${3:-}" = "--help" ]; then
+          [ "$#" -eq 3 ] || invalid_args "$@"
+          command_help skills
+        else
+          [ "$#" -eq 2 ] || invalid_args "$@"
+          exec "$REPO/bin/install-skill.sh" "--$2"
+        fi
+        ;;
+      *) invalid_args "$@" ;;
+    esac
     ;;
   *)
     echo "unknown command: $1" >&2

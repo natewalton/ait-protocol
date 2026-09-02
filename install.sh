@@ -6,6 +6,7 @@ set -euo pipefail
 INSTALL_ROOT="${AIT_INSTALL_ROOT:-$HOME/.local/share/ait-protocol}"
 REPO_URL="${AIT_REPO_URL:-https://github.com/natewalton/ait-protocol}"
 PUBLIC_COMMAND='/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/natewalton/ait-protocol/main/install.sh)"'
+STATE_DIR="${AIT_INSTALL_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/ait-protocol/install-state}"
 BREW_PREFIX=""
 CLI_LINK=""
 
@@ -19,6 +20,10 @@ missing_prereq() {
 preflight() {
   local failed=0 claude_installed=0 codex_installed=0
   echo "Prerequisites"
+  if [ -n "${AIT_NO_SKILLS:-}" ] && [ "${AIT_NO_SKILLS}" != "1" ]; then
+    echo "  invalid: AIT_NO_SKILLS must be empty or 1"
+    failed=1
+  fi
   if [ "$(uname -s 2>/dev/null || true)" != "Darwin" ] && [ "${AIT_SKIP_PLATFORM_CHECK:-0}" != "1" ]; then
     missing_prereq "macOS" "Run AIT on macOS." "https://github.com/natewalton/ait-protocol"
     failed=1
@@ -114,11 +119,23 @@ check_destination() {
   fi
 }
 
+write_bootstrap_marker() {
+  umask 077
+  if ! mkdir -p "$STATE_DIR" ||
+     ! printf 'fresh bootstrap pending\n' > "$STATE_DIR/bootstrap-pending" ||
+     ! chmod 600 "$STATE_DIR/bootstrap-pending"; then
+    echo "error: cannot record fresh bootstrap state at $STATE_DIR" >&2
+    echo "  recovery: set AIT_INSTALL_STATE_DIR to a writable directory and rerun" >&2
+    return 1
+  fi
+}
+
 main() {
   preflight || exit 1
   check_destination || exit 1
 
   if [ ! -e "$INSTALL_ROOT" ] && [ ! -L "$INSTALL_ROOT" ]; then
+    write_bootstrap_marker || exit 1
     mkdir -p "$(dirname "$INSTALL_ROOT")"
     if ! git clone "$REPO_URL" "$INSTALL_ROOT"; then
       echo "error: unable to clone $REPO_URL into $INSTALL_ROOT" >&2

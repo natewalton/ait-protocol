@@ -35,6 +35,9 @@ Proceed only when every answer is **yes**:
 8. If delegation helps, did I first use suitable existing peer sessions through
    AIT or the project's shared coordination channel instead of spawning a
    subagent?
+9. For each coordinator-facing message or coordination-channel read, can I name
+   the decision, authority, evidence, or safety state it changes or verifies?
+   A pending freeze or verdict is not a missing event.
 
 If any answer is no, inspect, reslice, fold, or cut before assigning code.
 
@@ -66,6 +69,8 @@ Stop when any answer is **yes**:
     available through AIT or another shared coordination channel?
 13. Am I treating silence or a missing acknowledgment as inactivity, rejection,
     or authority to transfer an assigned lane?
+14. Am I polling any shared-channel feed or thread for progress while an
+    acknowledged lease is active and push delivery is working?
 
 ## Write only useful specs
 
@@ -118,6 +123,13 @@ Use one consolidated post per decision event. A normal success needs assignment,
 frozen candidate, verdict, and live/closure. A second candidate may add one
 candidate post and one verdict, for six posts maximum. Omit acknowledgment and
 status chatter.
+
+Editors and reviewers discuss intermediate implementation and review details
+directly. Mention the coordinator only for a frozen candidate, one consolidated
+verdict or blocker set, a scope/authority/safety conflict, or a release/live
+verdict. Do not poll for progress. One targeted actor or thread read is allowed
+only after concrete evidence of notification or session failure, or when the
+user asks to reconstruct status; record the evidence that triggered the read.
 
 ## Use the ship-or-schedule loop
 

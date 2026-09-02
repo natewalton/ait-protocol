@@ -171,7 +171,9 @@ jobs:
             --draft --generate-notes --target "$(git rev-parse HEAD)" \
             --title "AIT $RELEASE_TAG"
           draft_created=1
-          draft_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          draft_id="$(gh release view "$RELEASE_TAG" --json databaseId --jq '.databaseId')"
+          test -n "$draft_id"
+          draft_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$draft_id")"
           expected_asset_digest="sha256:$(shasum -a 256 "$RELEASE_ASSET" | awk '{print $1}')"
           actual_asset_digest="$(node - "$draft_json" <<'NODE'
           const [raw] = process.argv.slice(2);
@@ -196,10 +198,13 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
-          draft_target="$(gh release view "$RELEASE_TAG" --json targetCommitish,isDraft --jq '.targetCommitish+"\t"+(.isDraft|tostring)')"
+          draft_target="$(gh release view "$RELEASE_TAG" --json databaseId,targetCommitish,isDraft --jq '(.databaseId|tostring)+"\t"+.targetCommitish+"\t"+(.isDraft|tostring)')"
+          draft_id="${draft_target%%$'\t'*}"
+          draft_target="${draft_target#*$'\t'}"
           test "${draft_target%%$'\t'*}" = "$(git rev-parse HEAD)"
           test "${draft_target#*$'\t'}" = true
-          draft_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          test -n "$draft_id"
+          draft_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$draft_id")"
           expected_asset_digest="sha256:$(shasum -a 256 "$RELEASE_ASSET" | awk '{print $1}')"
           actual_asset_digest="$(node - "$draft_json" <<'NODE'
           const [raw] = process.argv.slice(2);

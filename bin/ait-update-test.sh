@@ -86,6 +86,19 @@ for required in \
 done
 test "$(grep -Fc 'r.immutable !== true' "$workflow")" -eq 2 || fail "release workflow lifecycle" "immutable was required before publication"
 grep -Fq 'if (!r.draft || r.prerelease || r.target_commitish !== expectedCommit' "$workflow" || fail "release workflow lifecycle" "draft target/digest gate is missing"
+numeric_release_lookup_ok() {
+  local candidate=$1
+  ! grep -Fq 'releases/tags/$RELEASE_TAG' "$candidate" &&
+    test "$(grep -Fc 'releases/$draft_id' "$candidate")" -eq 2 &&
+    test "$(grep -Fc 'databaseId' "$candidate")" -eq 2
+}
+numeric_release_lookup_ok "$workflow" || fail "draft ID lookup regression" "prepare/publish do not both resolve databaseId"
+draft_lookup_fixture="$TMP_ROOT/draft-lookup.json"
+printf '%s\n' '{"databaseId":381628520,"targetCommitish":"deadbeef","isDraft":true}' > "$draft_lookup_fixture"
+publish_jq="$(grep -F 'gh release view "$RELEASE_TAG" --json databaseId,targetCommitish,isDraft' "$workflow" | sed -E "s/.*--jq '([^']+)'.*/\\1/")"
+publish_target="$(jq -r "$publish_jq" "$draft_lookup_fixture")" || fail "draft ID lookup regression" "publish jq expression rejects a numeric databaseId"
+test "$publish_target" = $'381628520\tdeadbeef\ttrue' || fail "draft ID lookup regression" "publish jq expression produced: $publish_target"
+pass "draft prepare and publish resolve the numeric release ID"
 grep -Fq 'AIT_PUBLIC_RECOVERY_COMMAND=' "$REPO/install.sh" || fail "transition recovery" "raw-main recovery command is not passed to private installer"
 grep -Fq 'checkout -q --detach "$TARGET_COMMIT"' "$REPO/bin/update.sh" || fail "target immutability" "checkout is not bound to the verified commit"
 pass "release workflow gates settings, ancestry, locked dependencies, asset replay, and digest"

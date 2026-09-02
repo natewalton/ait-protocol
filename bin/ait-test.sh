@@ -46,7 +46,12 @@ pass "shell syntax"
 help="$("$REPO/ait" --help)"
 assert_contains "$help" "init [path]"
 assert_contains "$help" "Manual update sequence"
-assert_contains "$help" 'git -C "$HOME/.local/share/ait-protocol" pull --ff-only'
+assert_contains "$help" "ait stop"
+assert_contains "$help" "git pull --ff-only"
+assert_contains "$help" "npm --prefix mcp run build"
+assert_contains "$help" "npm --prefix appview run build"
+assert_contains "$help" "bin/start-all.sh"
+assert_not_contains "$help" 'git -C "$HOME/.local/share/ait-protocol" pull --ff-only'
 assert_same "$help" "$("$REPO/ait")"
 assert_same "$help" "$("$REPO/ait" help)"
 for topic in init start stop status claude codex help version; do

@@ -1,0 +1,226 @@
+name: AIT release
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Prepare a draft or publish an inspected draft
+        required: true
+        type: choice
+        options: [prepare, publish]
+      version:
+        description: Stable SemVer without the v prefix
+        required: true
+        type: string
+      immutable_releases:
+        description: Before dispatch, run the admin-capable settings probe `gh api repos/OWNER/REPO/immutable-releases` and confirm it reports enabled.
+        required: true
+        type: choice
+        options: [confirmed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ait-release
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - name: Validate candidate and run gates
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$RELEASE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+          test "$(cat VERSION)" = "$RELEASE_VERSION"
+          git fetch --quiet origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          bash -n install.sh ait bin/install.sh bin/update.sh bin/ait-update-test.sh
+          bin/ait-test.sh
+          bin/ait-update-test.sh
+          npm --prefix plc ci
+          npm --prefix pds ci
+          npm --prefix appview ci
+          npm --prefix mcp ci
+          npm --prefix appview run build
+          npm --prefix mcp run build
+          bin/check-single-lexicon.sh
+
+  release:
+    needs: validate
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_OPERATION: ${{ inputs.operation }}
+      IMMUTABLE_RELEASES_CONFIRMED: ${{ inputs.immutable_releases }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - name: Prepare exact release asset
+        id: asset
+        run: |
+          set -euo pipefail
+          test "$IMMUTABLE_RELEASES_CONFIRMED" = confirmed
+          tag="v$RELEASE_VERSION"
+          git fetch --quiet origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          asset="$RUNNER_TEMP/install.sh"
+          sed -e "s/__AIT_RELEASE_TAG__/$tag/g" \
+              -e "s/__AIT_RELEASE_COMMIT__/$(git rev-parse HEAD)/g" \
+              install.sh > "$asset"
+          chmod 700 "$asset"
+          ! grep -Fq '__AIT_RELEASE_' "$asset"
+          bash -n "$asset"
+          "$asset" --verify-only
+          AIT_UPDATE_FIXTURE_ASSET="$asset" bin/ait-update-test.sh
+          test -s "$asset"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+      - name: Gate immutable release settings and ancestry
+        if: env.RELEASE_OPERATION == 'prepare'
+        env:
+          RELEASE_TAG: ${{ steps.asset.outputs.tag }}
+        run: |
+          set -euo pipefail
+          test "$IMMUTABLE_RELEASES_CONFIRMED" = confirmed
+          echo 'Operator confirmed the pre-dispatch immutable-releases settings probe.'
+          if git ls-remote --exit-code --refs origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "release tag already exists: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "release already exists: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          latest_response="$RUNNER_TEMP/latest-release.response"
+          latest_json="$RUNNER_TEMP/latest-release.json"
+          if gh api --include "repos/$GITHUB_REPOSITORY/releases/latest" > "$latest_response"; then
+            awk 'BEGIN { body=0 } /^$/{ body=1; next } body { print }' "$latest_response" > "$latest_json"
+          else
+            http_status="$(awk 'NR==1 {print $2; exit}' "$latest_response")"
+            if [ "$http_status" != 404 ]; then
+              cat "$latest_response" >&2
+              echo "latest release lookup failed with HTTP $http_status" >&2
+              exit 1
+            fi
+            : > "$latest_json"
+          fi
+          if [ -s "$latest_json" ]; then
+          previous_release="$(node - "$latest_json" <<'NODE'
+          const fs = require('fs');
+          const r = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (!/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(r.tag_name || '') || !/^[0-9a-f]{40}$/.test(r.target_commitish || '') || r.draft || r.prerelease || r.immutable !== true) process.exit(1);
+          process.stdout.write(`${r.tag_name}\t${r.target_commitish}`);
+          NODE
+            )"
+            previous_tag="${previous_release%%$'\t'*}"
+            previous_commit="${previous_release#*$'\t'}"
+            git fetch --quiet origin "refs/tags/$previous_tag:refs/ait-release-ancestry/$previous_tag"
+            test "$(git rev-parse "refs/ait-release-ancestry/$previous_tag^{commit}")" = "$previous_commit"
+            git merge-base --is-ancestor "$previous_commit" HEAD
+          fi
+      - name: Refuse migration-surface changes after the first release
+        if: env.RELEASE_OPERATION == 'prepare'
+        run: |
+          set -euo pipefail
+          latest_json="$RUNNER_TEMP/latest-release.json"
+          if [ -s "$latest_json" ]; then
+            previous="$(node - "$latest_json" <<'NODE'
+          const fs = require('fs');
+          process.stdout.write(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')).tag_name || '');
+          NODE
+            )"
+            if ! git diff --quiet "refs/ait-release-ancestry/$previous..HEAD" -- appview/src/db.ts; then
+              echo 'AppView migration surface changed; use a separately reviewed data-migration and recovery design.' >&2
+              exit 1
+            fi
+          fi
+      - name: Prepare inspected draft
+        if: env.RELEASE_OPERATION == 'prepare'
+        env:
+          RELEASE_TAG: ${{ steps.asset.outputs.tag }}
+          RELEASE_ASSET: ${{ steps.asset.outputs.asset }}
+        run: |
+          set -euo pipefail
+          draft_created=0
+          on_prepare_failure() {
+            rc=$?
+            if [ "$rc" -ne 0 ] && [ "$draft_created" -eq 1 ]; then
+              echo "recovery: gh release delete '$RELEASE_TAG' --yes" >&2
+              echo "recovery: git push origin ':refs/tags/$RELEASE_TAG'" >&2
+            fi
+            exit "$rc"
+          }
+          trap on_prepare_failure EXIT
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          gh release create "$RELEASE_TAG" "$RELEASE_ASSET#install.sh" \
+            --draft --generate-notes --target "$(git rev-parse HEAD)" \
+            --title "AIT $RELEASE_TAG"
+          draft_created=1
+          draft_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          expected_asset_digest="sha256:$(shasum -a 256 "$RELEASE_ASSET" | awk '{print $1}')"
+          actual_asset_digest="$(node - "$draft_json" <<'NODE'
+          const [raw] = process.argv.slice(2);
+          const r = JSON.parse(raw);
+          const a = (r.assets || []).find(x => x.name === 'install.sh');
+          process.stdout.write(a && a.digest || '');
+          NODE
+          )"
+          test "$actual_asset_digest" = "$expected_asset_digest"
+          node - "$draft_json" "$(git rev-parse HEAD)" "$(shasum -a 256 "$RELEASE_ASSET" | awk '{print $1}')" <<'NODE'
+          const [raw, expectedCommit, expectedDigest] = process.argv.slice(2);
+          const r = JSON.parse(raw);
+          const a = (r.assets || []).find(x => x.name === 'install.sh');
+          if (!r.draft || r.prerelease || r.target_commitish !== expectedCommit || !a || a.digest !== `sha256:${expectedDigest}`) process.exit(1);
+          NODE
+          gh release view "$RELEASE_TAG" --json url,tagName,targetCommitish,isDraft
+      - name: Publish inspected immutable release
+        if: env.RELEASE_OPERATION == 'publish'
+        env:
+          RELEASE_TAG: ${{ steps.asset.outputs.tag }}
+          RELEASE_ASSET: ${{ steps.asset.outputs.asset }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          draft_target="$(gh release view "$RELEASE_TAG" --json targetCommitish,isDraft --jq '.targetCommitish+"\t"+(.isDraft|tostring)')"
+          test "${draft_target%%$'\t'*}" = "$(git rev-parse HEAD)"
+          test "${draft_target#*$'\t'}" = true
+          draft_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          expected_asset_digest="sha256:$(shasum -a 256 "$RELEASE_ASSET" | awk '{print $1}')"
+          actual_asset_digest="$(node - "$draft_json" <<'NODE'
+          const [raw] = process.argv.slice(2);
+          const r = JSON.parse(raw);
+          const a = (r.assets || []).find(x => x.name === 'install.sh');
+          process.stdout.write(a && a.digest || '');
+          NODE
+          )"
+          test "$actual_asset_digest" = "$expected_asset_digest"
+          node - "$draft_json" "$(git rev-parse HEAD)" "$(shasum -a 256 "$RELEASE_ASSET" | awk '{print $1}')" <<'NODE'
+          const [raw, expectedCommit, expectedDigest] = process.argv.slice(2);
+          const r = JSON.parse(raw);
+          const a = (r.assets || []).find(x => x.name === 'install.sh');
+          if (!r.draft || r.prerelease || r.target_commitish !== expectedCommit || !a || a.digest !== `sha256:${expectedDigest}`) process.exit(1);
+          NODE
+          gh release edit "$RELEASE_TAG" --draft=false
+          release_json="$(curl -fsSL -H 'X-GitHub-Api-Version: 2026-03-10' "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest")"
+          node - "$release_json" "$RELEASE_TAG" "$(git rev-parse HEAD)" "$(shasum -a 256 "$RELEASE_ASSET" | awk '{print $1}')" <<'NODE'
+          const [raw, expectedTag, expectedCommit, expected] = process.argv.slice(2);
+          const r = JSON.parse(raw);
+          if (r.tag_name !== expectedTag || r.draft || r.prerelease || r.immutable !== true || r.target_commitish !== expectedCommit || r.html_url !== `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/tag/${expectedTag}`) process.exit(1);
+          const a = (r.assets || []).find(x => x.name === 'install.sh');
+          if (!a || a.digest !== `sha256:${expected}`) process.exit(1);
+          NODE

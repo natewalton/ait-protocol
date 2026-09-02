@@ -5,7 +5,18 @@ set -euo pipefail
 
 INSTALL_ROOT="${AIT_INSTALL_ROOT:-$HOME/.local/share/ait-protocol}"
 REPO_URL="${AIT_REPO_URL:-https://github.com/natewalton/ait-protocol}"
-PUBLIC_COMMAND='/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/natewalton/ait-protocol/main/install.sh)"'
+# These placeholders are replaced in the attached release asset by the release
+# workflow. Keeping the source runnable is useful for local fixture tests and
+# development, but a published asset always takes the exact-tag path below.
+RELEASE_TAG="__AIT_RELEASE_TAG__"
+RELEASE_COMMIT="__AIT_RELEASE_COMMIT__"
+SOURCE_TAG='__AIT_RELEASE''_TAG__'
+SOURCE_COMMIT='__AIT_RELEASE''_COMMIT__'
+if [ "$RELEASE_TAG" = "$SOURCE_TAG" ]; then
+  PUBLIC_COMMAND='/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/natewalton/ait-protocol/main/install.sh)"'
+else
+  PUBLIC_COMMAND='/bin/bash -c "$(curl -fsSL https://github.com/natewalton/ait-protocol/releases/latest/download/install.sh)"'
+fi
 STATE_DIR="${AIT_INSTALL_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/ait-protocol/install-state}"
 BREW_PREFIX=""
 CLI_LINK=""
@@ -98,7 +109,10 @@ valid_existing_checkout() {
   [ -x "$INSTALL_ROOT/ait" ] || return 1
   [ "$(git -C "$INSTALL_ROOT" rev-parse --show-toplevel 2>/dev/null || true)" = "$(resolve_path "$INSTALL_ROOT")" ] || return 1
   remote="$(git -C "$INSTALL_ROOT" remote get-url origin 2>/dev/null || true)"
-  [ "$remote" = "$REPO_URL" ] || [ "$remote" = "$REPO_URL.git" ]
+  [ "$remote" = "$REPO_URL" ] || [ "$remote" = "$REPO_URL.git" ] || return 1
+  if [ "$RELEASE_TAG" != "$SOURCE_TAG" ]; then
+    [ "$(git -C "$INSTALL_ROOT" rev-parse HEAD 2>/dev/null || true)" = "$RELEASE_COMMIT" ] || return 1
+  fi
 }
 
 check_destination() {
@@ -106,6 +120,9 @@ check_destination() {
     if ! valid_existing_checkout; then
       echo "error: destination collision or unexpected checkout: $INSTALL_ROOT" >&2
       echo "  expected: Git checkout of $REPO_URL with executable $INSTALL_ROOT/ait" >&2
+    if [ "$RELEASE_TAG" != "$SOURCE_TAG" ]; then
+        echo "  recovery: run ait update in the existing managed checkout, or remove it only after preserving its state" >&2
+      fi
       return 1
     fi
   fi
@@ -131,19 +148,51 @@ write_bootstrap_marker() {
 }
 
 main() {
+  if [ "${1:-}" = "--verify-only" ]; then
+    [ "$RELEASE_TAG" != "$SOURCE_TAG" ] || { echo "error: unreplaced release installer template" >&2; return 1; }
+    [ "$RELEASE_COMMIT" != "$SOURCE_COMMIT" ] || { echo "error: unreplaced release installer template" >&2; return 1; }
+    printf 'verified release installer %s at %s\n' "$RELEASE_TAG" "$RELEASE_COMMIT"
+    return 0
+  fi
   preflight || exit 1
   check_destination || exit 1
 
   if [ ! -e "$INSTALL_ROOT" ] && [ ! -L "$INSTALL_ROOT" ]; then
     write_bootstrap_marker || exit 1
     mkdir -p "$(dirname "$INSTALL_ROOT")"
-    if ! git clone "$REPO_URL" "$INSTALL_ROOT"; then
-      echo "error: unable to clone $REPO_URL into $INSTALL_ROOT" >&2
-      exit 1
+    if [ "$RELEASE_TAG" = "$SOURCE_TAG" ]; then
+      git clone "$REPO_URL" "$INSTALL_ROOT" || {
+        echo "error: unable to clone $REPO_URL into $INSTALL_ROOT" >&2
+        exit 1
+      }
+    else
+      git init -q "$INSTALL_ROOT"
+      git -C "$INSTALL_ROOT" remote add origin "$REPO_URL"
+      ref="refs/ait-release/$RELEASE_TAG"
+      if ! git -C "$INSTALL_ROOT" fetch -q --no-tags origin "refs/tags/$RELEASE_TAG:$ref"; then
+        echo "error: release tag $RELEASE_TAG could not be fetched from $REPO_URL" >&2
+        rm -rf "$INSTALL_ROOT"
+        exit 1
+      fi
+      fetched="$(git -C "$INSTALL_ROOT" rev-parse "$ref^{commit}")" || {
+        echo "error: release tag $RELEASE_TAG could not be resolved after fetch" >&2
+        rm -rf "$INSTALL_ROOT"
+        exit 1
+      }
+      if [ "$fetched" != "$RELEASE_COMMIT" ]; then
+        echo "error: release tag $RELEASE_TAG resolved to $fetched, expected $RELEASE_COMMIT" >&2
+        rm -rf "$INSTALL_ROOT"
+        exit 1
+      fi
+      if ! git -C "$INSTALL_ROOT" checkout -q --detach "$ref"; then
+        echo "error: release tag $RELEASE_TAG could not be checked out" >&2
+        rm -rf "$INSTALL_ROOT"
+        exit 1
+      fi
     fi
   fi
 
-  if ! AIT_SUPPRESS_PREFLIGHT_OUTPUT=1 AIT_SUPPRESS_DETAIL_OUTPUT=1 "$INSTALL_ROOT/bin/install.sh" --machine; then
+  if ! AIT_SUPPRESS_PREFLIGHT_OUTPUT=1 AIT_SUPPRESS_DETAIL_OUTPUT=1 AIT_PUBLIC_RECOVERY_COMMAND="$PUBLIC_COMMAND" "$INSTALL_ROOT/bin/install.sh" --machine; then
     echo "error: AIT installation did not complete; recovery: $PUBLIC_COMMAND" >&2
     exit 1
   fi

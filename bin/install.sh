@@ -4,7 +4,7 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 INSTALL_ROOT="${AIT_INSTALL_ROOT:-$HOME/.local/share/ait-protocol}"
-PUBLIC_COMMAND='/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/natewalton/ait-protocol/main/install.sh)"'
+PUBLIC_COMMAND="${AIT_PUBLIC_RECOVERY_COMMAND:-/bin/bash -c \"\$(curl -fsSL https://github.com/natewalton/ait-protocol/releases/latest/download/install.sh)\"}"
 ENV_TARGETS=("$REPO/plc/.env" "$REPO/pds/.env" "$REPO/appview/.env" "$REPO/mcp/.env")
 ENV_NAMES=(plc.env pds.env appview.env mcp.env)
 STATE_DIR="${AIT_INSTALL_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/ait-protocol/install-state}"
@@ -396,13 +396,26 @@ install_database() {
 }
 
 install_dependencies() {
-  npm --prefix "$REPO/plc" ci
-  npm --prefix "$REPO/pds" ci
-  npm --prefix "$REPO/appview" ci
-  npm --prefix "$REPO/mcp" ci
-  npm --prefix "$REPO/appview" run build
-  npm --prefix "$REPO/mcp" run build
-  "$REPO/bin/check-single-lexicon.sh"
+  npm --prefix "$REPO/plc" ci || return 1
+  npm --prefix "$REPO/pds" ci || return 1
+  npm --prefix "$REPO/appview" ci || return 1
+  npm --prefix "$REPO/mcp" ci || return 1
+  npm --prefix "$REPO/appview" run build || return 1
+  npm --prefix "$REPO/mcp" run build || return 1
+  "$REPO/bin/check-single-lexicon.sh" || return 1
+}
+
+rebuild_only() {
+  local target
+  check_checkout || return 1
+  for target in "${ENV_TARGETS[@]}"; do
+    [ -f "$target" ] || { echo "error: required environment file is missing: $target" >&2; return 1; }
+  done
+  install_dependencies || {
+    echo "error: rebuild failed; services were not started" >&2
+    return 1
+  }
+  echo "Rebuild: complete"
 }
 
 start_and_verify() {
@@ -607,6 +620,10 @@ launch_harness() {
 }
 
 case "${1:-}" in
+  --rebuild-only)
+    [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+    rebuild_only
+    ;;
   --machine)
     [ "$#" -eq 1 ] || { usage >&2; exit 2; }
     machine_install

@@ -31,18 +31,26 @@ Commands:
   codex [args...]   Launch a Codex AIT session in the current directory.
   skills <command>  Install, remove, or inspect the delivery-coordination skill.
   help [command]    Show this help or a command's complete help page.
-  version           Show this checkout's exact Git revision.
+  version           Show this checkout's release version and Git revision.
+  update            Update the managed checkout to the latest release.
 
 Examples:
   ait init
   ait claude "join AIT as @my-project.test and wait"
   ait codex "join AIT as @my-project-build.test and wait"
 
-Manual update sequence (until AIT has a release updater):
+Update policy:
+  ait update accepts only the latest immutable full SemVer release. It never
+  updates a development checkout, active session, dirty tree, or divergence.
+
+Manual update sequence (development checkout only; not used by ait update):
+  # Exit every AIT harness session first: /exit
   ait stop
-  git -C "$HOME/.local/share/ait-protocol" pull --ff-only
-  "$HOME/.local/share/ait-protocol/bin/install.sh"
-  ait start
+  git pull --ff-only
+  npm --prefix mcp run build
+  npm --prefix appview run build
+  bin/start-all.sh
+  # Relaunch each session with bin/claude-session.sh or bin/codex-session.sh
 
 Exit behavior:
   0  success or help
@@ -190,16 +198,40 @@ EOF
       ;;
     version)
       cat <<'EOF'
-ait version — show the installed checkout's exact Git revision.
+ait version — show this checkout's release version and Git revision.
 
 Usage: ait version
 Arguments: none. Options: --version, --help, -h.
-Prerequisites: a valid Git checkout; no network is contacted.
+Prerequisites: a valid Git checkout and VERSION; no network is contacted.
 Changes: none.
-Example: ait --version
-Normal result: prints the exact 40-character Git revision.
-Recovery: reinstall the managed checkout if the revision cannot be read.
+Example: ait version
+Normal result: prints the release version, short Git revision, and development
+when this checkout is not the exact commit of a published release.
+Recovery: reinstall the managed checkout if the version cannot be read.
 Exit behavior: 0 success, 1 invalid checkout, 2 invalid arguments.
+EOF
+      ;;
+    update)
+      cat <<'EOF'
+ait update — update the managed AIT checkout to one published release.
+
+Usage: ait update
+Arguments: none. Options: --help, -h.
+Prerequisites: the installer-owned checkout, a clean tree, no active AIT
+sessions, and services fully ready or fully stopped.
+Changes: fetches one latest immutable full SemVer release, verifies its tag,
+commit, VERSION, and installer digest, rebuilds, and restores service state.
+It preserves environment files, data, and skill-link targets.
+Refuses: development/package-manager checkouts, drafts, prereleases, mutable
+releases, divergence, downgrades, dirty state, active sessions, partial
+services, and a live update owner.
+Example: ait update
+Normal result: prints the verified release, rebuild, restored services, and
+release notes URL. An equal release is a read-only no-op.
+Recovery: failures before AppView starts print exact reset commands; after
+AppView is ready they require fix-forward and never recommend reset.
+Exit behavior: 0 updated or already current, 1 refusal or failed recovery,
+2 invalid arguments.
 EOF
       ;;
     *)
@@ -235,7 +267,26 @@ case "${1:-help}" in
       command_help version
     else
       [ "$#" -eq 1 ] || invalid_args "$@"
-      git -C "$REPO" rev-parse HEAD
+      if [ "${1:-}" = "--version" ]; then
+        git -C "$REPO" rev-parse HEAD
+      else
+        version_file="$REPO/VERSION"
+        [ -f "$version_file" ] || { echo "error: VERSION is missing from $REPO" >&2; exit 1; }
+        version="$(tr -d '[:space:]' < "$version_file")"
+        printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$' || {
+          echo "error: invalid VERSION: $version" >&2; exit 1;
+        }
+        short="$(git -C "$REPO" rev-parse --short=16 HEAD)"
+        tag="$(git -C "$REPO" tag --points-at HEAD "v$version" 2>/dev/null || true)"
+        if [ -z "$tag" ] && [ "$(git -C "$REPO" rev-parse "refs/ait-release/v$version""^{commit}" 2>/dev/null || true)" = "$(git -C "$REPO" rev-parse HEAD)" ]; then
+          tag="v$version"
+        fi
+        if [ "$tag" = "v$version" ]; then
+          printf 'AIT %s (%s)\n' "$version" "$short"
+        else
+          printf 'AIT %s (%s) development\n' "$version" "$short"
+        fi
+      fi
     fi
     ;;
   init)
@@ -253,10 +304,38 @@ case "${1:-help}" in
     else
       [ "$#" -eq 1 ] || invalid_args "$@"
       case "$1" in
+        start|stop)
+          lock="${AIT_UPDATE_LOCK:-${XDG_STATE_HOME:-$HOME/.local/state}/ait-protocol/update.lock}"
+          if [ -e "$lock" ]; then
+            lock_pid="$(cat "$lock/pid" 2>/dev/null || true)"
+            if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+              echo "error: AIT update is already running (pid $lock_pid)" >&2
+            else
+              echo "error: stale AIT update lock at $lock (pid ${lock_pid:-unknown})" >&2
+              echo "  recovery: rm -f '$lock/pid' '$lock/state' && rmdir '$lock', then rerun ait $1" >&2
+            fi
+            exit 1
+          fi
+          ;;
+      esac
+      case "$1" in
         start) exec "$REPO/bin/start-all.sh" ;;
         stop) exec "$REPO/bin/stop-all.sh" ;;
         status) exec "$REPO/bin/status.sh" ;;
       esac
+    fi
+    ;;
+  update)
+    if [ "${2:-}" = "-h" ] || [ "${2:-}" = "--help" ]; then
+      [ "$#" -eq 2 ] || invalid_args "$@"
+      command_help update
+    else
+      [ "$#" -eq 1 ] || invalid_args "$@"
+      updater="$(mktemp "${TMPDIR:-/tmp}/ait-update.XXXXXX")"
+      trap 'rm -f "$updater"' EXIT INT TERM
+      cp "$REPO/bin/update.sh" "$updater"
+      chmod 700 "$updater"
+      AIT_UPDATE_REPO="$REPO" AIT_UPDATE_EXECUTABLE="$REPO/ait" "$updater" "${AIT_INSTALL_ROOT:-$HOME/.local/share/ait-protocol}"
     fi
     ;;
   claude|codex)

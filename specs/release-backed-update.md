@@ -1,6 +1,6 @@
 # Update AIT only from published releases
 
-Status: frozen correction candidate, 2026-09-02. Tracked by [#7](https://github.com/natewalton/ait-protocol/issues/7); implement after [#6](https://github.com/natewalton/ait-protocol/issues/6) and [#8](https://github.com/natewalton/ait-protocol/issues/8).
+Status: frozen correction candidate, 2026-09-02. Tracked by [#7](https://github.com/natewalton/ait-protocol/issues/7); implement after [#6](https://github.com/natewalton/ait-protocol/issues/6) and [#8](https://github.com/natewalton/ait-protocol/issues/8). The candidate boundary includes the inherited `bin/ait-test.sh` help assertion and this spec so the safe development-checkout recovery guidance is tested and documented without retaining the obsolete managed-root pull command. The previous spec hash was `3030382b55e19103b0829d1c07903373e5313e0f89391c26734a22619d77ac29`; the corrected candidate hash is recorded in the delivery receipt.
 
 ## Why
 
@@ -94,7 +94,7 @@ If target AppView startup reached its ready event before a later Services phase 
 
 ## Files touched
 
-Eight implementation files:
+Nine paths are in candidate A: eight implementation files and this spec. README remains the held candidate-B child and is not activated until v0.1.0 is published.
 
 1. `VERSION` is the one-line stable semantic version used by the release, CLI, installer asset, and updater.
 2. `install.sh` becomes the release-installer template with exact tag and commit placeholders.
@@ -103,7 +103,8 @@ Eight implementation files:
 5. `bin/update.sh` owns latest-release resolution, exact tag verification, update, state restoration, and recovery output.
 6. `bin/ait-update-test.sh` provides isolated release API, Git origin, managed checkout, process, service, and failure fixtures.
 7. `.github/workflows/release.yml` prepares and publishes tested immutable releases with least privilege and serialized execution.
-8. `README.md` uses the latest-release installer, documents `ait update`, and links release notes.
+8. `bin/ait-test.sh` verifies the complete safe development-checkout sequence and rejects the obsolete managed-root pull form.
+9. `specs/release-backed-update.md` records the release/update contract and this boundary correction.
 
 The repository immutable-releases setting changes from disabled to enabled before the first draft. The existing read-only default `GITHUB_TOKEN` permission is verified and retained. No package manifest, lockfile, application source, schema, environment template, skill, project configuration, or service supervisor file changes.
 
@@ -124,11 +125,13 @@ The repository immutable-releases setting changes from disabled to enabled befor
 Run from the frozen implementation revision:
 
 ```bash
-bash -n install.sh ait bin/install.sh bin/update.sh bin/ait-update-test.sh
+bash -n install.sh ait bin/ait-test.sh bin/install.sh bin/update.sh bin/ait-update-test.sh
 test "$(cat VERSION)" = "0.1.0"
 bin/ait-test.sh
 bin/ait-update-test.sh
 ```
+
+The frozen candidate A boundary contains the nine paths listed above; candidate B contains only `README.md` and remains held for post-publication activation. The additional test/spec paths correct the inherited help-test boundary so the tested operator guidance and the frozen contract agree.
 
 `bin/ait-update-test.sh` uses a temporary public-API fixture, Git origin, managed checkout, home, services, process table, and command shims. It cannot reach the operator's real checkout, GitHub releases, environment files, database, ports, PID files, socket, or sessions. It covers:
 

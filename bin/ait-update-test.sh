@@ -5,6 +5,18 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
 ORIGINAL_PATH="$PATH"
+CURRENT_VERSION="$(tr -d '[:space:]' < "$REPO/VERSION")"
+RELEASE_VERSION="$(git -C "$REPO" show HEAD:VERSION | tr -d '[:space:]')"
+release_prefix="${RELEASE_VERSION%.*}"
+release_patch="${RELEASE_VERSION##*.}"
+NEXT_VERSION="$release_prefix.$((release_patch + 1))"
+NEWER_VERSION="$release_prefix.$((release_patch + 2))"
+RELEASE_TAG="v$RELEASE_VERSION"
+NEXT_TAG="v$NEXT_VERSION"
+NEWER_TAG="v$NEWER_VERSION"
+MISMATCH_TAG="v9.8.7"
+BAD_TARGET_VERSION="9.8.8"
+BAD_TARGET_TAG="v$BAD_TARGET_VERSION"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/ait-update-test.XXXXXX")"
 export GIT_CONFIG_NOSYSTEM=1
 export GIT_CONFIG_GLOBAL=/dev/null
@@ -39,7 +51,7 @@ pass "offline update help"
 version_home="$TMP_ROOT/version-home"
 mkdir -p "$version_home"
 version_output="$(HOME="$version_home" XDG_STATE_HOME="$TMP_ROOT/version-state" PATH="$ORIGINAL_PATH" "$REPO/ait" version)"
-assert_contains "$version_output" "AIT 0.1.0" "release version"
+assert_contains "$version_output" "AIT $CURRENT_VERSION" "release version"
 if git -C "$REPO" describe --exact-match --tags --match 'v[0-9]*' HEAD >/dev/null 2>&1; then
   case "$version_output" in *development*) fail "release version marker" "exact release checkout reports development" ;; esac
 else
@@ -59,13 +71,13 @@ annotated_version="$TMP_ROOT/annotated-version"
 git clone -q "$REPO" "$annotated_version"
 cp "$REPO/ait" "$annotated_version/ait"
 chmod +x "$annotated_version/ait"
-git -C "$annotated_version" tag -d v0.1.0 >/dev/null 2>&1 || true
-git -C "$annotated_version" tag -a -m "annotated release" v0.1.0 HEAD
-annotated_ref="$(git -C "$annotated_version" rev-parse refs/tags/v0.1.0)"
-git -C "$annotated_version" update-ref -d refs/tags/v0.1.0
-git -C "$annotated_version" update-ref refs/ait-release/v0.1.0 "$annotated_ref"
+git -C "$annotated_version" tag -d "$RELEASE_TAG" >/dev/null 2>&1 || true
+git -C "$annotated_version" tag -a -m "annotated release" "$RELEASE_TAG" HEAD
+annotated_ref="$(git -C "$annotated_version" rev-parse "refs/tags/$RELEASE_TAG")"
+git -C "$annotated_version" update-ref -d "refs/tags/$RELEASE_TAG"
+git -C "$annotated_version" update-ref "refs/ait-release/$RELEASE_TAG" "$annotated_ref"
 annotated_output="$(HOME="$TMP_ROOT/annotated-home" PATH="$ORIGINAL_PATH" "$annotated_version/ait" version)"
-assert_contains "$annotated_output" "AIT 0.1.0" "annotated release ref"
+assert_contains "$annotated_output" "AIT $RELEASE_VERSION" "annotated release ref"
 case "$annotated_output" in *development*) fail "annotated release ref" "peeled release ref was treated as development" ;; esac
 pass "annotated release ref is peeled to the active commit"
 
@@ -139,17 +151,17 @@ pass "unreplaced template transition window"
 origin="$TMP_ROOT/origin.git"
 managed="$TMP_ROOT/managed"
 git clone -q --bare "$REPO" "$origin"
-git --git-dir="$origin" tag -d v0.1.0 >/dev/null 2>&1 || true
-git --git-dir="$origin" tag "v0.1.0" "$(git -C "$REPO" rev-parse HEAD)"
+git --git-dir="$origin" tag -d "$RELEASE_TAG" >/dev/null 2>&1 || true
+git --git-dir="$origin" tag "$RELEASE_TAG" "$(git -C "$REPO" rev-parse HEAD)"
 release_commit="$(git -C "$REPO" rev-parse HEAD)"
 generated_asset="$TMP_ROOT/generated-install.sh"
-sed -e "s/__AIT_RELEASE_TAG__/v0.1.0/g" \
+sed -e "s/__AIT_RELEASE_TAG__/$RELEASE_TAG/g" \
     -e "s/__AIT_RELEASE_COMMIT__/$release_commit/g" "$REPO/install.sh" > "$generated_asset"
 chmod +x "$generated_asset"
 ! grep -Fq '__AIT_RELEASE_' "$generated_asset" || fail "generated asset" "placeholder remains"
 bash -n "$generated_asset" || fail "generated asset" "syntax failed"
 generated_verify="$($generated_asset --verify-only 2>&1)" || fail "generated asset" "verify-only failed: $generated_verify"
-assert_contains "$generated_verify" "verified release installer v0.1.0 at $release_commit" "generated asset"
+assert_contains "$generated_verify" "verified release installer $RELEASE_TAG at $release_commit" "generated asset"
 fresh_release="$TMP_ROOT/fresh-release"
 fresh_output="$(HOME="$source_home" PATH="$source_bin:$ORIGINAL_PATH" AIT_BREW_PREFIX="$TMP_ROOT/brew" AIT_SKIP_PLATFORM_CHECK=1 AIT_NO_SKILLS=1 AIT_REPO_URL="file://$origin" AIT_INSTALL_ROOT="$fresh_release" AIT_CLI_LINK="$TMP_ROOT/managed-cli/fresh-ait" AIT_INSTALL_STATE_DIR="$TMP_ROOT/fresh-state" AIT_INSTALL_SKIP_PROVISION=1 "$generated_asset" 2>&1)" || fail "generated asset" "fresh install failed: $fresh_output"
 [ "$(git -C "$fresh_release" rev-parse HEAD)" = "$release_commit" ] || fail "generated asset" "wrong exact tag checkout"
@@ -331,12 +343,12 @@ else
 fi
 asset_hash="$(shasum -a 256 "$asset" | awk '{print $1}')"
 api="$TMP_ROOT/release.json"
-printf '%s\n' "{\"tag_name\":\"v0.1.0\",\"html_url\":\"https://example.test/releases/v0.1.0\",\"draft\":false,\"prerelease\":false,\"immutable\":true,\"assets\":[{\"name\":\"install.sh\",\"browser_download_url\":\"file://$asset\",\"digest\":\"sha256:$asset_hash\"}]}" > "$api"
+printf '%s\n' "{\"tag_name\":\"$RELEASE_TAG\",\"html_url\":\"https://example.test/releases/$RELEASE_TAG\",\"draft\":false,\"prerelease\":false,\"immutable\":true,\"assets\":[{\"name\":\"install.sh\",\"browser_download_url\":\"file://$asset\",\"digest\":\"sha256:$asset_hash\"}]}" > "$api"
 
 draft_fixture="$TMP_ROOT/draft-release.json"
 published_fixture="$TMP_ROOT/published-release.json"
-printf '%s\n' "{\"tag_name\":\"v0.1.0\",\"draft\":true,\"prerelease\":false,\"immutable\":false,\"target_commitish\":\"$release_commit\",\"assets\":[{\"name\":\"install.sh\",\"digest\":\"sha256:$asset_hash\"}]}" > "$draft_fixture"
-printf '%s\n' "{\"tag_name\":\"v0.1.0\",\"draft\":false,\"prerelease\":false,\"immutable\":true,\"target_commitish\":\"$release_commit\",\"assets\":[{\"name\":\"install.sh\",\"digest\":\"sha256:$asset_hash\"}]}" > "$published_fixture"
+printf '%s\n' "{\"tag_name\":\"$RELEASE_TAG\",\"draft\":true,\"prerelease\":false,\"immutable\":false,\"target_commitish\":\"$release_commit\",\"assets\":[{\"name\":\"install.sh\",\"digest\":\"sha256:$asset_hash\"}]}" > "$draft_fixture"
+printf '%s\n' "{\"tag_name\":\"$RELEASE_TAG\",\"draft\":false,\"prerelease\":false,\"immutable\":true,\"target_commitish\":\"$release_commit\",\"assets\":[{\"name\":\"install.sh\",\"digest\":\"sha256:$asset_hash\"}]}" > "$published_fixture"
 node - "$draft_fixture" "$published_fixture" "$release_commit" "$asset_hash" <<'NODE'
 const fs = require('fs');
 const [draftPath, publishedPath, expectedCommit, expectedDigest] = process.argv.slice(2);
@@ -363,8 +375,8 @@ before_env="$(shasum -a 256 "$managed"/plc/.env "$managed"/pds/.env "$managed"/a
 before_data="$(shasum -a 256 "$managed/appview/data/sentinel" | awk '{print $1}')"
 before_links="$(readlink "$source_home/.claude/skills/delivery-coordination")|$(readlink "$source_home/.agents/skills/delivery-coordination")"
 update_output="$(HOME="$source_home" PATH="$fixture_bin:$ORIGINAL_PATH" AIT_FIXTURE_GIT_TRACE="$TMP_ROOT/git-trace" AIT_RELEASE_API_URL="file://$api" AIT_UPDATE_EXPECTED_ORIGIN="$origin" AIT_UPDATE_CLI_LINK="$TMP_ROOT/managed-cli/ait" AIT_INSTALL_ROOT="$managed" AIT_UPDATE_STATUS_SCRIPT="$status_script" AIT_UPDATE_START_SCRIPT="$start_script" AIT_UPDATE_STOP_SCRIPT="$stop_script" AIT_FIXTURE_STOPPED="$TMP_ROOT/stopped" AIT_FIXTURE_STARTED="$TMP_ROOT/started" "$REPO/bin/update.sh" "$managed" 2>&1)" || fail "ready update" "update failed: $update_output"
-assert_contains "$update_output" "Updated AIT pre-release -> 0.1.0" "ready update"
-assert_contains "$update_output" "Release notes: https://example.test/releases/v0.1.0" "ready update"
+assert_contains "$update_output" "Updated AIT pre-release -> $RELEASE_VERSION" "ready update"
+assert_contains "$update_output" "Release notes: https://example.test/releases/$RELEASE_TAG" "ready update"
 [ "$(git -C "$managed" rev-parse HEAD)" = "$release_commit" ] || fail "ready update" "wrong target commit"
 [ -f "$TMP_ROOT/started" ] && [ -f "$TMP_ROOT/stopped" ] || fail "ready update" "service state was not restored"
 after_env="$(shasum -a 256 "$managed"/plc/.env "$managed"/pds/.env "$managed"/appview/.env "$managed"/mcp/.env | shasum -a 256 | awk '{print $1}')"
@@ -390,9 +402,9 @@ assert_contains "$noop_crashed_output" "already up to date" "crashed-service no-
 pass "up-to-date no-op succeeds without probing a crashed service"
 
 comment_asset="$TMP_ROOT/comment-install.sh"
-printf '# RELEASE_TAG="v0.1.0"\n# RELEASE_COMMIT="%s"\n' "$release_commit" > "$comment_asset"
+printf '# RELEASE_TAG="%s"\n# RELEASE_COMMIT="%s"\n' "$RELEASE_TAG" "$release_commit" > "$comment_asset"
 comment_hash="$(shasum -a 256 "$comment_asset" | awk '{print $1}')"
-printf '%s\n' "{\"tag_name\":\"v0.1.0\",\"draft\":false,\"prerelease\":false,\"immutable\":true,\"assets\":[{\"name\":\"install.sh\",\"browser_download_url\":\"file://$comment_asset\",\"digest\":\"sha256:$comment_hash\"}]}" > "$api"
+printf '%s\n' "{\"tag_name\":\"$RELEASE_TAG\",\"draft\":false,\"prerelease\":false,\"immutable\":true,\"assets\":[{\"name\":\"install.sh\",\"browser_download_url\":\"file://$comment_asset\",\"digest\":\"sha256:$comment_hash\"}]}" > "$api"
 set +e
 comment_output="$(HOME="$source_home" PATH="$fixture_bin:$ORIGINAL_PATH" AIT_RELEASE_API_URL="file://$api" AIT_UPDATE_EXPECTED_ORIGIN="$origin" AIT_UPDATE_CLI_LINK="$TMP_ROOT/managed-cli/ait" AIT_INSTALL_ROOT="$managed" AIT_UPDATE_STATUS_SCRIPT="$status_script" "$REPO/bin/update.sh" "$managed" 2>&1)"
 comment_status=$?
@@ -401,7 +413,7 @@ assert_status 1 "$comment_status" "comment-only identity refusal"
 assert_contains "$comment_output" "exactly one full SemVer tag assignment" "comment-only identity refusal"
 pass "comment-only release identity is rejected"
 
-printf '%s\n' "{\"tag_name\":\"v0.1.0\",\"html_url\":\"https://example.test/releases/v0.1.0\",\"draft\":false,\"prerelease\":false,\"immutable\":true,\"assets\":[{\"name\":\"install.sh\",\"browser_download_url\":\"file://$asset\",\"digest\":\"sha256:$asset_hash\"}]}" > "$api"
+printf '%s\n' "{\"tag_name\":\"$RELEASE_TAG\",\"html_url\":\"https://example.test/releases/$RELEASE_TAG\",\"draft\":false,\"prerelease\":false,\"immutable\":true,\"assets\":[{\"name\":\"install.sh\",\"browser_download_url\":\"file://$asset\",\"digest\":\"sha256:$asset_hash\"}]}" > "$api"
 active_noop_output="$(HOME="$source_home" PATH="$fixture_bin:$ORIGINAL_PATH" AIT_FIXTURE_ACTIVE=1 AIT_RELEASE_API_URL="file://$api" AIT_UPDATE_EXPECTED_ORIGIN="$origin" AIT_UPDATE_CLI_LINK="$TMP_ROOT/managed-cli/ait" AIT_INSTALL_ROOT="$managed" AIT_UPDATE_STATUS_SCRIPT="$status_script" "$REPO/bin/update.sh" "$managed" 2>&1)" || fail "active-session no-op" "no-op refused: $active_noop_output"
 assert_contains "$active_noop_output" "already up to date" "active-session no-op"
 pass "up-to-date no-op ignores sessions because it performs no mutation"
@@ -504,25 +516,25 @@ pass "TERM during real recovery keeps cleanup after lock-held restore"
 race_source="$TMP_ROOT/race-source"
 git clone -q "$origin" "$race_source"
 git -C "$race_source" checkout -q --detach "$release_commit"
-printf '0.1.1\n' > "$race_source/VERSION"
+printf '%s\n' "$NEXT_VERSION" > "$race_source/VERSION"
 git -C "$race_source" config user.email fixture@example.test
 git -C "$race_source" config user.name fixture
 git -C "$race_source" add VERSION
 git -C "$race_source" commit -q -m "race target"
 race_commit="$(git -C "$race_source" rev-parse HEAD)"
 git --git-dir="$origin" fetch -q "$race_source" "HEAD:refs/ait-race-target"
-git --git-dir="$origin" tag v0.1.1 "$race_commit"
+git --git-dir="$origin" tag "$NEXT_TAG" "$race_commit"
 race_asset="$TMP_ROOT/race-install.sh"
-sed -e "s/RELEASE_TAG=\"v0.1.0\"/RELEASE_TAG=\"v0.1.1\"/" \
+sed -e "s/RELEASE_TAG=\"$RELEASE_TAG\"/RELEASE_TAG=\"$NEXT_TAG\"/" \
     -e "s/RELEASE_COMMIT=\"$release_commit\"/RELEASE_COMMIT=\"$race_commit\"/" "$generated_asset" > "$race_asset"
 chmod +x "$race_asset"
 race_hash="$(shasum -a 256 "$race_asset" | awk '{print $1}')"
 race_api="$TMP_ROOT/race-release.json"
-printf '%s\n' "{\"tag_name\":\"v0.1.1\",\"html_url\":\"https://example.test/releases/v0.1.1\",\"draft\":false,\"prerelease\":false,\"immutable\":true,\"assets\":[{\"name\":\"install.sh\",\"browser_download_url\":\"file://$race_asset\",\"digest\":\"sha256:$race_hash\"}]}" > "$race_api"
+printf '%s\n' "{\"tag_name\":\"$NEXT_TAG\",\"html_url\":\"https://example.test/releases/$NEXT_TAG\",\"draft\":false,\"prerelease\":false,\"immutable\":true,\"assets\":[{\"name\":\"install.sh\",\"browser_download_url\":\"file://$race_asset\",\"digest\":\"sha256:$race_hash\"}]}" > "$race_api"
 race_b_source="$TMP_ROOT/race-b-source"
 git clone -q "$origin" "$race_b_source"
 git -C "$race_b_source" checkout -q --detach "$race_commit"
-printf '0.1.2\n' > "$race_b_source/VERSION"
+printf '%s\n' "$NEWER_VERSION" > "$race_b_source/VERSION"
 git -C "$race_b_source" config user.email fixture@example.test
 git -C "$race_b_source" config user.name fixture
 git -C "$race_b_source" add VERSION
@@ -530,20 +542,20 @@ git -C "$race_b_source" commit -q -m "race newer target"
 race_b_commit="$(git -C "$race_b_source" rev-parse HEAD)"
 git --git-dir="$origin" fetch -q "$race_b_source" "HEAD:refs/ait-race-target-b"
 race_b_asset="$TMP_ROOT/race-b-install.sh"
-sed -e "s/RELEASE_TAG=\"v0.1.0\"/RELEASE_TAG=\"v0.1.2\"/" \
+sed -e "s/RELEASE_TAG=\"$RELEASE_TAG\"/RELEASE_TAG=\"$NEWER_TAG\"/" \
     -e "s/RELEASE_COMMIT=\"$release_commit\"/RELEASE_COMMIT=\"$race_b_commit\"/" "$generated_asset" > "$race_b_asset"
 chmod +x "$race_b_asset"
 race_b_hash="$(shasum -a 256 "$race_b_asset" | awk '{print $1}')"
 race_managed="$TMP_ROOT/race-managed"
 prepare_old_fixture "$race_managed" "$TMP_ROOT/managed-cli/race-ait"
 race_url="file://$race_api"
-if ! git --git-dir="$origin" show-ref --verify --quiet refs/tags/v0.1.1; then fail "target appears after API" "response target A was not published before API response"; fi
-if git --git-dir="$origin" show-ref --verify --quiet refs/tags/v0.1.2; then fail "target appears after API" "newer target B existed before API response"; fi
-race_output="$(HOME="$source_home" PATH="$fixture_bin:$ORIGINAL_PATH" AIT_FIXTURE_REAL_CURL="$real_curl" AIT_FIXTURE_API_RACE_URL="$race_url" AIT_FIXTURE_API_RACE_JSON="$race_api" AIT_FIXTURE_API_RACE_ORIGIN="$origin" AIT_FIXTURE_API_RACE_TAG=v0.1.2 AIT_FIXTURE_API_RACE_COMMIT="$race_b_commit" AIT_FIXTURE_SERVICE_STATE=stopped AIT_RELEASE_API_URL="$race_url" AIT_UPDATE_EXPECTED_ORIGIN="$origin" AIT_UPDATE_CLI_LINK="$TMP_ROOT/managed-cli/race-ait" AIT_INSTALL_ROOT="$race_managed" AIT_UPDATE_STATUS_SCRIPT="$status_script" "$REPO/bin/update.sh" "$race_managed" 2>&1)" || fail "target appears after API" "update failed: $race_output"
-assert_contains "$race_output" "Updated AIT pre-release -> 0.1.1" "target appears after API"
+if ! git --git-dir="$origin" show-ref --verify --quiet "refs/tags/$NEXT_TAG"; then fail "target appears after API" "response target A was not published before API response"; fi
+if git --git-dir="$origin" show-ref --verify --quiet "refs/tags/$NEWER_TAG"; then fail "target appears after API" "newer target B existed before API response"; fi
+race_output="$(HOME="$source_home" PATH="$fixture_bin:$ORIGINAL_PATH" AIT_FIXTURE_REAL_CURL="$real_curl" AIT_FIXTURE_API_RACE_URL="$race_url" AIT_FIXTURE_API_RACE_JSON="$race_api" AIT_FIXTURE_API_RACE_ORIGIN="$origin" AIT_FIXTURE_API_RACE_TAG="$NEWER_TAG" AIT_FIXTURE_API_RACE_COMMIT="$race_b_commit" AIT_FIXTURE_SERVICE_STATE=stopped AIT_RELEASE_API_URL="$race_url" AIT_UPDATE_EXPECTED_ORIGIN="$origin" AIT_UPDATE_CLI_LINK="$TMP_ROOT/managed-cli/race-ait" AIT_INSTALL_ROOT="$race_managed" AIT_UPDATE_STATUS_SCRIPT="$status_script" "$REPO/bin/update.sh" "$race_managed" 2>&1)" || fail "target appears after API" "update failed: $race_output"
+assert_contains "$race_output" "Updated AIT pre-release -> $NEXT_VERSION" "target appears after API"
 [ "$(git -C "$race_managed" rev-parse HEAD)" = "$race_commit" ] || fail "target appears after API" "wrong target after API response"
-git --git-dir="$origin" show-ref --verify --quiet refs/tags/v0.1.2 || fail "target appears after API" "newer target B was not published after API response"
-[ "$(git --git-dir="$origin" show v0.1.2:VERSION)" = 0.1.2 ] || fail "target appears after API" "newer target B is invalid"
+git --git-dir="$origin" show-ref --verify --quiet "refs/tags/$NEWER_TAG" || fail "target appears after API" "newer target B was not published after API response"
+[ "$(git --git-dir="$origin" show "$NEWER_TAG:VERSION")" = "$NEWER_VERSION" ] || fail "target appears after API" "newer target B is invalid"
 pass "newer release appearing after the API response is deferred while response target A installs"
 
 set +e
@@ -871,10 +883,10 @@ pass "rate-limit response uses the named network recovery"
 printf '%s\n' not-json > "$TMP_ROOT/invalid-release.json"
 MATRIX_API_URL="file://$TMP_ROOT/invalid-release.json"
 expect_matrix "invalid JSON refusal" "immutable full SemVer"
-printf '%s\n' "{\"tag_name\":\"v0.1.0\",\"draft\":true,\"prerelease\":false,\"immutable\":true,\"assets\":[]}" > "$TMP_ROOT/draft-release.json"
+printf '%s\n' "{\"tag_name\":\"$RELEASE_TAG\",\"draft\":true,\"prerelease\":false,\"immutable\":true,\"assets\":[]}" > "$TMP_ROOT/draft-release.json"
 MATRIX_API_URL="file://$TMP_ROOT/draft-release.json"
 expect_matrix "draft release refusal" "immutable full SemVer"
-printf '%s\n' "{\"tag_name\":\"v0.1.0\",\"draft\":false,\"prerelease\":true,\"immutable\":true,\"assets\":[]}" > "$TMP_ROOT/prerelease-release.json"
+printf '%s\n' "{\"tag_name\":\"$RELEASE_TAG\",\"draft\":false,\"prerelease\":true,\"immutable\":true,\"assets\":[]}" > "$TMP_ROOT/prerelease-release.json"
 MATRIX_API_URL="file://$TMP_ROOT/prerelease-release.json"
 expect_matrix "prerelease refusal" "immutable full SemVer"
 printf '%s\n' "{\"tag_name\":\"release-0.1\",\"draft\":false,\"prerelease\":false,\"immutable\":true,\"assets\":[]}" > "$TMP_ROOT/malformed-release.json"
@@ -887,11 +899,11 @@ printf '%s\n' "{\"tag_name\":\"v9.9.9\",\"draft\":false,\"prerelease\":false,\"i
 MATRIX_API_URL="file://$TMP_ROOT/missing-tag.json"
 expect_matrix "missing tag refusal" "could not be fetched"
 
-git --git-dir="$origin" tag v0.1.3 "$release_commit"
+git --git-dir="$origin" tag "$MISMATCH_TAG" "$release_commit"
 mismatch_asset="$TMP_ROOT/mismatch-install.sh"
-printf '#!/bin/bash\nRELEASE_TAG="v0.1.3"\nRELEASE_COMMIT="%s"\n' "$release_commit" > "$mismatch_asset"
+printf '#!/bin/bash\nRELEASE_TAG="%s"\nRELEASE_COMMIT="%s"\n' "$MISMATCH_TAG" "$release_commit" > "$mismatch_asset"
 mismatch_hash="$(shasum -a 256 "$mismatch_asset" | awk '{print $1}')"
-printf '%s\n' "{\"tag_name\":\"v0.1.3\",\"draft\":false,\"prerelease\":false,\"immutable\":true,\"assets\":[{\"name\":\"install.sh\",\"browser_download_url\":\"file://$mismatch_asset\",\"digest\":\"sha256:$mismatch_hash\"}]}" > "$TMP_ROOT/mismatch-release.json"
+printf '%s\n' "{\"tag_name\":\"$MISMATCH_TAG\",\"draft\":false,\"prerelease\":false,\"immutable\":true,\"assets\":[{\"name\":\"install.sh\",\"browser_download_url\":\"file://$mismatch_asset\",\"digest\":\"sha256:$mismatch_hash\"}]}" > "$TMP_ROOT/mismatch-release.json"
 MATRIX_API_URL="file://$TMP_ROOT/mismatch-release.json"
 expect_matrix "tag/version mismatch refusal" "release tag/version mismatch"
 
@@ -908,19 +920,19 @@ git --git-dir="$origin" fetch -q "$bad_version_source" "HEAD:refs/ait-bad-instal
 bad_target_source="$TMP_ROOT/bad-target-source"
 git clone -q "$origin" "$bad_target_source"
 git -C "$bad_target_source" checkout -q --detach "$bad_version_commit"
-printf '0.1.4\n' > "$bad_target_source/VERSION"
+printf '%s\n' "$BAD_TARGET_VERSION" > "$bad_target_source/VERSION"
 git -C "$bad_target_source" config user.email fixture@example.test
 git -C "$bad_target_source" config user.name fixture
 git -C "$bad_target_source" add VERSION
 git -C "$bad_target_source" commit -q -m "malformed version target"
 bad_target_commit="$(git -C "$bad_target_source" rev-parse HEAD)"
-git --git-dir="$origin" fetch -q "$bad_target_source" "HEAD:refs/tags/v0.1.4"
+git --git-dir="$origin" fetch -q "$bad_target_source" "HEAD:refs/tags/$BAD_TARGET_TAG"
 bad_version_asset="$TMP_ROOT/bad-version-install.sh"
-sed -e "s/RELEASE_TAG=\"v0.1.0\"/RELEASE_TAG=\"v0.1.4\"/" \
+sed -e "s/RELEASE_TAG=\"$RELEASE_TAG\"/RELEASE_TAG=\"$BAD_TARGET_TAG\"/" \
     -e "s/RELEASE_COMMIT=\"$release_commit\"/RELEASE_COMMIT=\"$bad_target_commit\"/" "$generated_asset" > "$bad_version_asset"
 chmod +x "$bad_version_asset"
 bad_version_hash="$(shasum -a 256 "$bad_version_asset" | awk '{print $1}')"
-printf '%s\n' "{\"tag_name\":\"v0.1.4\",\"draft\":false,\"prerelease\":false,\"immutable\":true,\"assets\":[{\"name\":\"install.sh\",\"browser_download_url\":\"file://$bad_version_asset\",\"digest\":\"sha256:$bad_version_hash\"}]}" > "$TMP_ROOT/bad-version-release.json"
+printf '%s\n' "{\"tag_name\":\"$BAD_TARGET_TAG\",\"draft\":false,\"prerelease\":false,\"immutable\":true,\"assets\":[{\"name\":\"install.sh\",\"browser_download_url\":\"file://$bad_version_asset\",\"digest\":\"sha256:$bad_version_hash\"}]}" > "$TMP_ROOT/bad-version-release.json"
 bad_version_managed="$TMP_ROOT/bad-version-managed"
 prepare_old_fixture "$bad_version_managed" "$TMP_ROOT/managed-cli/bad-version-ait"
 git -C "$bad_version_managed" checkout -q --detach "$bad_version_commit"
@@ -1123,7 +1135,7 @@ pass "dirty checkout refusal"
 
 digest_before="$(git -C "$stopped_managed" rev-parse HEAD)"
 asset_hash_bad="$(printf bad | shasum -a 256 | awk '{print $1}')"
-printf '%s\n' "{\"tag_name\":\"v0.1.0\",\"draft\":false,\"prerelease\":false,\"immutable\":true,\"assets\":[{\"name\":\"install.sh\",\"browser_download_url\":\"file://$asset\",\"digest\":\"sha256:$asset_hash_bad\"}]}" > "$api"
+printf '%s\n' "{\"tag_name\":\"$RELEASE_TAG\",\"draft\":false,\"prerelease\":false,\"immutable\":true,\"assets\":[{\"name\":\"install.sh\",\"browser_download_url\":\"file://$asset\",\"digest\":\"sha256:$asset_hash_bad\"}]}" > "$api"
 set +e
 digest_output="$(HOME="$source_home" PATH="$fixture_bin:$ORIGINAL_PATH" AIT_FIXTURE_SERVICE_STATE=stopped AIT_RELEASE_API_URL="file://$api" AIT_UPDATE_EXPECTED_ORIGIN="$origin" AIT_UPDATE_CLI_LINK="$TMP_ROOT/managed-cli/stopped-ait" AIT_INSTALL_ROOT="$stopped_managed" AIT_UPDATE_STATUS_SCRIPT="$status_script" "$REPO/bin/update.sh" "$stopped_managed" 2>&1)"
 digest_status=$?
@@ -1133,7 +1145,7 @@ assert_contains "$digest_output" "digest mismatch" "asset digest refusal"
 [ "$(git -C "$stopped_managed" rev-parse HEAD)" = "$digest_before" ] || fail "asset digest refusal" "checkout changed"
 pass "installer digest refusal without mutation"
 
-printf '%s\n' "{\"tag_name\":\"v0.1.0\",\"draft\":false,\"prerelease\":false,\"immutable\":false,\"assets\":[]}" > "$api"
+printf '%s\n' "{\"tag_name\":\"$RELEASE_TAG\",\"draft\":false,\"prerelease\":false,\"immutable\":false,\"assets\":[]}" > "$api"
 set +e
 bad_output="$(HOME="$source_home" PATH="$fixture_bin:$ORIGINAL_PATH" AIT_RELEASE_API_URL="file://$api" AIT_UPDATE_EXPECTED_ORIGIN="$origin" AIT_UPDATE_CLI_LINK="$TMP_ROOT/managed-cli/ait" AIT_INSTALL_ROOT="$managed" AIT_UPDATE_STATUS_SCRIPT="$status_script" "$REPO/bin/update.sh" "$managed" 2>&1)"
 bad_status=$?

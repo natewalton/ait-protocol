@@ -33,6 +33,7 @@ Commands:
   help [command]    Show this help or a command's complete help page.
   version           Show this checkout's release version and Git revision.
   update            Update the managed checkout to the latest release.
+  uninstall         Permanently remove this managed AIT installation.
 
 Examples:
   ait init
@@ -187,7 +188,7 @@ ait help — show the canonical AIT command manual.
 
 Usage: ait help [command]
 Arguments: optional command: init, start, stop, status, claude, codex, skills,
-help, or version. Options: --help, -h.
+help, version, update, or uninstall. Options: --help, -h.
 Prerequisites: none.
 Changes: none; help is read-only and works with services stopped.
 Example: ait help init
@@ -232,6 +233,27 @@ Recovery: failures before AppView starts print exact reset commands; after
 AppView is ready they require fix-forward and never recommend reset.
 Exit behavior: 0 updated or already current, 1 refusal or failed recovery,
 2 invalid arguments.
+EOF
+      ;;
+    uninstall)
+      cat <<'EOF'
+ait uninstall — permanently remove this managed AIT installation.
+
+Usage: ait uninstall
+Arguments: none. Options: --help, -h.
+Prerequisites: the installer-owned checkout and CLI link, no active update, and
+no harness session using this checkout's MCP server.
+Changes: after the literal confirmation `uninstall AIT`, stops AIT and removes
+its managed checkout, local plc_directory database, identities, state, sockets,
+logs, CLI link, skill links, and launchd agents. It creates no backup or retained
+copy.
+Preserves: project .mcp.json entries and shared prerequisites, including the
+PostgreSQL installation and unrelated databases.
+Example: ait uninstall
+Normal result: the machine-level AIT installation is absent.
+Recovery: reinstall with the public release command printed by the uninstaller.
+Exit behavior: 0 success or cancellation before confirmation, 1 refusal or
+cleanup failure, 2 invalid arguments, 130 interrupted confirmation.
 EOF
       ;;
     *)
@@ -336,6 +358,15 @@ case "${1:-help}" in
       cp "$REPO/bin/update.sh" "$updater"
       chmod 700 "$updater"
       AIT_UPDATE_REPO="$REPO" AIT_UPDATE_EXECUTABLE="$REPO/ait" "$updater" "${AIT_INSTALL_ROOT:-$HOME/.local/share/ait-protocol}"
+    fi
+    ;;
+  uninstall)
+    if [ "${2:-}" = "-h" ] || [ "${2:-}" = "--help" ]; then
+      [ "$#" -eq 2 ] || invalid_args "$@"
+      command_help uninstall
+    else
+      [ "$#" -eq 1 ] || invalid_args "$@"
+      exec "$REPO/bin/uninstall.sh"
     fi
     ;;
   claude|codex)

@@ -44,8 +44,10 @@ jobs:
           test "$(cat VERSION)" = "$RELEASE_VERSION"
           git fetch --quiet origin main
           test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
-          bash -n install.sh ait bin/install.sh bin/update.sh bin/ait-update-test.sh
+          bash -n install.sh ait bin/install.sh bin/update.sh bin/uninstall.sh \
+            bin/ait-update-test.sh bin/ait-uninstall-test.sh
           bin/ait-test.sh
+          bin/ait-uninstall-test.sh
           bin/ait-update-test.sh
           npm --prefix plc ci
           npm --prefix pds ci

@@ -42,6 +42,7 @@ ait start      Start the shared services explicitly.
 ait stop       Stop the shared services explicitly.
 ait version    Print the installed release version and Git revision.
 ait update     Update the managed checkout to the latest immutable release.
+ait uninstall  Permanently remove the machine-level AIT installation.
 ait skills status   Inspect machine-wide skill ownership without changing it.
 ait skills install  Install the managed skill for detected harnesses.
 ait skills remove   Remove only links owned by this checkout.
@@ -330,6 +331,26 @@ If an update fails before AppView starts, `ait update` prints the exact old
 commit reset and rebuild commands. If AppView has reached readiness, do not
 reset: persisted data may have advanced, so keep the logs and fix forward with
 a higher patch release.
+
+#### Uninstalling AIT
+
+Run `ait uninstall`. Before changing anything, it verifies that the command is
+the published, installer-owned copy and that no update or harness session is
+using it. It then lists everything AIT will permanently delete and requires the
+literal confirmation `uninstall AIT`.
+
+The uninstall removes the managed checkout and its local data, the local
+`plc_directory` database, AIT identities, state, sockets, logs, launchd agents,
+and owned CLI and skill links. It creates no backup or hidden retained copy.
+Project `.mcp.json` entries and shared prerequisites—including PostgreSQL itself
+and unrelated databases—remain. To remove a preserved project entry, run this
+inside that project:
+
+```bash
+claude mcp remove ait-protocol --scope project
+```
+
+The command prints the public installer again when it finishes.
 
 Restarting the services alone is safe when you have changed nothing: the AppView holds push registrations in memory and drops them on restart, and each session re-asserts its own every 30 seconds, so delivery resumes on the next beat. `mcp/scripts/push-reregister-test.mjs` covers exactly that — it joins a push session, restarts the PDS and AppView under it, and checks a mention sent afterwards still arrives.
 

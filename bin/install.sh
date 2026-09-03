@@ -18,6 +18,7 @@ Usage:
   bin/install.sh --machine       Install or verify this AIT checkout and stack.
   bin/install.sh --init [path]   Enable or verify AIT in a project.
   bin/install.sh --launch claude|codex [args...]
+  bin/install.sh --drop-database Remove AIT's local plc_directory database.
 EOF
 }
 
@@ -361,38 +362,47 @@ env_transaction() {
   [ "${AIT_SUPPRESS_DETAIL_OUTPUT:-0}" = "1" ] || echo "Environment: ✓ four files published atomically and verified"
 }
 
+postgres_client() {
+  local client="$1" pg_prefix candidate
+  pg_prefix="$(brew --prefix postgresql@17 2>/dev/null || true)"
+  candidate="$pg_prefix/bin/$client"
+  if [ -n "$pg_prefix" ] && [ -x "$candidate" ]; then
+    printf '%s' "$candidate"
+    return 0
+  fi
+  command -v "$client" 2>/dev/null
+}
+
 install_database() {
-  local pg_prefix pg_bin psql_path createdb_path
+  local psql_path createdb_path
   if ! brew list --versions postgresql@17 >/dev/null 2>&1; then
     brew install postgresql@17
   fi
   brew services start postgresql@17
-  pg_prefix="$(brew --prefix postgresql@17)"
-  if [ -x "$pg_prefix/bin/psql" ]; then
-    pg_bin="$pg_prefix/bin"
-  elif psql_path="$(command -v psql 2>/dev/null)"; then
-    pg_bin="$(dirname "$psql_path")"
-  else
+  if ! psql_path="$(postgres_client psql)"; then
     echo "error: PostgreSQL client psql is not available after starting postgresql@17" >&2
     return 1
   fi
-  if [ ! -x "$pg_bin/createdb" ]; then
-    if ! createdb_path="$(command -v createdb 2>/dev/null)"; then
-      echo "error: PostgreSQL client createdb is not available" >&2
-      return 1
-    fi
+  if ! createdb_path="$(postgres_client createdb)"; then
+    echo "error: PostgreSQL client createdb is not available" >&2
+    return 1
   fi
-  while ! "$pg_bin/psql" -d postgres -Atqc "SELECT 1" >/dev/null 2>&1; do
+  while ! "$psql_path" -d postgres -Atqc "SELECT 1" >/dev/null 2>&1; do
     echo "waiting for PostgreSQL on local socket; log: Homebrew postgresql@17 service"
     sleep 1
   done
-  if ! "$pg_bin/psql" -d postgres -Atqc "SELECT 1 FROM pg_database WHERE datname='plc_directory'" 2>/dev/null | grep -q '^1$'; then
-    if [ -x "$pg_bin/createdb" ]; then
-      "$pg_bin/createdb" plc_directory
-    else
-      "$createdb_path" plc_directory
-    fi
+  if ! "$psql_path" -d postgres -Atqc "SELECT 1 FROM pg_database WHERE datname='plc_directory'" 2>/dev/null | grep -q '^1$'; then
+    "$createdb_path" plc_directory
   fi
+}
+
+drop_database() {
+  local dropdb_path
+  if ! dropdb_path="$(postgres_client dropdb)"; then
+    echo "error: PostgreSQL client dropdb is not available" >&2
+    return 1
+  fi
+  "$dropdb_path" --if-exists plc_directory
 }
 
 install_dependencies() {
@@ -636,6 +646,10 @@ case "${1:-}" in
   --launch)
     [ "$#" -ge 2 ] || { usage >&2; exit 2; }
     launch_harness "$2" "${@:3}"
+    ;;
+  --drop-database)
+    [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+    drop_database
     ;;
   --help|-h)
     usage

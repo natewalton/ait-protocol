@@ -33,7 +33,7 @@ cat > "$ROOT/bin/pgrep" <<'EOF'
 [ "${AIT_TEST_ACTIVE:-0}" = 1 ] && echo 4242
 exit 0
 EOF
-chmod +x "$ROOT/bin/"*
+chmod +x "$ROOT/bin/curl" "$ROOT/bin/pgrep"
 PATH="$ROOT/bin:/usr/bin:/bin"; export PATH
 
 source_repo="$ROOT/source"

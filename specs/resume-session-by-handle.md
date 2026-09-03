@@ -1,6 +1,6 @@
 # Resume an AIT session by its handle
 
-Status: draft for operator review, 2026-09-03. Tracked by [#24](https://github.com/natewalton/ait-protocol/issues/24).
+Status: draft revision 2 for operator review, 2026-09-03. Tracked by [#24](https://github.com/natewalton/ait-protocol/issues/24).
 
 ## Why
 
@@ -45,10 +45,11 @@ ait resume [query]
 
 With no query, the command shows every locally resumable AIT-bound Claude and
 Codex session, newest activity first. Each numbered row shows the AIT handle,
-harness, original project path, and when its harness record was last modified.
-The prompt accepts a row number or a new text query. A query filters
-case-insensitively by handle, harness, or project path. An exact handle match
-selects immediately.
+harness, optional harness session name, original project path, and when its
+harness record was last modified. The prompt accepts a row number or a new text
+query. A query filters case-insensitively by handle, harness, session name, or
+project path. An exact handle, conversation UUID, or Codex thread ID selects
+immediately.
 
 Only sessions which can be resumed are shown. A row requires all of:
 
@@ -76,20 +77,32 @@ the launcher. The launchers remain the only code that applies harness options,
 restores the AIT identity, starts the Codex driver, or owns terminal signals and
 exit status.
 
+`ait resume` becomes AIT's only public resume surface. `ait claude` and
+`ait codex` mean “start a new session.” Their current public resume tokens
+(`--resume`, `-r`, `--resume-last`, and `--session`) refuse with the equivalent
+`ait resume` command. Delete Claude's private name and newest-transcript
+selection and Codex's legacy `--session` alias. The launch path keeps only the
+exact `--resume <id>` entry point that `ait resume` uses internally; it is not a
+second documented interface.
+
 `ait resume` is an interactive terminal command. `Ctrl-C` or EOF cancels without
-starting a harness. It adds no flags. Users who already know a harness identifier
-may continue to use `ait claude --resume ...` or `ait codex --resume ...`.
+starting a harness. It adds no flags. A user who already knows the handle,
+Claude conversation UUID, Codex thread ID, or Claude session name passes it as
+the optional query.
 
 ## Files touched
 
-Six files:
+Nine files:
 
-1. `ait` adds the command, help page, and dispatch into the selected existing launcher.
-2. `mcp/src/storage.ts` exposes a read-only public-identity lookup for a supplied session UUID so discovery reuses the existing identity-path convention.
-3. `mcp/src/sessionPicker.ts` discovers the two harness record shapes, renders the selector, and returns the selected harness, project, and identifier to `ait`.
-4. `mcp/scripts/session-picker-test.mjs` exercises discovery, selection, cancellation, and launcher dispatch with isolated fixture homes.
-5. `README.md` documents `ait resume` under projects and sessions.
-6. `specs/resume-session-by-handle.md` records this contract.
+1. `ait` adds the command and help page, dispatches into the selected existing launcher, and redirects the former public resume forms to this command.
+2. `bin/claude-session.sh` retains exact UUID resume for internal dispatch and removes its duplicate name and newest-transcript selectors.
+3. `mcp/src/codex/host.ts` retains exact thread resume and removes the legacy `--session` alias.
+4. `mcp/src/storage.ts` exposes a read-only public-identity lookup for a supplied session UUID so discovery reuses the existing identity-path convention.
+5. `mcp/src/sessionPicker.ts` discovers the two harness record shapes, renders the selector, and returns the selected harness, project, and identifier to `ait`.
+6. `mcp/scripts/session-picker-test.mjs` exercises discovery, selection, cancellation, and launcher dispatch with isolated fixture homes.
+7. `bin/ait-test.sh` covers public help, new-session passthrough, and migration errors for removed resume forms.
+8. `README.md` replaces the harness-specific resume recipes with `ait resume`.
+9. `specs/resume-session-by-handle.md` records this contract.
 
 The systems model has four concepts: a harness session record, its existing AIT
 identity binding, one selector, and the existing launcher dispatch. No fifth
@@ -108,6 +121,8 @@ catalog or lifecycle concept is introduced.
 - Persisting an AIT session catalog, last-used value, index, cache, preference,
   alias, or cross-machine session record.
 - Reimplementing either harness's resume operation or interactive TUI.
+- Supporting the former public resume flags indefinitely; this release replaces
+  them with one command and a migration message.
 
 ## Tests
 
@@ -125,14 +140,19 @@ rollout, identity-envelope, and executable harness fixtures. It proves:
    the current project or an age window.
 4. Exact handle selection dispatches from the recorded project to the correct
    existing launcher with the exact UUID or thread ID.
-5. A partial query narrows the rows and numbered selection dispatches the chosen
+5. Exact Claude UUID, Codex thread ID, and Claude session-name selection resolve
+   to the same rows without requiring a harness-specific command.
+6. A partial query narrows the rows and numbered selection dispatches the chosen
    session.
-6. Missing harness binaries, identity files, harness records, and project
+7. Missing harness binaries, identity files, harness records, and project
    directories do not produce resumable rows.
-7. Malformed records and a duplicate handle mapping fail closed without exposing
+8. Malformed records and a duplicate handle mapping fail closed without exposing
    credential fields or launching anything.
-8. No match, EOF, and `Ctrl-C` leave every fixture unchanged and launch nothing.
-9. Removing either harness-to-identity join makes its corresponding regression
+9. No match, EOF, and `Ctrl-C` leave every fixture unchanged and launch nothing.
+10. Every former `ait claude` and `ait codex` resume form exits 2 before launch
+    and names its `ait resume` replacement; ordinary new-session arguments still
+    pass through unchanged.
+11. Removing either harness-to-identity join makes its corresponding regression
    fail.
 
 The production oracle joins one Claude and one Codex session in different
@@ -146,7 +166,8 @@ not appear.
 Ship as one patch release after the released oracle passes for both supported
 harnesses. The new command reads existing data and requires no migration. A
 rollback removes the command; the harness transcripts, Codex maps, and AIT
-identities remain unchanged and the explicit launcher resume forms still work.
+identities remain unchanged. Rolling back also restores the former public
+harness-specific resume forms.
 
 Done means the released `ait resume` finds and resumes both real stopped test
 sessions by handle, each retains its original AIT identity and project, the same

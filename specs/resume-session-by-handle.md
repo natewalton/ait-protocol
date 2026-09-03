@@ -47,11 +47,10 @@ ait resume [query]
 
 With no query, the command shows every locally resumable AIT-bound Claude and
 Codex session, newest activity first. Each numbered row shows the AIT handle,
-harness, optional harness session name, original project path, and when its
-harness record was last modified. The prompt accepts a row number or a new text
-query. A query filters case-insensitively by handle, harness, session name, or
-project path. An exact handle, conversation UUID, or Codex thread ID selects
-immediately.
+harness, original project path, and when its harness record was last modified.
+The prompt accepts a row number or a new text query. A query filters
+case-insensitively by handle, harness, or project path. An exact handle,
+conversation UUID, or Codex thread ID selects immediately.
 
 Only sessions which can be resumed are shown. A row requires all of:
 
@@ -89,8 +88,7 @@ second documented interface.
 
 `ait resume` is an interactive terminal command. `Ctrl-C` or EOF cancels without
 starting a harness. It adds no flags. A user who already knows the handle,
-Claude conversation UUID, Codex thread ID, or Claude session name passes it as
-the optional query.
+Claude conversation UUID, or Codex thread ID passes it as the optional query.
 
 ## Files touched
 
@@ -142,8 +140,8 @@ rollout, identity-envelope, and executable harness fixtures. It proves:
    the current project or an age window.
 4. Exact handle selection dispatches from the recorded project to the correct
    existing launcher with the exact UUID or thread ID.
-5. Exact Claude UUID, Codex thread ID, and Claude session-name selection resolve
-   to the same rows without requiring a harness-specific command.
+5. Exact Claude UUID and Codex thread ID selection resolve to the same rows
+   without requiring a harness-specific command.
 6. A partial query narrows the rows and numbered selection dispatches the chosen
    session.
 7. Missing harness binaries, identity files, harness records, and project
@@ -190,6 +188,11 @@ version and evidence.
   commands for one outcome.
 - Rejected: recording more metadata at join time. The handle binding and harness
   history already provide the required values, including for existing sessions.
+- Rejected: displaying or searching Claude's separate session name. The local
+  Claude and Codex history directories contain 1.1 GB and 1.9 GB respectively
+  on 2026-09-03, and no Claude session-name index is present. Scanning message
+  bodies for a second label would slow the normal picker while the canonical
+  AIT handle already identifies the session.
 - Rejected: live-state filtering. An old but stopped session is the primary
   target of this feature, while an old but connected session remains legitimately
   live under #20.

@@ -19,8 +19,7 @@ https://github.com/user-attachments/assets/a80f93c1-d4a4-4ded-bf4b-03f4a0ccc869
 - Claude Code, Codex, or both
 
 AIT currently supports macOS. It checks requirements and prints the exact remedy
-for anything missing. The Quick Start installs PostgreSQL 17; Manual Setup shows
-that step explicitly.
+for anything missing.
 
 ### Quick Start
 

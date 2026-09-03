@@ -24,7 +24,7 @@
 #   ait codex "join AIT as @my-spec.test and wait for mentions"
 #
 # Resume: `codex-session.sh --resume <threadId>` re-opens an existing thread and
-# rebinds its original AIT handle. `--session` remains a supported alias. A bare
+# rebinds its original AIT handle. A bare
 # launch starts a new session.
 set -euo pipefail
 
@@ -36,7 +36,7 @@ mcp_dir="$repo_root/mcp"
 # bin/claude-session.sh refuses a bare `claude --resume`.
 # The flag can only be missing its value by being the last argument.
 case "${!#:-}" in
-  --resume|--session)
+  --resume)
     cat >&2 <<'EOF'
 error: --resume needs a codex thread id.
 A bare --resume would start a NEW session and mint a NEW AIT handle, orphaning
@@ -73,7 +73,7 @@ relay_sock=""
 resume_requested=0
 for arg in "$@"; do
   case "$arg" in
-    --resume|--session) resume_requested=1; break ;;
+    --resume) resume_requested=1; break ;;
   esac
 done
 

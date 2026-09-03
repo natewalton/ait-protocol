@@ -71,7 +71,7 @@ uuid_for_name() {
 }
 
 # Resume handling. `--resume <uuid|name>` / `-r` resumes a specific
-# conversation; `--resume-last` / `-R` auto-picks the newest transcript for the
+# conversation; `--resume-last` auto-picks the newest transcript for the
 # current project dir. Whatever the user typed, an explicit UUID has to land in
 # claude's argv — that is the only signal the MCP server can use to find the
 # existing credentials on a restart. A bare resume token with no argument is
@@ -110,7 +110,7 @@ EOF
     fi
     shift 2
     ;;
-  --resume-last|-R)
+  --resume-last)
     newest="$(ls -t "$transcript_dir"/*.jsonl 2>/dev/null | head -1 || true)"
     resume_id="$(basename "$newest" .jsonl)"
     if ! printf '%s' "$resume_id" | grep -qiE "$UUID_RE"; then

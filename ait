@@ -48,6 +48,7 @@ Manual update sequence (development checkout only; not used by ait update):
   # Exit every AIT harness session first: /exit
   ait stop
   git pull --ff-only
+  bin/install.sh --rebuild-only
   npm --prefix mcp run build
   npm --prefix appview run build
   bin/start-all.sh
@@ -202,7 +203,7 @@ EOF
 ait version — show this checkout's release version and Git revision.
 
 Usage: ait version
-Arguments: none. Options: --version, --help, -h.
+Arguments: none. Options: --help, -h.
 Prerequisites: a valid Git checkout and VERSION; no network is contacted.
 Changes: none.
 Example: ait version
@@ -289,10 +290,7 @@ case "${1:-help}" in
       command_help version
     else
       [ "$#" -eq 1 ] || invalid_args "$@"
-      if [ "${1:-}" = "--version" ]; then
-        git -C "$REPO" rev-parse HEAD
-      else
-        version_file="$REPO/VERSION"
+      version_file="$REPO/VERSION"
         [ -f "$version_file" ] || { echo "error: VERSION is missing from $REPO" >&2; exit 1; }
         version="$(tr -d '[:space:]' < "$version_file")"
         printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$' || {
@@ -308,7 +306,6 @@ case "${1:-help}" in
         else
           printf 'AIT %s (%s) development\n' "$version" "$short"
         fi
-      fi
     fi
     ;;
   init)
@@ -327,7 +324,7 @@ case "${1:-help}" in
       [ "$#" -eq 1 ] || invalid_args "$@"
       case "$1" in
         start|stop)
-          lock="${AIT_UPDATE_LOCK:-${XDG_STATE_HOME:-$HOME/.local/state}/ait-protocol/update.lock}"
+          lock="${XDG_STATE_HOME:-$HOME/.local/state}/ait-protocol/update.lock"
           if [ -e "$lock" ]; then
             lock_pid="$(cat "$lock/pid" 2>/dev/null || true)"
             if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
@@ -353,7 +350,7 @@ case "${1:-help}" in
       command_help update
     else
       [ "$#" -eq 1 ] || invalid_args "$@"
-      AIT_UPDATE_EXECUTABLE="$REPO/ait" exec "$REPO/bin/update.sh" "${AIT_INSTALL_ROOT:-$HOME/.local/share/ait-protocol}"
+      exec "$REPO/bin/update.sh"
     fi
     ;;
   uninstall)

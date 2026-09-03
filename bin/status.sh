@@ -2,14 +2,6 @@
 # Read-only health and harness status for the shared AIT installation.
 set -euo pipefail
 
-if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-  cat <<'EOF'
-Usage: bin/status.sh [--check-core]
-  --check-core  probe only PLC, PDS, and AppView; print nothing on success.
-Status is read-only. It never starts, stops, writes, or repairs services.
-EOF
-  exit 0
-fi
 check_core=0
 if [ "${1:-}" = "--check-core" ]; then
   check_core=1
@@ -20,7 +12,7 @@ fi
 
 probe_http() {
   local url=$1 body
-  body="$(curl -fsS --max-time "${AIT_STATUS_CURL_MAX_TIME:-3}" "$url" 2>/dev/null)" || return 1
+  body="$(curl -fsS --max-time 3 "$url" 2>/dev/null)" || return 1
   case "$body" in
     \{*\}|\[*\]) return 0 ;;
     *) return 1 ;;

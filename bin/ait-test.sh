@@ -102,6 +102,16 @@ make_fixture() {
   cp "$REPO/bin/codex-session.sh" "$dir/bin/codex-session.sh"
   cp "$REPO/bin/check-single-lexicon.sh" "$dir/bin/check-single-lexicon.sh"
   chmod +x "$dir/ait" "$dir/bin/"*.sh
+  cat > "$dir/bin/status.sh" <<'EOF'
+#!/bin/sh
+echo 'AIT status:'
+printf '  plc running\n  pds running\n  appview running\n  codex-appserver skipped (not installed)\n'
+EOF
+  cat > "$dir/bin/start-all.sh" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod +x "$dir/bin/status.sh" "$dir/bin/start-all.sh"
   mkdir -p "$dir/.agents/skills/delivery-coordination"
   cp "$REPO/.agents/skills/delivery-coordination/SKILL.md" "$dir/.agents/skills/delivery-coordination/SKILL.md"
   for f in plc/package.json plc/package-lock.json pds/package.json pds/package-lock.json appview/package.json appview/package-lock.json mcp/package.json mcp/package-lock.json; do
@@ -109,16 +119,26 @@ make_fixture() {
   done
   cp "$REPO/appview/.env.example" "$dir/appview/.env.example"
   cp "$REPO/mcp/.env.example" "$dir/mcp/.env.example"
-  cat > "$shim/brew" <<'EOF'
+  mkdir -p "$dir/pg/bin"
+  printf '#!/bin/sh\nexit 0\n' > "$dir/pg/bin/psql"
+  printf '#!/bin/sh\nexit 0\n' > "$dir/pg/bin/createdb"
+  chmod +x "$dir/pg/bin/psql" "$dir/pg/bin/createdb"
+  cat > "$shim/brew" <<EOF
 #!/bin/bash
-case "$1" in
-  --prefix) echo "${AIT_BREW_PREFIX:-/tmp/ait-test-homebrew}" ;;
-  list) exit 1 ;;
+case "\$1" in
+  --prefix)
+    if [ "\$2" = postgresql@17 ]; then echo "$dir/pg"; else echo "\$HOME/.homebrew"; fi ;;
+  list) exit 0 ;;
   services) exit 0 ;;
   install) exit 0 ;;
   *) exit 0 ;;
 esac
 EOF
+  cat > "$shim/npm" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod +x "$shim/npm"
   cat > "$shim/claude" <<'EOF'
 #!/bin/bash
 if [ "$1" = mcp ] && [ "$2" = get ]; then
@@ -135,21 +155,18 @@ EOF
 exit 0
 EOF
   for f in git node npm openssl curl; do
-    command -v "$f" >/dev/null 2>&1 && ln -s "$(command -v "$f")" "$shim/$f" || true
+    if [ ! -e "$shim/$f" ] && command -v "$f" >/dev/null 2>&1; then
+      ln -s "$(command -v "$f")" "$shim/$f"
+    fi
   done
   chmod +x "$shim/brew" "$shim/claude" "$shim/lsof" "$shim/pgrep"
 }
 
 fixture="$TMP_ROOT/fixture"
 make_fixture "$fixture"
-export AIT_SKIP_PLATFORM_CHECK=1
-export AIT_BREW_PREFIX="$TMP_ROOT/homebrew"
-export AIT_CLI_LINK="$TMP_ROOT/bin/ait"
-export AIT_INSTALL_STATE_DIR="$TMP_ROOT/install-state"
-export AIT_INSTALL_SKIP_PROVISION=1
 PATH="$fixture/shim:/usr/bin:/bin"
 export PATH HOME="$TMP_ROOT/home"
-machine_output="$("$fixture/bin/install.sh" --machine)"
+machine_output="$("$fixture/bin/install.sh")"
 assert_contains "$machine_output" "Prerequisites: ✓"
 assert_contains "$machine_output" "codex    skipped (not installed)"
 assert_contains "$machine_output" "Environment: ✓"
@@ -157,8 +174,8 @@ assert_file "$fixture/plc/.env"
 assert_file "$fixture/pds/.env"
 assert_file "$fixture/appview/.env"
 assert_file "$fixture/mcp/.env"
-[ ! -e "$AIT_INSTALL_STATE_DIR" ] || fail "installer created persisted environment state"
-[ -L "$AIT_CLI_LINK" ] || fail "CLI link not created"
+[ ! -e "$TMP_ROOT/install-state" ] || fail "installer created persisted environment state"
+[ -L "$HOME/.homebrew/bin/ait" ] || fail "CLI link not created"
 pass "isolated machine install and optional harness row"
 
 prereq_failure="$TMP_ROOT/prereq-failure"
@@ -166,7 +183,7 @@ make_fixture "$prereq_failure"
 rm -f "$prereq_failure/shim/brew"
 export PATH="$prereq_failure/shim:/usr/bin:/bin"
 set +e
-prereq_failure_output="$(AIT_SUPPRESS_PREFLIGHT_OUTPUT=1 "$prereq_failure/bin/install.sh" --machine 2>&1)"
+prereq_failure_output="$("$prereq_failure/bin/install.sh" 2>&1)"
 prereq_failure_status=$?
 set -e
 [ "$prereq_failure_status" -ne 0 ] || fail "suppressed prerequisite failure unexpectedly succeeded"
@@ -188,20 +205,17 @@ exit 0
 EOF
 chmod +x "$codex_only/shim/codex"
 export PATH="$codex_only/shim:/usr/bin:/bin"
-export AIT_CLI_LINK="$TMP_ROOT/codex-only-bin/ait"
-export AIT_INSTALL_STATE_DIR="$TMP_ROOT/codex-only-state"
-codex_only_output="$("$codex_only/bin/install.sh" --machine)"
+export HOME="$codex_only/home"
+codex_only_output="$("$codex_only/bin/install.sh")"
 assert_not_contains "$codex_only_output" "missing: Claude Code"
 assert_contains "$codex_only_output" "claude   skipped (not installed)"
 assert_contains "$codex_only_output" "codex    ready"
 pass "Codex-only machine preflight and plain Claude skip"
 
 export PATH="$fixture/shim:/usr/bin:/bin"
-export AIT_CLI_LINK="$TMP_ROOT/bin/ait"
-export AIT_INSTALL_STATE_DIR="$TMP_ROOT/install-state"
 export HOME="$fixture/home"
 before="$(shasum -a 256 "$fixture/plc/.env" | awk '{print $1}')"
-rerun_output="$("$fixture/bin/install.sh" --machine)"
+rerun_output="$("$fixture/bin/install.sh")"
 after="$(shasum -a 256 "$fixture/plc/.env" | awk '{print $1}')"
 assert_same "$before" "$after"
 assert_contains "$rerun_output" "existing four-file set preserved"
@@ -226,11 +240,10 @@ exit 0
 EOF
 chmod +x "$boundary/shim/lsof" "$boundary/bin/status.sh"
 export HOME="$boundary/home" PATH="$boundary/shim:/usr/bin:/bin"
-export AIT_CLI_LINK="$TMP_ROOT/boundary-bin/ait"
-same_boundary="$(AIT_TEST_SERVICE_CWD="$boundary" "$boundary/bin/install.sh" --machine)"
+same_boundary="$(AIT_TEST_SERVICE_CWD="$boundary" "$boundary/bin/install.sh")"
 assert_contains "$same_boundary" "existing dependencies and builds verified"
 set +e
-foreign_boundary="$(AIT_TEST_SERVICE_CWD="$TMP_ROOT/foreign-checkout" "$boundary/bin/install.sh" --machine 2>&1)"
+foreign_boundary="$(AIT_TEST_SERVICE_CWD="$TMP_ROOT/foreign-checkout" "$boundary/bin/install.sh" 2>&1)"
 foreign_boundary_status=$?
 set -e
 [ "$foreign_boundary_status" -ne 0 ] || fail "foreign service cwd unexpectedly accepted"
@@ -242,9 +255,8 @@ make_fixture "$partial"
 export HOME="$partial/home"
 export PATH="$partial/shim:/usr/bin:/bin"
 printf 'operator-owned\n' > "$partial/plc/.env"
-export AIT_CLI_LINK="$TMP_ROOT/partial-bin/ait"
 set +e
-partial_output="$("$partial/bin/install.sh" --machine 2>&1)"
+partial_output="$("$partial/bin/install.sh" 2>&1)"
 partial_status=$?
 set -e
 [ "$partial_status" -ne 0 ] || fail "partial environment unexpectedly succeeded"
@@ -288,14 +300,11 @@ fi
 exit 0
 EOF
 chmod +x "$status_fixture/shim/claude"
-export AIT_CLI_LINK="$TMP_ROOT/dual-bin/ait"
-export AIT_INSTALL_STATE_DIR="$TMP_ROOT/dual-state"
-dual_output="$("$status_fixture/bin/install.sh" --machine)"
+dual_output="$("$status_fixture/bin/install.sh")"
 assert_contains "$dual_output" "claude   ready"
 assert_contains "$dual_output" "codex    ready"
 pass "dual-harness machine matrix"
 
-export AIT_CLI_LINK="$TMP_ROOT/init-bin/ait"
 set +e
 init_output="$("$status_fixture/ait" init "$status_fixture/project dir" 2>&1)"
 init_status=$?
@@ -402,6 +411,8 @@ pass "Claude launcher cwd, arguments, and exit status"
 
 start_fixture="$TMP_ROOT/start"
 make_fixture "$start_fixture"
+cp "$REPO/bin/start-all.sh" "$start_fixture/bin/start-all.sh"
+chmod +x "$start_fixture/bin/start-all.sh"
 start_state="$TMP_ROOT/start-state"
 start_logs="$TMP_ROOT/start-logs"
 mkdir -p "$start_state" "$start_logs"
@@ -538,6 +549,10 @@ pass "local HTTP command-substitution bootstrap preserves caller stdin"
 
 codex_start_fixture="$TMP_ROOT/codex-start"
 make_fixture "$codex_start_fixture"
+cp "$REPO/bin/start-all.sh" "$codex_start_fixture/bin/start-all.sh"
+cp "$REPO/bin/status.sh" "$codex_start_fixture/bin/status.sh"
+chmod +x "$codex_start_fixture/bin/status.sh"
+chmod +x "$codex_start_fixture/bin/start-all.sh"
 codex_start_state="$TMP_ROOT/codex-start-state"
 codex_start_logs="$TMP_ROOT/codex-start-logs"
 codex_start_wrapper_pids="$TMP_ROOT/codex-start-wrapper-pids"
@@ -673,33 +688,18 @@ rm -f "$codex_start_state"/plc "$codex_start_state"/pds "$codex_start_state"/app
 rm -f "$codex_start_wrapper_pids"/plc "$codex_start_wrapper_pids"/pds "$codex_start_wrapper_pids"/appview "$codex_start_wrapper_pids"/codex-appserver
 pass "Codex start waits for the socket event and status treats it as informational"
 
-public_source="$TMP_ROOT/public-source"
-mkdir -p "$public_source"
-tar -C "$REPO" --exclude .git -cf - . | tar -C "$public_source" -xf -
-git -C "$public_source" init -q
-git -C "$public_source" config user.email ait-test@example.invalid
-git -C "$public_source" config user.name ait-test
-git -C "$public_source" add -A
-git -C "$public_source" commit -qm snapshot
-public_install_root="$TMP_ROOT/public-install"
-mkdir -p "$TMP_ROOT/public-home"
-export HOME="$TMP_ROOT/public-home"
-public_output="$(
-  AIT_REPO_URL="file://$public_source" \
-  AIT_INSTALL_ROOT="$public_install_root" \
-  AIT_CLI_LINK="$TMP_ROOT/public-bin/ait" \
-  AIT_INSTALL_STATE_DIR="$TMP_ROOT/public-state" \
-  AIT_INSTALL_SKIP_PROVISION=1 \
-  "$REPO/install.sh"
-)"
-assert_same "$(printf '%s\n' "$public_output" | grep -c '^Prerequisites$')" 1
-assert_same "$(printf '%s\n' "$public_output" | grep -c '^AIT files:')" 1
-assert_same "$(printf '%s\n' "$public_output" | grep -c '^Services:')" 1
-assert_same "$(printf '%s\n' "$public_output" | grep -c '^CLI:')" 1
-assert_same "$(printf '%s\n' "$public_output" | grep -c '^  claude')" 1
-assert_same "$(printf '%s\n' "$public_output" | grep -c '^  codex')" 1
-assert_not_contains "$public_output" "Environment:"
-assert_file "$TMP_ROOT/public-bin/ait"
-pass "public bootstrap has one concise phase and harness table"
+public_asset="$TMP_ROOT/public-install.sh"
+sed -e 's/__AIT_RELEASE_TAG__/v0.1.2/g' \
+    -e "s/__AIT_RELEASE_COMMIT__/$(git -C "$REPO" rev-parse HEAD)/g" \
+    "$REPO/install.sh" > "$public_asset"
+chmod +x "$public_asset"
+public_output="$(HOME="$TMP_ROOT/public-home" "$public_asset" --verify-only)"
+assert_contains "$public_output" 'verified release installer v0.1.2'
+set +e
+source_output="$(HOME="$TMP_ROOT/public-home" "$REPO/install.sh" 2>&1)"; source_status=$?
+set -e
+[ "$source_status" -ne 0 ] || fail 'unbound source installer unexpectedly ran'
+assert_contains "$source_output" 'published immutable install.sh asset'
+pass "public bootstrap requires and verifies a bound release asset"
 
 echo "AIT test suite passed"

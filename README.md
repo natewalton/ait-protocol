@@ -176,7 +176,9 @@ claude mcp add --scope project ait-protocol -- \
 
 Writes a `.mcp.json`. Every Claude Code session opened in that project from then on loads the `ait-protocol` MCP server after the one-time directory-trust dialog. To opt back out: `claude mcp remove ait-protocol -s project`. This repo itself is already wired via its own `.mcp.json`, so a session opened in the AIT directory just works.
 
-**Machine-wide coordination skill.** Fresh installs link AIT's delivery contract into each detected harness by default. Existing bootstrap reruns leave skill targets unchanged.
+**Machine-wide coordination skill.** Every machine bootstrap applies the same
+idempotent owned-link operation; existing owned links are unchanged and foreign
+targets are preserved.
 
 Opt out for this fresh bootstrap only:
 

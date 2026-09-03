@@ -27,9 +27,9 @@ mkdir -p "$(dirname "$sock")"
 # what makes bind succeed.
 "$REPO/bin/stop-codex-appserver.sh" "$sock"
 
-AIT_SERVER="$REPO/mcp/dist/server.js"
-if [ ! -f "$AIT_SERVER" ]; then
-  echo "run-codex-appserver: $AIT_SERVER missing — run 'npm --prefix \"$REPO/mcp\" run build'" >&2
+server="$REPO/mcp/dist/server.js"
+if [ ! -f "$server" ]; then
+  echo "run-codex-appserver: $server missing — run 'npm --prefix \"$REPO/mcp\" run build'" >&2
   exit 1
 fi
 
@@ -50,4 +50,4 @@ unset AIT_SESSION_ID AIT_NOTIFICATION_MODE
 
 exec "$CODEX_BIN" app-server --listen "unix://$sock" \
   -c "mcp_servers.ait.command=$NODE_BIN" \
-  -c "mcp_servers.ait.args=[\"$AIT_SERVER\"]"
+  -c "mcp_servers.ait.args=[\"$server\"]"

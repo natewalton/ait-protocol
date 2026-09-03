@@ -3,15 +3,15 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-INSTALL_ROOT="${AIT_INSTALL_ROOT:-$HOME/.local/share/ait-protocol}"
-EXPECTED_ORIGIN="${AIT_UNINSTALL_EXPECTED_ORIGIN:-https://github.com/natewalton/ait-protocol}"
+INSTALL_ROOT="$HOME/.local/share/ait-protocol"
+EXPECTED_ORIGIN="https://github.com/natewalton/ait-protocol"
 DATA_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}"
 STATE_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}"
-UPDATE_LOCK="${AIT_UPDATE_LOCK:-$STATE_ROOT/ait-protocol/update.lock}"
+UPDATE_LOCK="$STATE_ROOT/ait-protocol/update.lock"
 LOG_ROOT="${AIT_LOG_DIR:-/tmp}"
-RUNTIME_TMP="${AIT_RUNTIME_TMPDIR:-${TMPDIR:-/tmp}}"
+RUNTIME_TMP="${TMPDIR:-/tmp}"
 PUBLIC_INSTALL='/bin/bash -c "$(curl -fsSL https://github.com/natewalton/ait-protocol/releases/latest/download/install.sh)"'
-CLI_LINK=""
+CLI_LINK="$(brew --prefix 2>/dev/null || true)/bin/ait"
 
 fail() {
   echo "error: $*" >&2
@@ -19,23 +19,9 @@ fail() {
 }
 
 find_owned_cli() {
-  local candidate target
-  if [ -n "${AIT_CLI_LINK:-}" ]; then
-    candidate="$AIT_CLI_LINK"
-    [ -L "$candidate" ] || return 1
-    [ "$(readlink "$candidate")" = "$REPO/ait" ] || return 1
-    CLI_LINK="$candidate"
-    return 0
-  fi
-  for candidate in "$HOME/.local/bin/ait" /opt/homebrew/bin/ait /usr/local/bin/ait; do
-    [ -L "$candidate" ] || continue
-    target="$(readlink "$candidate")"
-    if [ "$target" = "$REPO/ait" ]; then
-      CLI_LINK="$candidate"
-      return 0
-    fi
-  done
-  return 1
+  [ -n "${CLI_LINK%/bin/ait}" ] || return 1
+  [ -L "$CLI_LINK" ] || return 1
+  [ "$(readlink "$CLI_LINK")" = "$REPO/ait" ]
 }
 
 preflight() {

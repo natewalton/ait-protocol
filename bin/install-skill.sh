@@ -10,40 +10,21 @@ CODEX_TARGET="$HOME/.agents/skills/delivery-coordination"
 usage() {
   cat <<'EOF'
 Usage:
-  bin/install-skill.sh [--install]  Install or verify owned links.
+  bin/install-skill.sh --install     Install or verify owned links.
   bin/install-skill.sh --remove     Remove only owned links.
   bin/install-skill.sh --status     Show read-only target state.
-  bin/install-skill.sh --help       Show this help.
 EOF
 }
 
-resolve_path() {
-  local path="$1" dir next depth=0 seen='|'
-  while [ -L "$path" ]; do
-    [ "$depth" -lt 40 ] || { printf '%s' "$path"; return; }
-    case "$seen" in *"|$path|"*) printf '%s' "$path"; return ;; esac
-    seen="$seen$path|"
-    dir="$(cd -P "$(dirname "$path")" && pwd)"
-    next="$(readlink "$path")"
-    case "$next" in /*) path="$next" ;; *) path="$dir/$next" ;; esac
-    depth=$((depth + 1))
-  done
-  if [ -e "$path" ]; then
-    printf '%s/%s' "$(cd -P "$(dirname "$path")" && pwd)" "$(basename "$path")"
-  else
-    printf '%s' "$path"
-  fi
-}
-
 present() { command -v "$1" >/dev/null 2>&1; }
-owned() { [ -L "$1" ] && [ "$(resolve_path "$1")" = "$SRC" ]; }
+owned() { [ -L "$1" ] && [ "$(readlink "$1")" = "$SRC" ]; }
 
 state() {
   local harness="$1" target="$2"
   if owned "$target"; then
     present "$harness" && printf ready || printf 'ready (harness not installed)'
   elif [ -e "$target" ] || [ -L "$target" ]; then
-    present "$harness" && printf 'conflict (%s)' "$(resolve_path "$target")" || printf 'conflict (target exists; harness not installed)'
+    present "$harness" && printf 'conflict (%s)' "$(readlink "$target" 2>/dev/null || printf 'target exists')" || printf 'conflict (target exists; harness not installed)'
   elif present "$harness"; then
     printf 'not installed'
   else
@@ -110,10 +91,6 @@ remove_links() {
 
 install_operation() {
   local bootstrap="${1:-0}"
-  if [ "$bootstrap" = 1 ] && [ "${AIT_NO_SKILLS:-0}" = 1 ]; then
-    echo '  skills  skipped (AIT_NO_SKILLS=1)'
-    return
-  fi
   install_links
   if [ "$bootstrap" = 1 ]; then
     names=''
@@ -126,12 +103,10 @@ install_operation() {
   fi
 }
 
-case "${1:---install}" in
-  --install|install) [ "$#" -le 1 ] || { usage >&2; exit 2; }; install_operation ;;
-  --remove|remove) [ "$#" -eq 1 ] || { usage >&2; exit 2; }; remove_links; rows; echo 'Start a new harness session for a guaranteed result.' ;;
-  --status|status) [ "$#" -eq 1 ] || { usage >&2; exit 2; }; rows ;;
-  --check) [ "$#" -eq 1 ] || { usage >&2; exit 2; }; check_install ;;
+case "${1:-}" in
+  --install) [ "$#" -eq 1 ] || { usage >&2; exit 2; }; install_operation ;;
+  --remove) [ "$#" -eq 1 ] || { usage >&2; exit 2; }; remove_links; rows; echo 'Start a new harness session for a guaranteed result.' ;;
+  --status) [ "$#" -eq 1 ] || { usage >&2; exit 2; }; rows ;;
   --bootstrap) [ "$#" -eq 1 ] || { usage >&2; exit 2; }; install_operation 1 ;;
-  --help|-h) [ "$#" -eq 1 ] || { usage >&2; exit 2; }; usage ;;
   *) usage >&2; exit 2 ;;
 esac

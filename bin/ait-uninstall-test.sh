@@ -29,7 +29,9 @@ done
 printf '#!/bin/bash\nexit 0\n' > "$SHIMS/launchctl"
 cat > "$SHIMS/brew" <<'EOF'
 #!/bin/bash
-if [ "$*" = "--prefix postgresql@17" ]; then printf '%s\n' "$AIT_TEST_PG_PREFIX"; else exit 2; fi
+if [ "$*" = "--prefix postgresql@17" ]; then printf '%s\n' "$AIT_TEST_PG_PREFIX"
+elif [ "$*" = "--prefix" ]; then printf '%s\n' "$AIT_TEST_BREW_PREFIX"
+else exit 2; fi
 EOF
 cat > "$SHIMS/ps" <<'EOF'
 #!/bin/bash
@@ -53,17 +55,18 @@ TEST_PATH="$SHIMS:/usr/bin:/bin:/usr/sbin:/sbin"
 make_fixture() {
   local name="$1"
   FX_HOME="$TEST_ROOT/$name/home"
-  FX_REPO="$FX_HOME/managed"
+  FX_REPO="$FX_HOME/.local/share/ait-protocol"
   FX_DATA="$FX_HOME/data"
   FX_STATE="$FX_HOME/state"
   FX_LOGS="$FX_HOME/logs"
   FX_RUNTIME="$FX_HOME/runtime"
-  FX_CLI="$FX_HOME/bin/ait"
+  FX_CLI="$FX_HOME/homebrew/bin/ait"
   FX_PROJECT="$FX_HOME/project"
   FX_DB="$FX_HOME/postgres/plc_directory"
   FX_OTHER_DB="$FX_HOME/postgres/unrelated_database"
-  mkdir -p "$FX_HOME"
+  mkdir -p "$FX_HOME" "$(dirname "$FX_REPO")"
   git clone -q "$ROOT" "$FX_REPO"
+  git -C "$FX_REPO" remote set-url origin https://github.com/natewalton/ait-protocol
   cp "$ROOT/ait" "$FX_REPO/ait"
   cp "$ROOT/VERSION" "$FX_REPO/VERSION"
   cp "$ROOT/bin/install.sh" "$FX_REPO/bin/install.sh"
@@ -75,11 +78,12 @@ if [ -n "${AIT_TEST_STOP_RECORD:-}" ]; then printf '%s\n' "$AIT_TEST_PROCESS_STA
 EOF
   chmod +x "$FX_REPO/bin/stop-all.sh"
   git -C "$FX_REPO" update-ref "refs/ait-release/v$(tr -d '[:space:]' < "$FX_REPO/VERSION")" HEAD
-  mkdir -p "$FX_HOME/bin" "$FX_HOME/.claude/skills" "$FX_HOME/.agents/skills" \
+  mkdir -p "$FX_HOME/homebrew/bin" "$FX_HOME/.claude/skills" "$FX_HOME/.agents/skills" \
     "$FX_DATA/ait-mcp" "$FX_DATA/ait-watcher" "$FX_STATE/ait-protocol" \
     "$FX_HOME/.ait" "$FX_LOGS" "$FX_RUNTIME" "$FX_PROJECT" "$(dirname "$FX_DB")" \
     "$FX_HOME/Library/LaunchAgents"
-  ln -s "$FX_REPO/ait" "$FX_CLI"
+  FX_REPO_REAL="$(cd "$FX_REPO" && pwd -P)"
+  ln -s "$FX_REPO_REAL/ait" "$FX_CLI"
   ln -s "$FX_REPO/.agents/skills/delivery-coordination" "$FX_HOME/.claude/skills/delivery-coordination"
   ln -s "$FX_REPO/.agents/skills/delivery-coordination" "$FX_HOME/.agents/skills/delivery-coordination"
   touch "$FX_DATA/ait-mcp/identity.json" "$FX_DATA/ait-watcher/identity.json" \
@@ -97,11 +101,10 @@ run_uninstall() {
   shift
   set +e
   OUTPUT="$(printf '%b' "$input" | env PATH="$TEST_PATH" HOME="$FX_HOME" \
+    TMPDIR="$FX_RUNTIME" \
     XDG_DATA_HOME="$FX_DATA" XDG_STATE_HOME="$FX_STATE" \
-    AIT_INSTALL_ROOT="$FX_REPO" AIT_CLI_LINK="$FX_CLI" \
-    AIT_LOG_DIR="$FX_LOGS" AIT_RUNTIME_TMPDIR="$FX_RUNTIME" \
-    AIT_TEST_DB="$FX_DB" AIT_TEST_PG_PREFIX="$PG_PREFIX" \
-    AIT_UNINSTALL_EXPECTED_ORIGIN="$ROOT" "$@" "$FX_REPO/ait" uninstall 2>&1)"
+    AIT_LOG_DIR="$FX_LOGS" AIT_TEST_DB="$FX_DB" AIT_TEST_PG_PREFIX="$PG_PREFIX" \
+    AIT_TEST_BREW_PREFIX="$FX_HOME/homebrew" "$@" "$FX_REPO/ait" uninstall 2>&1)"
   STATUS=$?
   set -e
 }
@@ -129,9 +132,8 @@ pass "wrong input and EOF cancel before mutation"
 make_fixture signal
 set +e
 signal_output="$(env PATH="$TEST_PATH" HOME="$FX_HOME" XDG_DATA_HOME="$FX_DATA" \
-  XDG_STATE_HOME="$FX_STATE" AIT_INSTALL_ROOT="$FX_REPO" AIT_CLI_LINK="$FX_CLI" \
-  AIT_LOG_DIR="$FX_LOGS" AIT_RUNTIME_TMPDIR="$FX_RUNTIME" \
-  AIT_UNINSTALL_EXPECTED_ORIGIN="$ROOT" python3 - "$FX_REPO/ait" <<'PY'
+  TMPDIR="$FX_RUNTIME" XDG_STATE_HOME="$FX_STATE" AIT_LOG_DIR="$FX_LOGS" AIT_TEST_DB="$FX_DB" \
+  AIT_TEST_PG_PREFIX="$PG_PREFIX" AIT_TEST_BREW_PREFIX="$FX_HOME/homebrew" python3 - "$FX_REPO/ait" <<'PY'
 import os, signal, subprocess, sys
 p = subprocess.Popen([sys.argv[1], 'uninstall'], stdin=subprocess.PIPE,
                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)

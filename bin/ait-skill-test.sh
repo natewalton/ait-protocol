@@ -149,16 +149,15 @@ linked "$HOME/.agents/skills/delivery-coordination"
 "$REPO/ait" skills remove >/dev/null
 "$REPO/bin/install-skill.sh" --bootstrap >/dev/null
 linked "$HOME/.claude/skills/delivery-coordination"
-AIT_NO_SKILLS=1 "$REPO/bin/install-skill.sh" --bootstrap >/dev/null
-linked "$HOME/.claude/skills/delivery-coordination"
-pass 'every bootstrap applies the default unless that invocation opts out'
+pass 'bootstrap applies the default and is an internal operation'
 
-HOME="$ROOT/bootstrap-optout"; export HOME
-skip="$(AIT_NO_SKILLS=1 "$REPO/bin/install-skill.sh" --bootstrap)"
-contains "$skip" 'skills  skipped (AIT_NO_SKILLS=1)'
-absent "$HOME/.claude"
-absent "$HOME/.agents"
-pass 'bootstrap opt-out creates nothing'
+set +e
+"$REPO/bin/install-skill.sh" >/dev/null 2>&1; bare_rc=$?
+"$REPO/bin/install-skill.sh" install >/dev/null 2>&1; alias_rc=$?
+"$REPO/bin/install-skill.sh" --check >/dev/null 2>&1; check_rc=$?
+set -e
+[ "$bare_rc" -eq 2 ] && [ "$alias_rc" -eq 2 ] && [ "$check_rc" -eq 2 ] || fail 'removed skill forms must exit 2'
+pass 'removed skill aliases and check form exit 2'
 
 missing_repo="$ROOT/missing-source"
 mkdir -p "$missing_repo/bin"

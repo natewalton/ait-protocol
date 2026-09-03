@@ -88,7 +88,7 @@ jobs:
           ! grep -Fq '__AIT_RELEASE_' "$asset"
           bash -n "$asset"
           "$asset" --verify-only
-          AIT_UPDATE_FIXTURE_ASSET="$asset" bin/ait-update-test.sh
+          bin/ait-update-test.sh
           test -s "$asset"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "asset=$asset" >> "$GITHUB_OUTPUT"

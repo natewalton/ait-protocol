@@ -2,15 +2,15 @@
 # Update one installer-owned checkout to one immutable GitHub release.
 set -euo pipefail
 
-MANAGED="${1:-${AIT_INSTALL_ROOT:-$HOME/.local/share/ait-protocol}}"
+MANAGED="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 API_URL="${AIT_RELEASE_API_URL:-https://api.github.com/repos/natewalton/ait-protocol/releases/latest}"
-EXPECTED_ORIGIN="${AIT_UPDATE_EXPECTED_ORIGIN:-https://github.com/natewalton/ait-protocol}"
-LOCK="${AIT_UPDATE_LOCK:-${XDG_STATE_HOME:-$HOME/.local/state}/ait-protocol/update.lock}"
-STATUS_SCRIPT="${AIT_UPDATE_STATUS_SCRIPT:-$MANAGED/bin/status.sh}"
-START_SCRIPT="${AIT_UPDATE_START_SCRIPT:-$MANAGED/bin/start-all.sh}"
-STOP_SCRIPT="${AIT_UPDATE_STOP_SCRIPT:-$MANAGED/bin/stop-all.sh}"
-CLI_LINK="${AIT_UPDATE_CLI_LINK:-${AIT_CLI_LINK:-}}"
-EXECUTABLE="${AIT_UPDATE_EXECUTABLE:-}"
+EXPECTED_ORIGIN="https://github.com/natewalton/ait-protocol"
+LOCK="${XDG_STATE_HOME:-$HOME/.local/state}/ait-protocol/update.lock"
+STATUS_SCRIPT="$MANAGED/bin/status.sh"
+START_SCRIPT="$MANAGED/bin/start-all.sh"
+STOP_SCRIPT="$MANAGED/bin/stop-all.sh"
+BREW_PREFIX="$(brew --prefix 2>/dev/null || true)"
+CLI_LINK="$BREW_PREFIX/bin/ait"
 RELEASE_PAGE='https://github.com/natewalton/ait-protocol/releases/latest'
 OLD_COMMIT=''; OLD_VERSION=''; TARGET_COMMIT=''; TARGET_VERSION=''; TARGET_TAG=''
 WAS_READY=0; RECOVERY=''; LOCK_OWNED=0; TMP_DIR=''
@@ -36,7 +36,7 @@ finish() {
     fi
   fi
   if [ "$LOCK_OWNED" -eq 1 ]; then
-    rm -f "$LOCK/pid" "$LOCK/state" 2>/dev/null || true
+    rm -f "$LOCK/pid" 2>/dev/null || true
     rmdir "$LOCK" 2>/dev/null || true
   fi
   [ -z "$TMP_DIR" ] || rm -rf "$TMP_DIR"
@@ -57,42 +57,14 @@ process.stdout.write([r.tag_name, r.tag_name.slice(1), a.browser_download_url, a
 NODE
 }
 
-resolve_path() {
-  local path="$1" dir next depth=0 seen='|'
-  while [ -L "$path" ]; do
-    [ "$depth" -lt 40 ] || return 1
-    case "$seen" in *"|$path|"*) return 1 ;; esac
-    seen="$seen$path|"; dir="$(cd -P "$(dirname "$path")" && pwd)"; next="$(readlink "$path")"
-    case "$next" in /*) path="$next" ;; *) path="$dir/$next" ;; esac
-    depth=$((depth + 1))
-  done
-  if [ -e "$path" ]; then printf '%s/%s' "$(cd -P "$(dirname "$path")" && pwd)" "$(basename "$path")"; else printf '%s' "$path"; fi
-}
-
 check_git_state() {
-  local git_dir marker
-  git_dir="$(git -C "$MANAGED" rev-parse --git-dir)" || fail 'unable to inspect Git state'
-  case "$git_dir" in /*) ;; *) git_dir="$MANAGED/$git_dir" ;; esac
-  for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG rebase-merge rebase-apply sequencer; do
-    [ ! -e "$git_dir/$marker" ] || fail "a Git operation is in progress ($marker)"
-  done
+  git -C "$MANAGED" rev-parse --git-dir >/dev/null || fail 'unable to inspect Git state'
 }
 
 check_cli() {
-  local candidate resolved found=0
-  if [ -n "$CLI_LINK" ]; then candidate="$CLI_LINK"; found=1; else
-    for candidate in "$HOME/.local/bin/ait" /opt/homebrew/bin/ait /usr/local/bin/ait; do
-      if [ -e "$candidate" ] || [ -L "$candidate" ]; then found=1; break; fi
-    done
-  fi
-  [ "$found" -eq 1 ] || fail 'managed CLI link was not found; run the AIT installer before updating'
-  [ -L "$candidate" ] || fail "CLI target is not an installer-owned symlink: $candidate"
-  resolved="$(resolve_path "$candidate")" || fail "CLI link is cyclic or unresolved: $candidate"
-  [ "$resolved" = "$MANAGED/ait" ] || fail "CLI link $candidate belongs to another checkout ($resolved)"
-  if [ -n "$EXECUTABLE" ]; then
-    resolved="$(resolve_path "$EXECUTABLE")" || fail "executing AIT CLI is cyclic or unresolved: $EXECUTABLE"
-    [ "$resolved" = "$MANAGED/ait" ] || fail "executing AIT CLI belongs to another checkout ($resolved)"
-  fi
+  [ -n "$BREW_PREFIX" ] || fail 'Homebrew prefix is unavailable; run the AIT installer before updating'
+  [ -L "$CLI_LINK" ] || fail "CLI target is not an installer-owned symlink: $CLI_LINK"
+  [ "$(readlink "$CLI_LINK")" = "$MANAGED/ait" ] || fail "CLI link $CLI_LINK belongs to another checkout ($(readlink "$CLI_LINK" 2>/dev/null || printf 'unreadable'); expected $MANAGED/ait)"
 }
 
 service_state() {
@@ -114,7 +86,7 @@ acquire_lock() {
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then fail "another AIT update is running (pid $pid)"; fi
     fail "stale AIT update lock at $LOCK; remove it after confirming no update is running"
   fi
-  LOCK_OWNED=1; printf '%s\n' "$$" > "$LOCK/pid"; printf '%s\n' "$OLD_COMMIT" > "$LOCK/state"
+  LOCK_OWNED=1; printf '%s\n' "$$" > "$LOCK/pid"
 }
 
 check_sessions() {

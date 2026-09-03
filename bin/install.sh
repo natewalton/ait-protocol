@@ -3,8 +3,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-INSTALL_ROOT="${AIT_INSTALL_ROOT:-$HOME/.local/share/ait-protocol}"
-PUBLIC_COMMAND="${AIT_PUBLIC_RECOVERY_COMMAND:-/bin/bash -c \"\$(curl -fsSL https://github.com/natewalton/ait-protocol/releases/latest/download/install.sh)\"}"
+PUBLIC_COMMAND='/bin/bash -c "$(curl -fsSL https://github.com/natewalton/ait-protocol/releases/latest/download/install.sh)"'
 ENV_TARGETS=("$REPO/plc/.env" "$REPO/pds/.env" "$REPO/appview/.env" "$REPO/mcp/.env")
 ENV_NAMES=(plc.env pds.env appview.env mcp.env)
 CLI_LINK=""
@@ -13,28 +12,10 @@ BREW_PREFIX=""
 usage() {
   cat <<'EOF'
 Usage:
-  bin/install.sh --machine       Install or verify this AIT checkout and stack.
   bin/install.sh --init [path]   Enable or verify AIT in a project.
   bin/install.sh --launch claude|codex [args...]
   bin/install.sh --drop-database Remove AIT's local plc_directory database.
 EOF
-}
-
-resolve_path() {
-  local source="$1" dir target
-  while [ -L "$source" ]; do
-    dir="$(cd -P "$(dirname "$source")" && pwd)"
-    target="$(readlink "$source")"
-    case "$target" in
-      /*) source="$target" ;;
-      *) source="$dir/$target" ;;
-    esac
-  done
-  if [ -e "$source" ]; then
-    cd -P "$(dirname "$source")" && printf '%s/%s' "$(pwd)" "$(basename "$source")"
-  else
-    printf '%s' "$source"
-  fi
 }
 
 missing_prereq() {
@@ -46,8 +27,8 @@ missing_prereq() {
 
 preflight() {
   local failed=0 claude_installed=0 codex_installed=0
-  [ "${AIT_SUPPRESS_PREFLIGHT_OUTPUT:-0}" = "1" ] || echo "Prerequisites"
-  if [ "$(uname -s 2>/dev/null || true)" != "Darwin" ] && [ "${AIT_SKIP_PLATFORM_CHECK:-0}" != "1" ]; then
+  echo "Prerequisites"
+  if [ "$(uname -s 2>/dev/null || true)" != "Darwin" ]; then
     missing_prereq "macOS" "Run AIT on macOS." "https://github.com/natewalton/ait-protocol"
     failed=1
   fi
@@ -58,9 +39,9 @@ preflight() {
   if ! command -v brew >/dev/null 2>&1; then
     missing_prereq "Homebrew" '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"' "https://brew.sh/"
     failed=1
-    BREW_PREFIX="${AIT_BREW_PREFIX:-}"
+    BREW_PREFIX=""
   else
-    BREW_PREFIX="${AIT_BREW_PREFIX:-$(brew --prefix 2>/dev/null || true)}"
+    BREW_PREFIX="$(brew --prefix 2>/dev/null || true)"
     if [ -z "$BREW_PREFIX" ]; then
       missing_prereq "Homebrew prefix" "brew --prefix" "https://brew.sh/"
       failed=1
@@ -89,19 +70,9 @@ preflight() {
     echo "Prerequisites: FAILED"
     return 1
   fi
-  if [ "${AIT_SUPPRESS_PREFLIGHT_OUTPUT:-0}" != "1" ]; then
-    if [ "$claude_installed" -eq 1 ]; then
-      echo "  claude   ready"
-    else
-      echo "  claude   skipped (not installed)"
-    fi
-    if [ "$codex_installed" -eq 1 ]; then
-      echo "  codex    ready"
-    else
-      echo "  codex    skipped (not installed)"
-    fi
-    echo "Prerequisites: ✓"
-  fi
+  if [ "$claude_installed" -eq 1 ]; then echo "  claude   ready"; else echo "  claude   skipped (not installed)"; fi
+  if [ "$codex_installed" -eq 1 ]; then echo "  codex    ready"; else echo "  codex    skipped (not installed)"; fi
+  echo "Prerequisites: ✓"
 }
 
 check_checkout() {
@@ -115,11 +86,11 @@ check_checkout() {
 }
 
 same_path() {
-  [ "$(resolve_path "$1")" = "$(resolve_path "$2")" ]
+  [ -L "$1" ] && [ "$(readlink "$1")" = "$2" ]
 }
 
 check_cli_link() {
-  CLI_LINK="${AIT_CLI_LINK:-$BREW_PREFIX/bin/ait}"
+  CLI_LINK="$BREW_PREFIX/bin/ait"
   [ -n "$CLI_LINK" ] || { echo "error: cannot determine Homebrew bin directory" >&2; return 1; }
   if [ -e "$CLI_LINK" ] || [ -L "$CLI_LINK" ]; then
     if [ -L "$CLI_LINK" ] && same_path "$CLI_LINK" "$REPO/ait"; then
@@ -228,7 +199,7 @@ environment_files() {
   local -a created=()
   for target in "${ENV_TARGETS[@]}"; do [ -e "$target" ] && present=$((present + 1)); done
   if [ "$present" -eq 4 ]; then
-    [ "${AIT_SUPPRESS_DETAIL_OUTPUT:-0}" = "1" ] || echo "Environment: ✓ existing four-file set preserved"
+    echo "Environment: ✓ existing four-file set preserved"
     return 0
   fi
   if [ "$present" -gt 0 ]; then
@@ -266,7 +237,7 @@ environment_files() {
     trap interrupt INT TERM
   done
   trap - INT TERM
-  [ "${AIT_SUPPRESS_DETAIL_OUTPUT:-0}" = "1" ] || echo "Environment: ✓ four files published"
+  echo "Environment: ✓ four files published"
 }
 
 postgres_client() {
@@ -371,26 +342,16 @@ machine_install() {
     echo "AIT files: ✓ existing dependencies and builds verified"
   else
     environment_files || return 1
-    if [ "${AIT_INSTALL_SKIP_PROVISION:-0}" = "1" ]; then
-      echo "AIT files: ✓ provision skipped by test fixture"
-    else
-      install_database
-      install_dependencies
-      echo "AIT files: ✓ dependencies and builds ready"
-    fi
+    install_database
+    install_dependencies
+    echo "AIT files: ✓ dependencies and builds ready"
   fi
-  if [ "${AIT_INSTALL_SKIP_PROVISION:-0}" = "1" ]; then
-    echo "Services: skipped by test fixture"
-  else
-    start_and_verify || { echo "Services: FAILED; recovery: $PUBLIC_COMMAND" >&2; return 1; }
-    echo "Services: ✓ healthy"
-  fi
+  start_and_verify || { echo "Services: FAILED; recovery: $PUBLIC_COMMAND" >&2; return 1; }
+  echo "Services: ✓ healthy"
   echo "CLI: ✓ $CLI_LINK -> $REPO/ait"
-  if [ "${AIT_SUPPRESS_DETAIL_OUTPUT:-0}" != "1" ]; then
-    echo "Harnesses:"
-    if command -v claude >/dev/null 2>&1; then echo "  claude   ready"; else echo "  claude   skipped (not installed)"; fi
-    if command -v codex >/dev/null 2>&1; then echo "  codex    ready"; else echo "  codex    skipped (not installed)"; fi
-  fi
+  echo "Harnesses:"
+  if command -v claude >/dev/null 2>&1; then echo "  claude   ready"; else echo "  claude   skipped (not installed)"; fi
+  if command -v codex >/dev/null 2>&1; then echo "  codex    ready"; else echo "  codex    skipped (not installed)"; fi
   echo "Next steps:"
   echo "  cd /path/to/your/project"
   echo "  ait init"
@@ -534,10 +495,6 @@ case "${1:-}" in
     [ "$#" -eq 1 ] || { usage >&2; exit 2; }
     rebuild_only
     ;;
-  --machine)
-    [ "$#" -eq 1 ] || { usage >&2; exit 2; }
-    machine_install
-    ;;
   --init)
     [ "$#" -le 2 ] || { usage >&2; exit 2; }
     project="$(resolve_project "${2:-}")" || exit 1
@@ -550,9 +507,6 @@ case "${1:-}" in
   --drop-database)
     [ "$#" -eq 1 ] || { usage >&2; exit 2; }
     drop_database
-    ;;
-  --help|-h)
-    usage
     ;;
   "")
     machine_install

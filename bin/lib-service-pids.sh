@@ -7,7 +7,7 @@
 # scripts used to read "no pidfile" as "not running": start-all then launched a
 # duplicate, and stop-all walked away leaving the process alive.
 
-AIT_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CODEX_SOCK="${AIT_CODEX_SHARED_SOCKET:-$HOME/.ait/codex-shared.sock}"
 
 # True when this pid is working inside the repo. Without it, any program that
@@ -16,7 +16,7 @@ ours() {
   local pid=$1 cwd
   [ -n "$pid" ] || return 1
   cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)"
-  case "$cwd" in "$AIT_REPO"/*|"$AIT_REPO") return 0 ;; *) return 1 ;; esac
+  case "$cwd" in "$repo_root"/*|"$repo_root") return 0 ;; *) return 1 ;; esac
 }
 
 # Prints the pid holding this service's resource, or nothing. ALWAYS returns 0:

@@ -34,6 +34,12 @@ cat > "$ROOT/bin/pgrep" <<'EOF'
 exit 0
 EOF
 chmod +x "$ROOT/bin/curl" "$ROOT/bin/pgrep"
+mkdir -p "$ROOT/cli/bin"
+cat > "$ROOT/bin/brew" <<EOF
+#!/bin/sh
+if [ "\${1:-}" = --prefix ]; then printf '%s\n' "$ROOT/cli"; else exit 0; fi
+EOF
+chmod +x "$ROOT/bin/brew"
 PATH="$ROOT/bin:/usr/bin:/bin"; export PATH
 
 source_repo="$ROOT/source"
@@ -46,12 +52,36 @@ cat > "$source_repo/bin/install.sh" <<'EOF'
 #!/bin/sh
 [ "$1" = --rebuild-only ] || exit 2
 [ "${AIT_TEST_FAIL_REBUILD:-0}" = 0 ] || exit 1
-mkdir -p "$AIT_INSTALL_ROOT/appview/dist" "$AIT_INSTALL_ROOT/mcp/dist"
-printf built > "$AIT_INSTALL_ROOT/appview/dist/server.js"
-printf built > "$AIT_INSTALL_ROOT/mcp/dist/server.js"
+repo="$(cd "$(dirname "$0")/.." && pwd -P)"
+mkdir -p "$repo/appview/dist" "$repo/mcp/dist"
+printf built > "$repo/appview/dist/server.js"
+printf built > "$repo/mcp/dist/server.js"
 echo 'Rebuild: complete'
 EOF
 chmod +x "$source_repo/ait" "$source_repo/bin/"*
+sed -i '' "s#https://github.com/natewalton/ait-protocol#$origin#g" "$source_repo/bin/update.sh"
+cat > "$source_repo/bin/status.sh" <<EOF
+#!/bin/sh
+echo 'AIT status:'
+case "\${AIT_TEST_STATE:-stopped}" in
+  ready) value=running; rc=0 ;;
+  stopped) value=unreachable; rc=1 ;;
+  *) echo '  plc unknown'; exit 1 ;;
+esac
+printf '  plc %s\\n  pds %s\\n  appview %s\\n  codex-appserver %s\\n' "\$value" "\$value" "\$value" "\$value"
+exit "\$rc"
+EOF
+cat > "$source_repo/bin/start-all.sh" <<EOF
+#!/bin/sh
+echo start >> "$ROOT/calls"
+[ "\${AIT_TEST_FAIL_START:-0}" = 0 ]
+EOF
+cat > "$source_repo/bin/stop-all.sh" <<EOF
+#!/bin/sh
+echo stop >> "$ROOT/calls"
+[ "\${AIT_TEST_FAIL_STOP:-0}" = 0 ]
+EOF
+chmod +x "$source_repo/bin/status.sh" "$source_repo/bin/start-all.sh" "$source_repo/bin/stop-all.sh"
 cat > "$source_repo/.gitignore" <<'EOF'
 *.env
 appview/data/
@@ -92,7 +122,8 @@ write_api
 git clone -q "$origin" "$managed"
 git -C "$managed" checkout -q --detach "$base"
 mkdir -p "$ROOT/cli" "$ROOT/home/.claude/skills" "$ROOT/home/.agents/skills"
-ln -s "$managed/ait" "$ROOT/cli/ait"
+managed_real="$(cd "$managed" && pwd -P)"
+ln -s "$managed_real/ait" "$ROOT/cli/bin/ait"
 ln -s "$managed/skill-source" "$ROOT/home/.claude/skills/delivery-coordination"
 ln -s "$managed/skill-source" "$ROOT/home/.agents/skills/delivery-coordination"
 
@@ -131,17 +162,14 @@ reset_managed() {
   printf old > "$managed/appview/dist/server.js"
   printf old > "$managed/mcp/dist/server.js"
   git -C "$managed" update-ref -d refs/ait-release/v0.1.2 2>/dev/null || true
-  rm -rf "$ROOT/state/update.lock" "$ROOT/tmp"/ait-update.* "$ROOT/calls"
+  rm -rf "$ROOT/state/ait-protocol/update.lock" "$ROOT/tmp"/ait-update.* "$ROOT/calls"
   write_asset
   write_api
 }
 
 run_update() {
   env HOME="$ROOT/home" TMPDIR="$ROOT/tmp" XDG_STATE_HOME="$ROOT/state" \
-    AIT_INSTALL_ROOT="$managed" AIT_UPDATE_EXPECTED_ORIGIN="$origin" \
-    AIT_UPDATE_CLI_LINK="$ROOT/cli/ait" AIT_UPDATE_LOCK="$ROOT/state/update.lock" \
-    AIT_UPDATE_STATUS_SCRIPT="$status" AIT_UPDATE_START_SCRIPT="$start" AIT_UPDATE_STOP_SCRIPT="$stop" \
-    AIT_RELEASE_API_URL="file://$api" AIT_TEST_CALLS="$ROOT/calls" "$@" "$REPO/bin/update.sh" "$managed"
+    AIT_RELEASE_API_URL="file://$api" AIT_TEST_CALLS="$ROOT/calls" "$@" "$managed/bin/update.sh"
 }
 
 bash -n "$REPO/bin/update.sh" "$REPO/ait"
@@ -157,7 +185,7 @@ contains "$out" 'Updated AIT 0.1.1 -> 0.1.2'
 [ "$(git -C "$managed" rev-parse 'refs/ait-release/v0.1.2^{commit}')" = "$target" ] || fail 'release ref missing'
 [ ! -e "$ROOT/calls" ] || fail 'stopped update called service scripts'
 [ "$before" = "$(shasum -a 256 "$managed"/{plc,pds,appview,mcp}/.env "$managed/appview/data/sentinel" | shasum -a 256 | awk '{print $1}')" ] || fail 'update changed state bytes'
-[ ! -d "$ROOT/state/update.lock" ] && [ -z "$(find "$ROOT/tmp" -name 'ait-update.*' -print -quit)" ] || fail 'update cleanup leaked'
+  [ ! -d "$ROOT/state/ait-protocol/update.lock" ] && [ -z "$(find "$ROOT/tmp" -name 'ait-update.*' -print -quit)" ] || fail 'update cleanup leaked'
 pass 'stopped update preserves state and records exact release'
 
 reset_managed
@@ -203,9 +231,9 @@ printf dirty > "$managed/dirty"
 refuses 'dirty checkout refusal' dirty run_update AIT_TEST_STATE=stopped
 rm "$managed/dirty"
 refuses 'active session refusal' 'active AIT session' run_update AIT_TEST_STATE=stopped AIT_TEST_ACTIVE=1
-mkdir -p "$ROOT/state/update.lock"; echo $$ > "$ROOT/state/update.lock/pid"
+mkdir -p "$ROOT/state/ait-protocol/update.lock"; echo $$ > "$ROOT/state/ait-protocol/update.lock/pid"
 refuses 'live lock refusal' 'another AIT update' run_update AIT_TEST_STATE=stopped
-rm -rf "$ROOT/state/update.lock"
+rm -rf "$ROOT/state/ait-protocol/update.lock"
 refuses 'partial service refusal' 'partial or has an unknown status' run_update AIT_TEST_STATE=partial
 pass 'ownership, session, lock, and service boundaries refuse before checkout'
 
@@ -214,7 +242,7 @@ set +e; recovery="$(run_update AIT_TEST_STATE=stopped AIT_TEST_FAIL_REBUILD=1 2>
 [ "$rc" -eq 1 ] || fail 'rebuild failure succeeded'
 contains "$recovery" 'checkout --detach'
 case "$recovery" in *'Do not reset'*) fail 'pre-start recovery forbids safe restore' ;; esac
-[ ! -d "$ROOT/state/update.lock" ] || fail 'rebuild failure leaked lock'
+[ ! -d "$ROOT/state/ait-protocol/update.lock" ] || fail 'rebuild failure leaked lock'
 pass 'pre-start failure prints manual old-release recovery and cleans up'
 
 reset_managed
@@ -222,11 +250,11 @@ set +e; recovery="$(run_update AIT_TEST_STATE=ready AIT_TEST_FAIL_START=1 2>&1)"
 [ "$rc" -eq 1 ] || fail 'start failure succeeded'
 contains "$recovery" 'Do not reset; persisted data may have advanced.'
 case "$recovery" in *'checkout --detach'*) fail 'post-start recovery suggested reset' ;; esac
-[ ! -d "$ROOT/state/update.lock" ] || fail 'start failure leaked lock'
+[ ! -d "$ROOT/state/ait-protocol/update.lock" ] || fail 'start failure leaked lock'
 pass 'post-start failure requires fix-forward and cleans up'
 
 reset_managed
-public="$(env HOME="$ROOT/home" TMPDIR="$ROOT/tmp" XDG_STATE_HOME="$ROOT/state" AIT_INSTALL_ROOT="$managed" AIT_UPDATE_EXPECTED_ORIGIN="$origin" AIT_UPDATE_CLI_LINK="$ROOT/cli/ait" AIT_UPDATE_LOCK="$ROOT/state/update.lock" AIT_UPDATE_STATUS_SCRIPT="$status" AIT_UPDATE_START_SCRIPT="$start" AIT_UPDATE_STOP_SCRIPT="$stop" AIT_RELEASE_API_URL="file://$api" AIT_TEST_CALLS="$ROOT/calls" AIT_TEST_STATE=stopped "$managed/ait" update)" || fail 'public dispatch failed'
+public="$(env HOME="$ROOT/home" TMPDIR="$ROOT/tmp" XDG_STATE_HOME="$ROOT/state" AIT_RELEASE_API_URL="file://$api" AIT_TEST_CALLS="$ROOT/calls" AIT_TEST_STATE=stopped "$managed/ait" update)" || fail 'public dispatch failed'
 contains "$public" 'Updated AIT 0.1.1 -> 0.1.2'
 pass 'public CLI dispatch uses the installed updater'
 

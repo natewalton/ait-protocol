@@ -110,7 +110,15 @@ try {
   process.kill(Number(fs.readFileSync(delayedMcpPidPath, 'utf8')), 'SIGUSR1')
   const initiallyPending = await readiness
   if (supportsMcpReadiness) {
-    assert.deepEqual(initiallyPending, ['readiness_probe'])
+    // Codex 0.152 waits for the terminal event but reports an empty pending
+    // snapshot after the released probe. Older versions include the probe
+    // name. The event-gated wait above is the contract; accept either server
+    // snapshot shape while rejecting any unexpected entry.
+    assert.ok(
+      initiallyPending.length === 0 ||
+        initiallyPending.every((name) => name === 'readiness_probe'),
+      `unexpected MCP readiness snapshot: ${JSON.stringify(initiallyPending)}`,
+    )
   } else {
     assert.deepEqual(initiallyPending, [])
   }

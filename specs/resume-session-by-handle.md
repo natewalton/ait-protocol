@@ -1,6 +1,6 @@
 # Resume an AIT session by its handle
 
-Status: draft revision 4 for operator review, 2026-09-03. Tracked by [#24](https://github.com/natewalton/ait-protocol/issues/24).
+Status: ready for peer review, 2026-09-03. Tracked by [#24](https://github.com/natewalton/ait-protocol/issues/24).
 
 ## Why
 
@@ -146,8 +146,9 @@ rollout, identity-envelope, and executable harness fixtures. It proves:
    fields and are ordered by rollout modification time.
 3. Newest activity sorts first across both harnesses; the list is not limited to
    the current project or an age window.
-4. Exact handle selection dispatches from the recorded project to the correct
-   existing launcher with the exact UUID or thread ID.
+4. Exact handle selection dispatches from a recorded project path containing
+   spaces to the correct existing launcher with the exact UUID or thread ID,
+   without shell interpretation.
 5. Exact Claude UUID and Codex thread ID selection resolve to the same rows
    without requiring a harness-specific command.
 6. A partial query narrows the rows and numbered selection dispatches the chosen

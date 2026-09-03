@@ -1,6 +1,6 @@
 # Resume an AIT session by its handle
 
-Status: draft revision 2 for operator review, 2026-09-03. Tracked by [#24](https://github.com/natewalton/ait-protocol/issues/24).
+Status: draft revision 3 for operator review, 2026-09-03. Tracked by [#24](https://github.com/natewalton/ait-protocol/issues/24).
 
 ## Why
 
@@ -66,10 +66,11 @@ somehow maps to more than one harness session, the command refuses the ambiguous
 resume and shows the matching rows.
 
 After selection, `ait resume` changes to the recorded project directory and
-replaces itself with the existing supported path:
+invokes the same private install/launcher path already used by the public new-
+session commands, supplying the exact resume identifier internally:
 
-- Claude: `ait claude --resume <conversation-uuid>`
-- Codex: `ait codex --resume <thread-id>`
+- Claude launcher: `--resume <conversation-uuid>`
+- Codex launcher: `--resume <thread-id>`
 
 The selector never decrypts or prints credentials. It reads only the plaintext
 handle already present in the identity envelope, computes the existing
@@ -80,11 +81,11 @@ exit status.
 
 `ait resume` becomes AIT's only public resume surface. `ait claude` and
 `ait codex` mean “start a new session.” Their current public resume tokens
-(`--resume`, `-r`, `--resume-last`, and `--session`) refuse with the equivalent
-`ait resume` command. Delete Claude's private name and newest-transcript
-selection and Codex's legacy `--session` alias. The launch path keeps only the
-exact `--resume <id>` entry point that `ait resume` uses internally; it is not a
-second documented interface.
+(`--resume`, `-r`, `--resume-last`, and `--session`) refuse before reaching the
+launcher and print the equivalent `ait resume` command. Delete Claude's private
+name and newest-transcript selection and Codex's legacy `--session` alias. The
+private launchers keep only the exact `--resume <id>` entry point used by the
+selector; it is not a second documented interface.
 
 `ait resume` is an interactive terminal command. `Ctrl-C` or EOF cancels without
 starting a harness. It adds no flags. A user who already knows the handle,
@@ -94,7 +95,7 @@ Claude conversation UUID, or Codex thread ID passes it as the optional query.
 
 Nine files:
 
-1. `ait` adds the command and help page, dispatches into the selected existing launcher, and redirects the former public resume forms to this command.
+1. `ait` adds the command and help page, dispatches the selection through the existing private install/launcher path, and redirects the former public resume forms to this command.
 2. `bin/claude-session.sh` retains exact UUID resume for internal dispatch and removes its duplicate name and newest-transcript selectors.
 3. `mcp/src/codex/host.ts` retains exact thread resume and removes the legacy `--session` alias.
 4. `mcp/src/storage.ts` exposes a read-only public-identity lookup for a supplied session UUID so discovery reuses the existing identity-path convention.

@@ -9,6 +9,9 @@ ENV_NAMES=(plc.env pds.env appview.env mcp.env)
 CLI_LINK=""
 BREW_PREFIX=""
 
+# shellcheck source=bin/lib-service-pids.sh
+. "$REPO/bin/lib-service-pids.sh"
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -99,20 +102,6 @@ check_cli_link() {
     echo "error: CLI link collision at $CLI_LINK; expected a symlink to $REPO/ait" >&2
     return 1
   fi
-}
-
-service_pid() {
-  case "$1" in
-    plc) lsof -nP -iTCP:2582 -sTCP:LISTEN -t 2>/dev/null | head -1 ;;
-    pds) lsof -nP -iTCP:2583 -sTCP:LISTEN -t 2>/dev/null | head -1 ;;
-    appview) lsof -nP -iTCP:2585 -sTCP:LISTEN -t 2>/dev/null | head -1 ;;
-    codex-appserver) pgrep -f "codex app-server --listen unix://${AIT_CODEX_SHARED_SOCKET:-$HOME/.ait/codex-shared.sock}" 2>/dev/null | head -1 ;;
-    *) return 1 ;;
-  esac
-}
-
-service_cwd() {
-  lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1
 }
 
 check_process_boundary() {

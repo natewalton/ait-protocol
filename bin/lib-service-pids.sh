@@ -19,22 +19,38 @@ ours() {
   case "$cwd" in "$repo_root"/*|"$repo_root") return 0 ;; *) return 1 ;; esac
 }
 
+service_pid() {
+  case "$1" in
+    plc)     lsof -nP -iTCP:2582 -sTCP:LISTEN -t 2>/dev/null | head -1 ;;
+    pds)     lsof -nP -iTCP:2583 -sTCP:LISTEN -t 2>/dev/null | head -1 ;;
+    appview) lsof -nP -iTCP:2585 -sTCP:LISTEN -t 2>/dev/null | head -1 ;;
+    codex-appserver)
+      if [ -S "$CODEX_SOCK" ]; then
+        lsof -t "$CODEX_SOCK" 2>/dev/null | head -1
+      else
+        # Before the socket binds, retain the existing command-line discovery
+        # policy so start-all can adopt the process and wait for its event.
+        { pgrep -f "codex app-server --listen unix://$CODEX_SOCK" || true; } | head -1
+      fi
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 # Prints the pid holding this service's resource, or nothing. ALWAYS returns 0:
 # a non-zero return would abort the caller at its `pid="$(running_pid …)"`
 # assignment under `set -e`, before it could report anything.
 running_pid() {
   local pid=""
-  case "$1" in
-    plc)     pid="$(lsof -nP -iTCP:2582 -sTCP:LISTEN -t 2>/dev/null | head -1)" ;;
-    pds)     pid="$(lsof -nP -iTCP:2583 -sTCP:LISTEN -t 2>/dev/null | head -1)" ;;
-    appview) pid="$(lsof -nP -iTCP:2585 -sTCP:LISTEN -t 2>/dev/null | head -1)" ;;
-    codex-appserver)
-      # The socket path in the command line is already unique to this host's
-      # shared server, so no cwd check is needed (and codex runs from the
-      # session's directory, not the repo).
-      { pgrep -f "codex app-server --listen unix://$CODEX_SOCK" || true; } | head -1
-      return 0 ;;
-  esac
+  pid="$(service_pid "$1" || true)"
+  if [ "$1" = codex-appserver ]; then
+    printf '%s' "$pid"
+    return 0
+  fi
   if ours "$pid"; then printf '%s' "$pid"; fi
   return 0
+}
+
+service_cwd() {
+  lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1
 }

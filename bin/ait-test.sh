@@ -573,12 +573,22 @@ if [ -n "$name" ]; then
   [ -f "$AIT_START_STATE/$name" ] && cat "$AIT_START_STATE/$name"
 elif [[ "$*" = *"-d cwd"* ]]; then
   echo "n$AIT_START_REPO"
+elif [[ "$*" = *"$AIT_CODEX_SHARED_SOCKET"* ]] && [ -n "${AIT_CODEX_OWNER_PID:-}" ]; then
+  echo "$AIT_CODEX_OWNER_PID"
+elif [[ "$*" = *"$AIT_CODEX_SHARED_SOCKET"* ]] && [ -f "$AIT_START_WRAPPER_PID_DIR/codex-socket-owner" ]; then
+  cat "$AIT_START_WRAPPER_PID_DIR/codex-socket-owner"
 fi
 EOF
 cat > "$codex_start_fixture/shim/pgrep" <<'EOF'
 #!/bin/bash
 case "$*" in
-  *codex*) [ -f "$AIT_START_WRAPPER_PID_DIR/codex-appserver" ] && cat "$AIT_START_WRAPPER_PID_DIR/codex-appserver" ;;
+  *codex*)
+    if [ -n "${AIT_CODEX_PIDS:-}" ]; then
+      for pid in $AIT_CODEX_PIDS; do echo "$pid"; done
+    elif [ -f "$AIT_START_WRAPPER_PID_DIR/codex-appserver" ]; then
+      cat "$AIT_START_WRAPPER_PID_DIR/codex-appserver"
+    fi
+    ;;
 esac
 EOF
 for wrapper in plc pds appview; do
@@ -607,6 +617,7 @@ while True:
     client.close()
 PY
 server_pid=$!
+printf '%s' "$server_pid" > "$AIT_START_WRAPPER_PID_DIR/codex-socket-owner"
 trap 'kill "$server_pid" 2>/dev/null || true; rm -f "$AIT_CODEX_SHARED_SOCKET"; exit 0' INT TERM
 while :; do sleep 1; done
 EOF
@@ -623,7 +634,12 @@ export AIT_CODEX_SHARED_SOCKET="$codex_start_state/codex.sock"
 export AIT_LOG_DIR="$codex_start_logs"
 export AIT_START_MODE=delayed
 test_codex_pid=""
+test_decoy_pid=""
 codex_cleanup() {
+  if [ -n "$test_decoy_pid" ]; then
+    kill "$test_decoy_pid" 2>/dev/null || true
+    wait "$test_decoy_pid" 2>/dev/null || true
+  fi
   if [ -n "$test_codex_pid" ]; then
     kill "$test_codex_pid" 2>/dev/null || true
     wait "$test_codex_pid" 2>/dev/null || true
@@ -633,6 +649,7 @@ codex_cleanup() {
   done
   rm -f "$codex_start_state"/* "$codex_start_wrapper_pids"/* "$codex_start_logs"/* "$AIT_CODEX_SHARED_SOCKET"
   test_codex_pid=""
+  test_decoy_pid=""
 }
 start_codex_fixture() {
   export AIT_START_DELAY="$1"
@@ -643,19 +660,31 @@ start_codex_fixture() {
 
 start_codex_fixture 20
 printf '%s' "$test_codex_pid" > "$codex_start_logs/ait-codex-appserver.pid"
+python3 -c 'import signal; signal.pause()' &
+test_decoy_pid=$!
+export AIT_CODEX_PIDS="$test_decoy_pid $test_codex_pid"
 pidfile_output="$("$codex_start_fixture/bin/start-all.sh" 2>&1)"
-assert_contains "$pidfile_output" "codex-appserver already running (pid $test_codex_pid); waiting for socket"
+assert_contains "$pidfile_output" "codex-appserver already running (pid $test_decoy_pid, adopted — discovered before socket bind); waiting for socket"
 assert_contains "$pidfile_output" "waiting for codex-appserver socket"
-assert_contains "$pidfile_output" "codex-appserver ready (pid $test_codex_pid)"
+socket_owner_pid="$(cat "$codex_start_wrapper_pids/codex-socket-owner")"
+assert_contains "$pidfile_output" "codex-appserver ready (pid $socket_owner_pid)"
+assert_same "$(cat "$codex_start_logs/ait-codex-appserver.pid")" "$socket_owner_pid"
 assert_same "$(wc -l < "$codex_start_wrapper_pids/codex-launches" | tr -d ' ')" 1
+export AIT_CODEX_PIDS='111 222' AIT_CODEX_OWNER_PID=222
+assert_same "$(pgrep -f 'codex app-server --listen unix://ignored')" $'111\n222'
+owner_probe="$(bash -c '. "$AIT_START_REPO/bin/lib-service-pids.sh"; running_pid codex-appserver')"
+assert_same "$owner_probe" 222
+unset AIT_CODEX_PIDS AIT_CODEX_OWNER_PID
 codex_cleanup
-pass "Codex pidfile adoption waits for socket without a second wrapper"
+pass "Codex socket owner wins over pgrep and pidfile without a second wrapper"
 
 start_codex_fixture 20
 rm -f "$codex_start_logs/ait-codex-appserver.pid"
 discovered_output="$("$codex_start_fixture/bin/start-all.sh" 2>&1)"
-assert_contains "$discovered_output" "codex-appserver already running (pid $test_codex_pid, adopted — it had no pidfile); waiting for socket"
-assert_contains "$discovered_output" "codex-appserver ready (pid $test_codex_pid)"
+assert_contains "$discovered_output" "codex-appserver already running (pid $test_codex_pid, adopted — discovered before socket bind); waiting for socket"
+socket_owner_pid="$(cat "$codex_start_wrapper_pids/codex-socket-owner")"
+assert_contains "$discovered_output" "codex-appserver ready (pid $socket_owner_pid)"
+assert_same "$(cat "$codex_start_logs/ait-codex-appserver.pid")" "$socket_owner_pid"
 assert_same "$(wc -l < "$codex_start_wrapper_pids/codex-launches" | tr -d ' ')" 1
 codex_cleanup
 pass "Codex discovered-process adoption waits for socket without a second wrapper"

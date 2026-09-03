@@ -70,20 +70,22 @@ service_event_pid() {
 }
 
 wait_for_codex() {
-  local pid=$1 pidfile=$2 adopted=$3
+  local pid=$1 pidfile=$2 adopted=$3 owner
   STARTING_NAME="codex-appserver"
   STARTING_PID="$pid"
   STARTING_PIDFILE="$pidfile"
   STARTING_ADOPTED="$adopted"
   if [ "$adopted" -eq 1 ]; then
-    if [ "$4" = discovered ]; then
-      echo "codex-appserver already running (pid $pid, adopted — it had no pidfile); waiting for socket"
+    if [ "$4" = socket ]; then
+      echo "codex-appserver already running (pid $pid, adopted — socket owner); waiting for socket"
     else
-      echo "codex-appserver already running (pid $pid); waiting for socket"
+      echo "codex-appserver already running (pid $pid, adopted — discovered before socket bind); waiting for socket"
     fi
   fi
   while :; do
     if codex_socket_ready; then
+      owner="$(running_pid codex-appserver)"
+      [ -n "$owner" ] && pid="$owner"
       echo "$pid" > "$pidfile"
       echo "codex-appserver ready (pid $pid)"
       STARTING_NAME=""
@@ -116,11 +118,7 @@ wait_for_codex() {
 start_one() {
   local name=$1 wrapper=$2
   local pidfile="$LOGS/ait-$name.pid" observable live
-  if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
-    if [ "$name" = codex-appserver ]; then
-      wait_for_codex "$(cat "$pidfile")" "$pidfile" 1 pidfile
-      return
-    fi
+  if [ "$name" != codex-appserver ] && [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
     echo "$name already running (pid $(cat "$pidfile"))"
     return
   fi
@@ -129,7 +127,11 @@ start_one() {
   if [ -n "$live" ]; then
     echo "$live" > "$pidfile"
     if [ "$name" = codex-appserver ]; then
-      wait_for_codex "$live" "$pidfile" 1 discovered
+      if [ -S "${AIT_CODEX_SHARED_SOCKET:-$HOME/.ait/codex-shared.sock}" ]; then
+        wait_for_codex "$live" "$pidfile" 1 socket
+      else
+        wait_for_codex "$live" "$pidfile" 1 prebind
+      fi
       return
     fi
     echo "$name already running (pid $live, adopted — it had no pidfile)"

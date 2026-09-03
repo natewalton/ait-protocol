@@ -4,7 +4,6 @@ set -euo pipefail
 
 MANAGED="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 API_URL="${AIT_RELEASE_API_URL:-https://api.github.com/repos/natewalton/ait-protocol/releases/latest}"
-EXPECTED_ORIGIN="https://github.com/natewalton/ait-protocol"
 LOCK="${XDG_STATE_HOME:-$HOME/.local/state}/ait-protocol/update.lock"
 STATUS_SCRIPT="$MANAGED/bin/status.sh"
 START_SCRIPT="$MANAGED/bin/start-all.sh"
@@ -123,7 +122,6 @@ update() {
   local api asset fields url digest
   [ -d "$MANAGED/.git" ] || fail "managed checkout not found: $MANAGED"
   MANAGED="$(cd -P "$MANAGED" && pwd)"
-  case "$(git -C "$MANAGED" remote get-url origin 2>/dev/null || true)" in "$EXPECTED_ORIGIN"|"$EXPECTED_ORIGIN.git") ;; *) fail 'managed checkout is not owned by the AIT release updater' ;; esac
   [ "$(git -C "$MANAGED" rev-parse --show-toplevel)" = "$MANAGED" ] || fail 'managed checkout path is not canonical'
   check_cli
   [ -z "$(git -C "$MANAGED" status --porcelain)" ] || fail 'managed checkout is dirty; commit or discard changes before updating'

@@ -12,12 +12,6 @@ on:
         description: Stable SemVer without the v prefix
         required: true
         type: string
-      immutable_releases:
-        description: Before dispatch, run the admin-capable settings probe `gh api repos/OWNER/REPO/immutable-releases` and confirm it reports enabled.
-        required: true
-        type: choice
-        options: [confirmed]
-
 permissions:
   contents: read
 
@@ -66,7 +60,6 @@ jobs:
     env:
       RELEASE_VERSION: ${{ inputs.version }}
       RELEASE_OPERATION: ${{ inputs.operation }}
-      IMMUTABLE_RELEASES_CONFIRMED: ${{ inputs.immutable_releases }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -76,7 +69,6 @@ jobs:
         id: asset
         run: |
           set -euo pipefail
-          test "$IMMUTABLE_RELEASES_CONFIRMED" = confirmed
           tag="v$RELEASE_VERSION"
           git fetch --quiet origin main
           test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
@@ -98,8 +90,6 @@ jobs:
           RELEASE_TAG: ${{ steps.asset.outputs.tag }}
         run: |
           set -euo pipefail
-          test "$IMMUTABLE_RELEASES_CONFIRMED" = confirmed
-          echo 'Operator confirmed the pre-dispatch immutable-releases settings probe.'
           if git ls-remote --exit-code --refs origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
             echo "release tag already exists: $RELEASE_TAG" >&2
             exit 1
@@ -110,18 +100,8 @@ jobs:
           fi
           latest_response="$RUNNER_TEMP/latest-release.response"
           latest_json="$RUNNER_TEMP/latest-release.json"
-          if gh api --include "repos/$GITHUB_REPOSITORY/releases/latest" > "$latest_response"; then
-            awk 'BEGIN { body=0 } /^$/{ body=1; next } body { print }' "$latest_response" > "$latest_json"
-          else
-            http_status="$(awk 'NR==1 {print $2; exit}' "$latest_response")"
-            if [ "$http_status" != 404 ]; then
-              cat "$latest_response" >&2
-              echo "latest release lookup failed with HTTP $http_status" >&2
-              exit 1
-            fi
-            : > "$latest_json"
-          fi
-          if [ -s "$latest_json" ]; then
+          gh api --include "repos/$GITHUB_REPOSITORY/releases/latest" > "$latest_response"
+          awk 'BEGIN { body=0 } /^$/{ body=1; next } body { print }' "$latest_response" > "$latest_json"
           previous_release="$(node - "$latest_json" <<'NODE'
           const fs = require('fs');
           const r = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
@@ -134,22 +114,19 @@ jobs:
             git fetch --quiet origin "refs/tags/$previous_tag:refs/ait-release-ancestry/$previous_tag"
             test "$(git rev-parse "refs/ait-release-ancestry/$previous_tag^{commit}")" = "$previous_commit"
             git merge-base --is-ancestor "$previous_commit" HEAD
-          fi
-      - name: Refuse migration-surface changes after the first release
+      - name: Refuse migration-surface changes
         if: env.RELEASE_OPERATION == 'prepare'
         run: |
           set -euo pipefail
           latest_json="$RUNNER_TEMP/latest-release.json"
-          if [ -s "$latest_json" ]; then
-            previous="$(node - "$latest_json" <<'NODE'
+          previous="$(node - "$latest_json" <<'NODE'
           const fs = require('fs');
           process.stdout.write(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')).tag_name || '');
           NODE
-            )"
-            if ! git diff --quiet "refs/ait-release-ancestry/$previous..HEAD" -- appview/src/db.ts; then
-              echo 'AppView migration surface changed; use a separately reviewed data-migration and recovery design.' >&2
-              exit 1
-            fi
+          )"
+          if ! git diff --quiet "refs/ait-release-ancestry/$previous..HEAD" -- appview/src/db.ts; then
+            echo 'AppView migration surface changed; use a separately reviewed data-migration and recovery design.' >&2
+            exit 1
           fi
       - name: Prepare inspected draft
         if: env.RELEASE_OPERATION == 'prepare'
@@ -176,15 +153,6 @@ jobs:
           draft_id="$(gh release view "$RELEASE_TAG" --json databaseId --jq '.databaseId')"
           test -n "$draft_id"
           draft_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$draft_id")"
-          expected_asset_digest="sha256:$(shasum -a 256 "$RELEASE_ASSET" | awk '{print $1}')"
-          actual_asset_digest="$(node - "$draft_json" <<'NODE'
-          const [raw] = process.argv.slice(2);
-          const r = JSON.parse(raw);
-          const a = (r.assets || []).find(x => x.name === 'install.sh');
-          process.stdout.write(a && a.digest || '');
-          NODE
-          )"
-          test "$actual_asset_digest" = "$expected_asset_digest"
           node - "$draft_json" "$(git rev-parse HEAD)" "$(shasum -a 256 "$RELEASE_ASSET" | awk '{print $1}')" <<'NODE'
           const [raw, expectedCommit, expectedDigest] = process.argv.slice(2);
           const r = JSON.parse(raw);
@@ -207,15 +175,6 @@ jobs:
           test "${draft_target#*$'\t'}" = true
           test -n "$draft_id"
           draft_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$draft_id")"
-          expected_asset_digest="sha256:$(shasum -a 256 "$RELEASE_ASSET" | awk '{print $1}')"
-          actual_asset_digest="$(node - "$draft_json" <<'NODE'
-          const [raw] = process.argv.slice(2);
-          const r = JSON.parse(raw);
-          const a = (r.assets || []).find(x => x.name === 'install.sh');
-          process.stdout.write(a && a.digest || '');
-          NODE
-          )"
-          test "$actual_asset_digest" = "$expected_asset_digest"
           node - "$draft_json" "$(git rev-parse HEAD)" "$(shasum -a 256 "$RELEASE_ASSET" | awk '{print $1}')" <<'NODE'
           const [raw, expectedCommit, expectedDigest] = process.argv.slice(2);
           const r = JSON.parse(raw);

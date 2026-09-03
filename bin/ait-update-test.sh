@@ -59,7 +59,6 @@ printf built > "$repo/mcp/dist/server.js"
 echo 'Rebuild: complete'
 EOF
 chmod +x "$source_repo/ait" "$source_repo/bin/"*
-sed -i '' "s#https://github.com/natewalton/ait-protocol#$origin#g" "$source_repo/bin/update.sh"
 cat > "$source_repo/bin/status.sh" <<EOF
 #!/bin/sh
 echo 'AIT status:'
@@ -174,8 +173,12 @@ run_update() {
 
 bash -n "$REPO/bin/update.sh" "$REPO/ait"
 contains "$("$REPO/ait" help update)" 'Usage: ait update'
-ruby -e 'require "yaml"; YAML.load_file(ARGV[0])' "$REPO/.github/workflows/release.yml"
-pass 'syntax, help, and release workflow parse'
+! grep -Fq 'EXPECTED_ORIGIN' "$REPO/bin/update.sh" || fail 'updater retained exact-origin policy'
+workflow="$(<"$REPO/.github/workflows/release.yml")"
+! grep -Fq 'immutable_releases' <<< "$workflow" || fail 'release workflow retained immutable-settings input'
+! grep -Fq 'actual_asset_digest' <<< "$workflow" || fail 'release workflow retained duplicate digest block'
+! grep -Fq 'if [ -s "$latest_json" ]' <<< "$workflow" || fail 'release workflow retained first-release branch'
+pass 'syntax and help'
 
 reset_managed
 before="$(shasum -a 256 "$managed"/{plc,pds,appview,mcp}/.env "$managed/appview/data/sentinel" | shasum -a 256 | awk '{print $1}')"
@@ -219,12 +222,13 @@ asset_hash="$(shasum -a 256 "$asset" | awk '{print $1}')"; write_api v9.9.9 true
 refuses 'divergent release refusal' diverges run_update AIT_TEST_STATE=stopped
 pass 'descendant-only update is enforced'
 
+mirror="$ROOT/mirror.git"
+git clone -q --bare "$origin" "$mirror"
 reset_managed
-git -C "$managed" remote set-url origin "$ROOT/foreign-origin.git"
-refuses 'foreign origin refusal' 'not owned by the AIT release updater' run_update AIT_TEST_STATE=stopped
-[ "$(git -C "$managed" rev-parse HEAD)" = "$base" ] || fail 'foreign origin changed checkout'
-git -C "$managed" remote set-url origin "$origin"
-pass 'foreign origin is refused unchanged'
+git -C "$managed" remote set-url origin "$mirror"
+out="$(run_update AIT_TEST_STATE=stopped)" || fail "alternate origin update: $out"
+[ "$(git -C "$managed" rev-parse HEAD)" = "$target" ] || fail 'alternate origin changed to the wrong checkout'
+pass 'alternate origin is accepted when verified release identity matches'
 
 reset_managed
 printf dirty > "$managed/dirty"

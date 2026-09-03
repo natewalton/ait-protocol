@@ -22,8 +22,8 @@ missing_prereq() {
 }
 
 preflight() {
-  local failed=0 claude_installed=0 codex_installed=0
-  echo "Prerequisites"
+  local failed=0
+  echo "Bootstrap prerequisites"
   if [ -n "${AIT_NO_SKILLS:-}" ] && [ "${AIT_NO_SKILLS}" != "1" ]; then
     echo "  invalid: AIT_NO_SKILLS must be empty or 1"
     failed=1
@@ -47,32 +47,15 @@ preflight() {
       failed=1
     fi
   fi
-  if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-    missing_prereq "Node.js and npm" "brew install node" "https://formulae.brew.sh/formula/node"
-    failed=1
-  fi
-  if ! command -v openssl >/dev/null 2>&1; then
-    missing_prereq "OpenSSL" "brew install openssl" "https://formulae.brew.sh/formula/openssl@3"
-    failed=1
-  fi
   if ! command -v curl >/dev/null 2>&1; then
     missing_prereq "curl" "brew install curl" "https://formulae.brew.sh/formula/curl"
     failed=1
   fi
-  command -v claude >/dev/null 2>&1 && claude_installed=1
-  command -v codex >/dev/null 2>&1 && codex_installed=1
-  if [ "$claude_installed" -eq 0 ] && [ "$codex_installed" -eq 0 ]; then
-    missing_prereq "Claude Code" "curl -fsSL https://claude.ai/install.sh | bash" "https://code.claude.com/docs/en/getting-started"
-    missing_prereq "Codex" "curl -fsSL https://chatgpt.com/codex/install.sh | sh" "https://learn.chatgpt.com/docs/codex/cli"
-    failed=1
-  fi
   if [ "$failed" -ne 0 ]; then
-    echo "Prerequisites: FAILED"
+    echo "Bootstrap prerequisites: FAILED"
     return 1
   fi
-  if [ "$claude_installed" -eq 1 ]; then echo "  claude   ready"; else echo "  claude   skipped (not installed)"; fi
-  if [ "$codex_installed" -eq 1 ]; then echo "  codex    ready"; else echo "  codex    skipped (not installed)"; fi
-  echo "Prerequisites: ✓"
+  echo "Bootstrap prerequisites: ✓"
 }
 
 same_path() {

@@ -29,8 +29,8 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "ok - $*"; }
 assert_file() { [ -e "$1" ] || fail "missing $1"; }
 assert_absent() { [ ! -e "$1" ] || fail "unexpected file $1"; }
-assert_contains() { printf '%s\n' "$1" | grep -Fq -- "$2" || fail "expected '$2'"; }
-assert_not_contains() { if printf '%s\n' "$1" | grep -Fq -- "$2"; then fail "unexpected '$2'"; fi; }
+assert_contains() { grep -Fq -- "$2" <<< "$1" || fail "expected '$2'"; }
+assert_not_contains() { if grep -Fq -- "$2" <<< "$1"; then fail "unexpected '$2'"; fi; }
 assert_same() { [ "$1" = "$2" ] || fail "expected '$1', got '$2'"; }
 process_alive() {
   local state
@@ -54,6 +54,20 @@ assert_contains "$help" "bin/start-all.sh"
 assert_not_contains "$help" 'git -C "$HOME/.local/share/ait-protocol" pull --ff-only'
 assert_same "$help" "$("$REPO/ait")"
 assert_same "$help" "$("$REPO/ait" help)"
+readme="$(<"$REPO/README.md")"
+assert_contains "$readme" 'refs/tags/$RELEASE_TAG'
+assert_contains "$readme" 'refs/ait-release/$RELEASE_TAG'
+assert_contains "$readme" 'expected_digest='
+assert_contains "$readme" '"$ASSET" --verify-only'
+assert_contains "$readme" 'bin/install-skill.sh --bootstrap'
+assert_contains "$readme" 'ln -s "$AIT_DIR/ait"'
+bootstrap="$(<"$REPO/install.sh")"
+private_installer="$(<"$REPO/bin/install.sh")"
+assert_contains "$bootstrap" 'Bootstrap prerequisites'
+assert_not_contains "$bootstrap" 'missing_prereq "Node.js and npm"'
+assert_not_contains "$bootstrap" 'missing_prereq "Claude Code"'
+assert_contains "$private_installer" 'missing_prereq "Node.js and npm"'
+pass "manual paths and split prerequisite checks are inspectable"
 for topic in init start stop status claude codex skills help version update uninstall; do
   page="$("$REPO/ait" help "$topic")"
   assert_contains "$page" "Usage:"

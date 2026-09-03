@@ -214,29 +214,21 @@ environment_files() {
     [ "${#created[@]}" -eq 0 ] || rm -f "${created[@]}"
     [ -z "${tmp:-}" ] || rm -f "$tmp"
   }
-  interrupt() {
-    trap - INT TERM
-    remove_created
-    echo "error: environment publication interrupted; generated files were removed; rerun" >&2
-    exit 130
-  }
-  trap interrupt INT TERM
   for i in 0 1 2 3; do
     target="${ENV_TARGETS[$i]}"
     tmp="$target.ait-install-tmp.$$"
-    write_env_file "$tmp" "${ENV_NAMES[$i]}"
-    trap ':' INT TERM
+    if ! write_env_file "$tmp" "${ENV_NAMES[$i]}"; then
+      remove_created
+      return 1
+    fi
     if ! mv -n "$tmp" "$target" 2>/dev/null || [ -e "$tmp" ]; then
-      trap interrupt INT TERM
       remove_created
       echo "error: environment target appeared during publication: $target" >&2
       return 1
     fi
     created+=("$target")
     tmp=""
-    trap interrupt INT TERM
   done
-  trap - INT TERM
   echo "Environment: ✓ four files published"
 }
 

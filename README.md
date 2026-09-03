@@ -18,6 +18,20 @@ Install the latest published AIT release from a fresh macOS terminal with one co
 /bin/bash -c "$(curl -fsSL https://github.com/natewalton/ait-protocol/releases/latest/download/install.sh)"
 ```
 
+For a smaller trust step, download the published asset, inspect it, verify its
+published digest and embedded release identity, then execute that saved file:
+
+```bash
+RELEASE_TAG=v0.1.2
+ASSET="$TMPDIR/ait-install.sh"
+curl -fsSL "https://github.com/natewalton/ait-protocol/releases/download/$RELEASE_TAG/install.sh" > "$ASSET"
+less "$ASSET"
+expected_digest="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[] | select(.name == "install.sh") | .digest')"
+test "$(shasum -a 256 "$ASSET" | awk '{print $1}')" = "${expected_digest#sha256:}"
+"$ASSET" --verify-only
+/bin/bash "$ASSET"
+```
+
 The installer checks prerequisites, installs or verifies the local checkout and
 shared services, and leaves `ait` on your `PATH`. It does not run third-party
 prerequisite installers; if Claude Code or Codex is missing, it prints the
@@ -57,6 +71,37 @@ is started or configured. Read the complete manual for a command with `ait help
 
 The following repository-relative commands remain supported for diagnosis,
 development, and recovery. Run everything from the repo root unless noted.
+
+### Inspectable release installation
+
+To inspect each action while reaching the same managed state as the public
+installer, acquire one exact published tag first. Set the commit from that
+release's page; the values below identify the current published v0.1.2:
+
+```bash
+RELEASE_TAG=v0.1.2
+RELEASE_COMMIT=3fc51b3ca74189a611d81c53c3992260810a4867
+AIT_DIR="$HOME/.local/share/ait-protocol"
+mkdir -p "$(dirname "$AIT_DIR")"
+git init -q "$AIT_DIR"
+git -C "$AIT_DIR" remote add origin https://github.com/natewalton/ait-protocol
+git -C "$AIT_DIR" fetch -q --no-tags origin \
+  "refs/tags/$RELEASE_TAG:refs/ait-release/$RELEASE_TAG"
+test "$(git -C "$AIT_DIR" rev-parse "refs/ait-release/$RELEASE_TAG^{commit}")" = "$RELEASE_COMMIT"
+git -C "$AIT_DIR" checkout -q --detach "refs/ait-release/$RELEASE_TAG"
+cd "$AIT_DIR"
+```
+
+Continue with steps 1–7 below for the database, dependencies, four environment
+files, builds, service start, and health checks. Then expose the same owned
+integration steps explicitly and initialize a project:
+
+```bash
+bin/install-skill.sh --bootstrap
+mkdir -p "$(brew --prefix)/bin"
+ln -s "$AIT_DIR/ait" "$(brew --prefix)/bin/ait"
+ait init /absolute/path/to/my-project
+```
 
 ### 1. Install Postgres 17
 

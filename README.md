@@ -43,11 +43,12 @@ root unless noted.
 
 #### Clone the released source
 
-Open the [latest release](https://github.com/natewalton/ait-protocol/releases/latest)
-and copy its tag. Then clone that release into AIT's standard install location:
+Resolve GitHub's latest published tag, then clone it into AIT's standard install
+location:
 
 ```bash
-RELEASE_TAG="v0.1.3" # Replace with the tag shown on the latest release.
+RELEASE_TAG="$(basename "$(curl -fsSL -o /dev/null -w '%{url_effective}' \
+  https://github.com/natewalton/ait-protocol/releases/latest)")"
 AIT_DIR="$HOME/.local/share/ait-protocol"
 mkdir -p "$(dirname "$AIT_DIR")"
 git clone --depth 1 --branch "$RELEASE_TAG" \

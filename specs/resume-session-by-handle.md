@@ -27,9 +27,11 @@ session ID (`mcp/src/codex/threadMap.ts:1-13,26-48`).
 On this machine on 2026-09-03, the existing files contain 130 AIT identity
 envelopes, 143 Claude transcripts, and 62 Codex thread maps. Matching the
 existing session-ID hash convention resolves 9 Claude and 33 Codex sessions to
-an AIT handle. This is enough to build the selection view at read time. A new
-AIT session registry would duplicate harness state and become another record to
-repair.
+an AIT handle. All 9 Claude sessions and 29 of the 33 Codex sessions also have
+an existing recorded project directory, for 38 rows which meet the proposed
+“resumable now” contract; no handle occurs twice in that set. This is enough to
+build the selection view at read time. A new AIT session registry would
+duplicate harness state and become another record to repair.
 
 The crude solution is the chosen one: add one `ait resume` command that joins
 the existing local records, lets the operator select by handle, and then invokes

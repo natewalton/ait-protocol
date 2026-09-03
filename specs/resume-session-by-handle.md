@@ -1,6 +1,6 @@
 # Resume an AIT session by its handle
 
-Status: draft revision 3 for operator review, 2026-09-03. Tracked by [#24](https://github.com/natewalton/ait-protocol/issues/24).
+Status: draft revision 4 for operator review, 2026-09-03. Tracked by [#24](https://github.com/natewalton/ait-protocol/issues/24).
 
 ## Why
 
@@ -25,13 +25,16 @@ stores the missing relationship: identity envelopes contain the public handle
 session ID (`mcp/src/codex/threadMap.ts:1-13,26-48`).
 
 On this machine on 2026-09-03, the existing files contain 130 AIT identity
-envelopes, 143 Claude transcripts, and 62 Codex thread maps. Matching the
-existing session-ID hash convention resolves 9 Claude and 33 Codex sessions to
-an AIT handle. All 9 Claude sessions and 29 of the 33 Codex sessions also have
-an existing recorded project directory, for 38 rows which meet the proposed
-“resumable now” contract; no handle occurs twice in that set. This is enough to
-build the selection view at read time. A new AIT session registry would
-duplicate harness state and become another record to repair.
+envelopes, 59 top-level Claude conversation transcripts, 84 nested Claude
+subagent transcripts, and 62 Codex thread maps. Matching the existing session-ID
+hash convention resolves 9 top-level Claude conversations and 30 Codex sessions
+to an AIT handle; none of the nested subagent transcripts has an AIT identity.
+All 39 bound sessions also have an existing recorded project directory and meet
+the proposed “resumable now” contract; no handle occurs twice in that set. AIT
+handles belong only to top-level sessions, so subagent transcripts are not
+eligible discovery inputs. The existing files are enough to build the selection
+view at read time. A new AIT session registry would duplicate harness state and
+become another record to repair.
 
 The crude solution is the chosen one: add one `ait resume` command that joins
 the existing local records, lets the operator select by handle, and then invokes
@@ -55,15 +58,18 @@ conversation UUID, or Codex thread ID selects immediately.
 Only sessions which can be resumed are shown. A row requires all of:
 
 1. an installed supported harness;
-2. that harness's own transcript or rollout record;
+2. that harness's own top-level conversation transcript or rollout record;
 3. a matching AIT identity envelope with a valid public handle; and
 4. an existing original project directory.
 
-Malformed, partial, unbound, and deleted harness records are ignored. They are
-not repaired or deleted. If no row matches, the command says that no resumable
-AIT session matched and exits without launching anything. If an exact handle
-somehow maps to more than one harness session, the command refuses the ambiguous
-resume and shows the matching rows.
+Claude discovery reads only JSONL files directly inside each project directory;
+it does not recurse into a conversation's `subagents` directory. A nested
+subagent transcript remains ineligible even if a matching identity file is
+manually created. Malformed, partial, unbound, and deleted harness records are
+ignored. They are not repaired or deleted. If no row matches, the command says
+that no resumable AIT session matched and exits without launching anything. If
+an exact handle somehow maps to more than one harness session, the command
+refuses the ambiguous resume and shows the matching rows.
 
 After selection, `ait resume` changes to the recorded project directory and
 invokes the same private install/launcher path already used by the public new-
@@ -117,6 +123,8 @@ catalog or lifecycle concept is introduced.
   from resuming a session which is already open. Live reachability is #20.
 - Renaming, forking, importing, exporting, or editing harness sessions.
 - Listing Claude or Codex sessions which never joined AIT.
+- Listing Claude subagent transcripts, which are not top-level interactive
+  sessions the operator can resume through the launcher.
 - Preserving sessions after the underlying harness removes its own transcript or
   rollout.
 - Persisting an AIT session catalog, last-used value, index, cache, preference,
@@ -146,7 +154,9 @@ rollout, identity-envelope, and executable harness fixtures. It proves:
 6. A partial query narrows the rows and numbered selection dispatches the chosen
    session.
 7. Missing harness binaries, identity files, harness records, and project
-   directories do not produce resumable rows.
+   directories do not produce resumable rows. A nested Claude subagent
+   transcript is not scanned or listed even when the fixture includes a matching
+   identity envelope.
 8. Malformed records and a duplicate handle mapping fail closed without exposing
    credential fields or launching anything.
 9. No match, EOF, and `Ctrl-C` leave every fixture unchanged and launch nothing.
@@ -160,7 +170,7 @@ The production oracle joins one Claude and one Codex session in different
 projects, exits both, runs `ait resume`, and resumes each by its displayed AIT
 handle. Each session must reopen in its original project and report its original
 handle without another `join` call. A pre-existing non-AIT harness session must
-not appear.
+not appear, and neither may a nested Claude subagent transcript.
 
 ## Rollout
 
@@ -189,6 +199,9 @@ version and evidence.
   commands for one outcome.
 - Rejected: recording more metadata at join time. The handle binding and harness
   history already provide the required values, including for existing sessions.
+- Rejected: recursively scanning Claude project directories. The 84 nested JSONL
+  files measured on 2026-09-03 are subagent transcripts, not top-level sessions
+  the operator can resume, and AIT does not permit subagents to register handles.
 - Rejected: displaying or searching Claude's separate session name. The local
   Claude and Codex history directories contain 1.1 GB and 1.9 GB respectively
   on 2026-09-03, and no Claude session-name index is present. Scanning message

@@ -54,7 +54,7 @@ assert_contains "$help" "bin/start-all.sh"
 assert_not_contains "$help" 'git -C "$HOME/.local/share/ait-protocol" pull --ff-only'
 assert_same "$help" "$("$REPO/ait")"
 assert_same "$help" "$("$REPO/ait" help)"
-for topic in init start stop status claude codex help version; do
+for topic in init start stop status claude codex skills help version update uninstall; do
   page="$("$REPO/ait" help "$topic")"
   assert_contains "$page" "Usage:"
   assert_contains "$page" "Prerequisites:"
@@ -64,7 +64,15 @@ done
 assert_contains "$("$REPO/ait" version --help)" "Usage: ait version"
 assert_same "$("$REPO/ait" help help)" "$("$REPO/ait" help --help)"
 version="$("$REPO/ait" version)"
-[ "${#version}" -eq 40 ] || fail "version is not a full Git revision"
+current_version="$(tr -d '[:space:]' < "$REPO/VERSION")"
+current_commit="$(git -C "$REPO" rev-parse HEAD)"
+assert_contains "$version" "AIT $current_version (${current_commit:0:16})"
+if [ "$(git -C "$REPO" rev-parse "refs/ait-release/v$current_version^{commit}" 2>/dev/null || true)" = "$current_commit" ] ||
+   [ -n "$(git -C "$REPO" tag --points-at HEAD "v$current_version" 2>/dev/null)" ]; then
+  assert_not_contains "$version" development
+else
+  assert_contains "$version" development
+fi
 pass "help, version, and bare CLI help"
 
 space_dir="$TMP_ROOT/path with spaces"
@@ -86,6 +94,7 @@ make_fixture() {
   mkdir -p "$dir/bin" "$dir/plc" "$dir/pds" "$dir/appview" "$dir/mcp" "$shim" "$dir/home"
   cp "$REPO/ait" "$dir/ait"
   cp "$REPO/bin/install.sh" "$dir/bin/install.sh"
+  cp "$REPO/bin/install-skill.sh" "$dir/bin/install-skill.sh"
   cp "$REPO/bin/status.sh" "$dir/bin/status.sh"
   cp "$REPO/bin/start-all.sh" "$dir/bin/start-all.sh"
   cp "$REPO/bin/lib-service-pids.sh" "$dir/bin/lib-service-pids.sh"
@@ -93,6 +102,8 @@ make_fixture() {
   cp "$REPO/bin/codex-session.sh" "$dir/bin/codex-session.sh"
   cp "$REPO/bin/check-single-lexicon.sh" "$dir/bin/check-single-lexicon.sh"
   chmod +x "$dir/ait" "$dir/bin/"*.sh
+  mkdir -p "$dir/.agents/skills/delivery-coordination"
+  cp "$REPO/.agents/skills/delivery-coordination/SKILL.md" "$dir/.agents/skills/delivery-coordination/SKILL.md"
   for f in plc/package.json plc/package-lock.json pds/package.json pds/package-lock.json appview/package.json appview/package-lock.json mcp/package.json mcp/package-lock.json; do
     : > "$dir/$f"
   done
@@ -146,6 +157,7 @@ assert_file "$fixture/plc/.env"
 assert_file "$fixture/pds/.env"
 assert_file "$fixture/appview/.env"
 assert_file "$fixture/mcp/.env"
+[ ! -e "$AIT_INSTALL_STATE_DIR" ] || fail "installer created persisted environment state"
 [ -L "$AIT_CLI_LINK" ] || fail "CLI link not created"
 pass "isolated machine install and optional harness row"
 
@@ -187,6 +199,7 @@ pass "Codex-only machine preflight and plain Claude skip"
 export PATH="$fixture/shim:/usr/bin:/bin"
 export AIT_CLI_LINK="$TMP_ROOT/bin/ait"
 export AIT_INSTALL_STATE_DIR="$TMP_ROOT/install-state"
+export HOME="$fixture/home"
 before="$(shasum -a 256 "$fixture/plc/.env" | awk '{print $1}')"
 rerun_output="$("$fixture/bin/install.sh" --machine)"
 after="$(shasum -a 256 "$fixture/plc/.env" | awk '{print $1}')"
@@ -194,8 +207,40 @@ assert_same "$before" "$after"
 assert_contains "$rerun_output" "existing four-file set preserved"
 pass "safe machine rerun preserves env bytes"
 
+boundary="$TMP_ROOT/process-boundary"
+make_fixture "$boundary"
+boundary="$(cd "$boundary" && pwd -P)"
+mkdir -p "$boundary"/{plc,pds,appview,mcp}/node_modules "$boundary/appview/dist" "$boundary/mcp/dist"
+: > "$boundary/appview/dist/server.js"
+: > "$boundary/mcp/dist/server.js"
+cat > "$boundary/shim/lsof" <<'EOF'
+#!/bin/bash
+case "$*" in
+  *'-d cwd'*) printf 'p4242\nn%s\n' "$AIT_TEST_SERVICE_CWD" ;;
+  *) echo 4242 ;;
+esac
+EOF
+cat > "$boundary/bin/status.sh" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+chmod +x "$boundary/shim/lsof" "$boundary/bin/status.sh"
+export HOME="$boundary/home" PATH="$boundary/shim:/usr/bin:/bin"
+export AIT_CLI_LINK="$TMP_ROOT/boundary-bin/ait"
+same_boundary="$(AIT_TEST_SERVICE_CWD="$boundary" "$boundary/bin/install.sh" --machine)"
+assert_contains "$same_boundary" "existing dependencies and builds verified"
+set +e
+foreign_boundary="$(AIT_TEST_SERVICE_CWD="$TMP_ROOT/foreign-checkout" "$boundary/bin/install.sh" --machine 2>&1)"
+foreign_boundary_status=$?
+set -e
+[ "$foreign_boundary_status" -ne 0 ] || fail "foreign service cwd unexpectedly accepted"
+assert_contains "$foreign_boundary" "conflicting plc process pid 4242"
+pass "service ownership accepts this checkout and refuses a foreign cwd"
+
 partial="$TMP_ROOT/partial"
 make_fixture "$partial"
+export HOME="$partial/home"
+export PATH="$partial/shim:/usr/bin:/bin"
 printf 'operator-owned\n' > "$partial/plc/.env"
 export AIT_CLI_LINK="$TMP_ROOT/partial-bin/ait"
 set +e
@@ -204,30 +249,13 @@ partial_status=$?
 set -e
 [ "$partial_status" -ne 0 ] || fail "partial environment unexpectedly succeeded"
 assert_contains "$partial_output" "partial environment set"
+assert_contains "$partial_output" "restore the missing established files"
 assert_absent "$partial/pds/.env"
 pass "unproven partial environment fails unchanged"
 
-resume="$TMP_ROOT/resume"
-make_fixture "$resume"
-export AIT_CLI_LINK="$TMP_ROOT/resume-bin/ait"
-export AIT_INSTALL_STATE_DIR="$TMP_ROOT/resume-state"
-set +e
-AIT_INSTALL_INTERRUPT_AFTER=1 "$resume/bin/install.sh" --machine >/tmp/ait-test-interrupt.out 2>&1
-interrupt_status=$?
-set -e
-[ "$interrupt_status" -ne 0 ] || fail "interruption unexpectedly succeeded"
-assert_file "$resume/plc/.env"
-assert_absent "$resume/pds/.env"
-assert_file "$AIT_INSTALL_STATE_DIR/manifest"
-saved="$(shasum -a 256 "$resume/plc/.env" | awk '{print $1}')"
-resume_output="$("$resume/bin/install.sh" --machine)"
-assert_same "$saved" "$(shasum -a 256 "$resume/plc/.env" | awk '{print $1}')"
-assert_absent "$AIT_INSTALL_STATE_DIR"
-assert_contains "$resume_output" "Environment: ✓"
-pass "interrupted environment publication resumes without regeneration"
-
 status_fixture="$TMP_ROOT/status"
 make_fixture "$status_fixture"
+export HOME="$status_fixture/home"
 rm -f "$status_fixture/shim/curl"
 cat > "$status_fixture/shim/curl" <<'EOF'
 #!/bin/bash
@@ -303,6 +331,18 @@ set -e
 assert_contains "$git_init_output" "Project: $git_project"
 assert_file "$git_project/.mcp.json"
 pass "nested Git init selects the worktree root"
+
+plain_project="$TMP_ROOT/plain-project"
+mkdir -p "$plain_project/child"
+plain_project="$(cd "$plain_project" && pwd -P)"
+set +e
+plain_output="$(cd "$plain_project/child" && AIT_FAKE_MCP_ROOT="$status_fixture" "$status_fixture/ait" init 2>&1)"
+plain_status=$?
+set -e
+[ "$plain_status" -eq 0 ] || fail "$plain_output"
+assert_contains "$plain_output" "Project: $plain_project/child"
+assert_file "$plain_project/child/.mcp.json"
+pass "non-Git init uses the current directory without a marker walk"
 
 git init -q "$HOME"
 home_child="$HOME/child"
@@ -642,6 +682,8 @@ git -C "$public_source" config user.name ait-test
 git -C "$public_source" add -A
 git -C "$public_source" commit -qm snapshot
 public_install_root="$TMP_ROOT/public-install"
+mkdir -p "$TMP_ROOT/public-home"
+export HOME="$TMP_ROOT/public-home"
 public_output="$(
   AIT_REPO_URL="file://$public_source" \
   AIT_INSTALL_ROOT="$public_install_root" \

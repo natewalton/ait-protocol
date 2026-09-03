@@ -229,8 +229,8 @@ services, and a live update owner.
 Example: ait update
 Normal result: prints the verified release, rebuild, restored services, and
 release notes URL. An equal release is a read-only no-op.
-Recovery: failures before AppView starts print exact reset commands; after
-AppView is ready they require fix-forward and never recommend reset.
+Recovery: failures before a service start attempt print exact reset commands;
+after a start attempt they require fix-forward and never recommend reset.
 Exit behavior: 0 updated or already current, 1 refusal or failed recovery,
 2 invalid arguments.
 EOF
@@ -353,11 +353,7 @@ case "${1:-help}" in
       command_help update
     else
       [ "$#" -eq 1 ] || invalid_args "$@"
-      updater="$(mktemp "${TMPDIR:-/tmp}/ait-update.XXXXXX")"
-      trap 'rm -f "$updater"' EXIT INT TERM
-      cp "$REPO/bin/update.sh" "$updater"
-      chmod 700 "$updater"
-      AIT_UPDATE_REPO="$REPO" AIT_UPDATE_EXECUTABLE="$REPO/ait" "$updater" "${AIT_INSTALL_ROOT:-$HOME/.local/share/ait-protocol}"
+      AIT_UPDATE_EXECUTABLE="$REPO/ait" exec "$REPO/bin/update.sh" "${AIT_INSTALL_ROOT:-$HOME/.local/share/ait-protocol}"
     fi
     ;;
   uninstall)

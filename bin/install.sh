@@ -7,8 +7,6 @@ INSTALL_ROOT="${AIT_INSTALL_ROOT:-$HOME/.local/share/ait-protocol}"
 PUBLIC_COMMAND="${AIT_PUBLIC_RECOVERY_COMMAND:-/bin/bash -c \"\$(curl -fsSL https://github.com/natewalton/ait-protocol/releases/latest/download/install.sh)\"}"
 ENV_TARGETS=("$REPO/plc/.env" "$REPO/pds/.env" "$REPO/appview/.env" "$REPO/mcp/.env")
 ENV_NAMES=(plc.env pds.env appview.env mcp.env)
-STATE_DIR="${AIT_INSTALL_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/ait-protocol/install-state}"
-BOOTSTRAP_MARKER="$STATE_DIR/bootstrap-pending"
 CLI_LINK=""
 BREW_PREFIX=""
 
@@ -191,11 +189,7 @@ dependencies_ready() {
     -print -quit 2>/dev/null | grep -q .
 }
 
-sha256() {
-  shasum -a 256 "$1" | awk '{print $1}'
-}
-
-write_staged_env() {
+write_env_file() {
   local file="$1" name="$2"
   case "$name" in
     plc.env)
@@ -229,137 +223,50 @@ EOF
   chmod 600 "$file"
 }
 
-manifest_valid() {
-  local i line target hash actual
-  [ -f "$STATE_DIR/manifest" ] || return 1
-  for i in 0 1 2 3; do
-    line="$(sed -n "$((i + 1))p" "$STATE_DIR/manifest")"
-    target="${line%%	*}"
-    hash="${line#*	}"
-    [ "$target" = "${ENV_TARGETS[$i]}" ] || return 1
-    [ -n "$hash" ] || return 1
-    [ -f "$STATE_DIR/${ENV_NAMES[$i]}" ] || return 1
-    actual="$(sha256 "$STATE_DIR/${ENV_NAMES[$i]}")"
-    [ "$actual" = "$hash" ] || return 1
-  done
-  [ "$(wc -l < "$STATE_DIR/manifest" | tr -d ' ')" = 4 ]
-}
-
-clear_env_transaction() {
-  local name
-  for name in "${ENV_NAMES[@]}"; do
-    rm -f "$STATE_DIR/$name"
-  done
-  rm -f "$STATE_DIR/manifest"
-  rmdir "$STATE_DIR" 2>/dev/null || true
-}
-
-env_preflight() {
-  local present=0 i target actual hash
-  for target in "${ENV_TARGETS[@]}"; do
-    [ -e "$target" ] && present=$((present + 1))
-  done
-  if [ "$present" -gt 0 ] && [ "$present" -lt 4 ]; then
-    if ! manifest_valid; then
-      echo "error: partial environment set has no matching installer-owned transaction" >&2
-      echo "  present: $(for target in "${ENV_TARGETS[@]}"; do [ -e "$target" ] && printf '%s ' "$target"; done)" >&2
-      echo "  missing: $(for target in "${ENV_TARGETS[@]}"; do [ -e "$target" ] || printf '%s ' "$target"; done)" >&2
-      return 1
-    fi
-    for i in 0 1 2 3; do
-      target="${ENV_TARGETS[$i]}"
-      if [ -e "$target" ]; then
-        actual="$(sha256 "$target")"
-        hash="$(sed -n "$((i + 1))p" "$STATE_DIR/manifest" | cut -f2)"
-        [ "$actual" = "$hash" ] || { echo "error: environment target changed since interrupted install: $target" >&2; return 1; }
-      fi
-    done
-  elif [ "$present" -eq 0 ] && [ -d "$STATE_DIR" ] && [ ! -f "$BOOTSTRAP_MARKER" ] && ! manifest_valid; then
-    echo "error: incomplete installer state at $STATE_DIR" >&2
-    return 1
-  fi
-}
-
-env_transaction() {
-  local present=0 i line target hash actual staged published=0 interrupt_after
-  for target in "${ENV_TARGETS[@]}"; do
-    [ -e "$target" ] && present=$((present + 1))
-  done
-
+environment_files() {
+  local present=0 target tmp
+  local -a created=()
+  for target in "${ENV_TARGETS[@]}"; do [ -e "$target" ] && present=$((present + 1)); done
   if [ "$present" -eq 4 ]; then
-    if [ -d "$STATE_DIR" ] && manifest_valid; then clear_env_transaction; fi
     [ "${AIT_SUPPRESS_DETAIL_OUTPUT:-0}" = "1" ] || echo "Environment: ✓ existing four-file set preserved"
     return 0
   fi
-
   if [ "$present" -gt 0 ]; then
-    if ! manifest_valid; then
-      echo "error: partial environment set has no matching installer-owned transaction" >&2
-      echo "  present: $(for target in "${ENV_TARGETS[@]}"; do [ -e "$target" ] && printf '%s ' "$target"; done)" >&2
-      echo "  missing: $(for target in "${ENV_TARGETS[@]}"; do [ -e "$target" ] || printf '%s ' "$target"; done)" >&2
-      return 1
-    fi
-    for i in 0 1 2 3; do
-      target="${ENV_TARGETS[$i]}"
-      if [ -e "$target" ]; then
-        actual="$(sha256 "$target")"
-        hash="$(sed -n "$((i + 1))p" "$STATE_DIR/manifest" | cut -f2)"
-        [ "$actual" = "$hash" ] || { echo "error: environment target changed since interrupted install: $target" >&2; return 1; }
-      else
-        [ -f "$STATE_DIR/${ENV_NAMES[$i]}" ] || { echo "error: staged environment source missing: ${ENV_NAMES[$i]}" >&2; return 1; }
-      fi
-    done
-  elif [ -d "$STATE_DIR" ] && manifest_valid; then
-    :
-  elif [ -d "$STATE_DIR" ] && [ ! -f "$BOOTSTRAP_MARKER" ]; then
-    echo "error: incomplete installer state at $STATE_DIR" >&2
+    echo "error: partial environment set; it was not changed" >&2
+    echo "  present: $(for target in "${ENV_TARGETS[@]}"; do [ -e "$target" ] && printf '%s ' "$target"; done)" >&2
+    echo "  missing: $(for target in "${ENV_TARGETS[@]}"; do [ -e "$target" ] || printf '%s ' "$target"; done)" >&2
+    echo "  recovery: restore the missing established files and rerun; for a known interrupted first install, delete the four generated files and rerun" >&2
     return 1
-  else
-    umask 077
-    mkdir -p "$STATE_DIR"
-    chmod 700 "$STATE_DIR"
-    for i in 0 1 2 3; do
-      write_staged_env "$STATE_DIR/${ENV_NAMES[$i]}" "${ENV_NAMES[$i]}"
-    done
-    : > "$STATE_DIR/manifest"
-    for i in 0 1 2 3; do
-      printf '%s\t%s\n' "${ENV_TARGETS[$i]}" "$(sha256 "$STATE_DIR/${ENV_NAMES[$i]}")" >> "$STATE_DIR/manifest"
-    done
-    chmod 600 "$STATE_DIR/manifest"
   fi
-
-  install_tmp=""
-  handle_env_interrupt() {
-    [ -z "$install_tmp" ] || rm -f "$install_tmp"
-    echo "Environment publication interrupted; transaction retained at $STATE_DIR" >&2
+  umask 077
+  remove_created() {
+    [ "${#created[@]}" -eq 0 ] || rm -f "${created[@]}"
+    [ -z "${tmp:-}" ] || rm -f "$tmp"
+  }
+  interrupt() {
+    trap - INT TERM
+    remove_created
+    echo "error: environment publication interrupted; generated files were removed; rerun" >&2
     exit 130
   }
-  trap handle_env_interrupt INT TERM
-  interrupt_after="${AIT_INSTALL_INTERRUPT_AFTER:-}"
+  trap interrupt INT TERM
   for i in 0 1 2 3; do
     target="${ENV_TARGETS[$i]}"
-    [ -e "$target" ] && continue
-    staged="$STATE_DIR/${ENV_NAMES[$i]}"
-    [ -f "$staged" ] || { echo "error: staged environment source missing: ${ENV_NAMES[$i]}" >&2; return 1; }
-    install_tmp="$target.ait-install-tmp.$$"
-    cp "$staged" "$install_tmp"
-    chmod 600 "$install_tmp"
-    mv "$install_tmp" "$target"
-    install_tmp=""
-    published=$((published + 1))
-    if [ -n "$interrupt_after" ] && [ "$published" = "$interrupt_after" ]; then
-      handle_env_interrupt
+    tmp="$target.ait-install-tmp.$$"
+    write_env_file "$tmp" "${ENV_NAMES[$i]}"
+    trap ':' INT TERM
+    if ! mv -n "$tmp" "$target" 2>/dev/null || [ -e "$tmp" ]; then
+      trap interrupt INT TERM
+      remove_created
+      echo "error: environment target appeared during publication: $target" >&2
+      return 1
     fi
+    created+=("$target")
+    tmp=""
+    trap interrupt INT TERM
   done
   trap - INT TERM
-
-  for i in 0 1 2 3; do
-    actual="$(sha256 "${ENV_TARGETS[$i]}")"
-    hash="$(sed -n "$((i + 1))p" "$STATE_DIR/manifest" | cut -f2)"
-    [ "$actual" = "$hash" ] || { echo "error: environment verification failed: ${ENV_TARGETS[$i]}" >&2; return 1; }
-  done
-  clear_env_transaction
-  [ "${AIT_SUPPRESS_DETAIL_OUTPUT:-0}" = "1" ] || echo "Environment: ✓ four files published atomically and verified"
+  [ "${AIT_SUPPRESS_DETAIL_OUTPUT:-0}" = "1" ] || echo "Environment: ✓ four files published"
 }
 
 postgres_client() {
@@ -434,25 +341,24 @@ start_and_verify() {
 }
 
 machine_install() {
-  local fresh=0 running
+  local running
   preflight || return 1
-  [ -f "$BOOTSTRAP_MARKER" ] && fresh=1
-  if [ "$fresh" -eq 1 ] && [ -n "${AIT_NO_SKILLS:-}" ] && [ "${AIT_NO_SKILLS}" != "1" ]; then
-    echo "  invalid: AIT_NO_SKILLS must be empty or 1" >&2
-    return 1
-  fi
   check_checkout || return 1
   check_cli_link || return 1
-  env_preflight || return 1
-  if [ "$fresh" -eq 1 ] && [ "${AIT_NO_SKILLS:-0}" != "1" ]; then
-    "$REPO/bin/install-skill.sh" --check || return 1
-  fi
   running="$(check_process_boundary)" || return 1
   if [ "$running" = "1" ]; then
     if ! "$REPO/bin/status.sh" >/dev/null 2>&1 || ! dependencies_ready; then
       echo "error: a partial, unhealthy, or incomplete AIT service set is already running; recover with ait stop" >&2
       return 1
     fi
+  fi
+  if [ "${AIT_NO_SKILLS:-0}" = "1" ]; then
+    echo "  skills  skipped (AIT_NO_SKILLS=1)"
+  else
+    "$REPO/bin/install-skill.sh" --bootstrap || {
+      echo "Skills: FAILED; AIT services and CLI are unchanged; rerun after resolving the skill target" >&2
+      return 1
+    }
   fi
   # The valid command link is established after all read-only preflight checks
   # but before provisioning. If a later install step fails, it remains a
@@ -464,7 +370,7 @@ machine_install() {
   if [ "$running" = "1" ]; then
     echo "AIT files: ✓ existing dependencies and builds verified"
   else
-    env_transaction || return 1
+    environment_files || return 1
     if [ "${AIT_INSTALL_SKIP_PROVISION:-0}" = "1" ]; then
       echo "AIT files: ✓ provision skipped by test fixture"
     else
@@ -485,18 +391,6 @@ machine_install() {
     if command -v claude >/dev/null 2>&1; then echo "  claude   ready"; else echo "  claude   skipped (not installed)"; fi
     if command -v codex >/dev/null 2>&1; then echo "  codex    ready"; else echo "  codex    skipped (not installed)"; fi
   fi
-  if [ "$fresh" -eq 1 ]; then
-    if [ "${AIT_NO_SKILLS:-0}" = "1" ]; then
-      echo "  skills  skipped (AIT_NO_SKILLS=1)"
-    else
-      if ! "$REPO/bin/install-skill.sh" --bootstrap; then
-        echo "Skills: FAILED; AIT services and CLI are ready; rerun the bootstrap after resolving the skill target" >&2
-        return 1
-      fi
-    fi
-    rm -f "$BOOTSTRAP_MARKER"
-    rmdir "$STATE_DIR" 2>/dev/null || true
-  fi
   echo "Next steps:"
   echo "  cd /path/to/your/project"
   echo "  ait init"
@@ -504,30 +398,36 @@ machine_install() {
 }
 
 resolve_project() {
-  local explicit="${1:-}" dir marker home
+  local explicit="${1:-}" dir home
   home="$(cd -P "$HOME" && pwd)"
   if [ -n "$explicit" ]; then
     [ -d "$explicit" ] || { echo "error: project directory does not exist: $explicit" >&2; return 1; }
-    cd -P "$explicit" && pwd
+    dir="$(cd -P "$explicit" && pwd)"
+    if [ "$dir" = "$home" ] || [ "$dir" = / ]; then
+      echo "error: no project boundary found at $dir" >&2
+      echo "Run: ait init \"$explicit\"" >&2
+      return 1
+    fi
+    printf '%s' "$dir"
     return
   fi
   if dir="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)"; then
     dir="$(cd -P "$dir" && pwd)"
-    if [ "$dir" != "$home" ] && [ "$dir" != "/" ]; then
-      printf '%s' "$dir"
-      return
+    if [ "$dir" = "$home" ] || [ "$dir" = "/" ]; then
+      echo "error: no project boundary found at $dir" >&2
+      echo "Run: ait init \"$PWD\"" >&2
+      return 1
     fi
+    printf '%s' "$dir"
+    return
   fi
   dir="$(pwd -P)"
-  while [ "$dir" != "/" ] && [ "$dir" != "$home" ]; do
-    for marker in .mcp.json .codex/config.toml .claude package.json pyproject.toml Cargo.toml go.mod pom.xml Gemfile; do
-      if [ -e "$dir/$marker" ]; then printf '%s' "$dir"; return; fi
-    done
-    dir="$(dirname "$dir")"
-  done
-  echo "error: no project boundary found above $(pwd -P)" >&2
-  echo "Run: ait init \"$PWD\"" >&2
-  return 1
+  if [ "$dir" = "$home" ] || [ "$dir" = "/" ]; then
+    echo "error: no project boundary found at $dir" >&2
+    echo "Run: ait init \"$PWD\"" >&2
+    return 1
+  fi
+  printf '%s' "$dir"
 }
 
 config_state() {

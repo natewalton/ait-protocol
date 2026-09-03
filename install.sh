@@ -17,7 +17,6 @@ if [ "$RELEASE_TAG" = "$SOURCE_TAG" ]; then
 else
   PUBLIC_COMMAND='/bin/bash -c "$(curl -fsSL https://github.com/natewalton/ait-protocol/releases/latest/download/install.sh)"'
 fi
-STATE_DIR="${AIT_INSTALL_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/ait-protocol/install-state}"
 BREW_PREFIX=""
 CLI_LINK=""
 
@@ -136,17 +135,6 @@ check_destination() {
   fi
 }
 
-write_bootstrap_marker() {
-  umask 077
-  if ! mkdir -p "$STATE_DIR" ||
-     ! printf 'fresh bootstrap pending\n' > "$STATE_DIR/bootstrap-pending" ||
-     ! chmod 600 "$STATE_DIR/bootstrap-pending"; then
-    echo "error: cannot record fresh bootstrap state at $STATE_DIR" >&2
-    echo "  recovery: set AIT_INSTALL_STATE_DIR to a writable directory and rerun" >&2
-    return 1
-  fi
-}
-
 main() {
   if [ "${1:-}" = "--verify-only" ]; then
     [ "$RELEASE_TAG" != "$SOURCE_TAG" ] || { echo "error: unreplaced release installer template" >&2; return 1; }
@@ -158,7 +146,6 @@ main() {
   check_destination || exit 1
 
   if [ ! -e "$INSTALL_ROOT" ] && [ ! -L "$INSTALL_ROOT" ]; then
-    write_bootstrap_marker || exit 1
     mkdir -p "$(dirname "$INSTALL_ROOT")"
     if [ "$RELEASE_TAG" = "$SOURCE_TAG" ]; then
       git clone "$REPO_URL" "$INSTALL_ROOT" || {

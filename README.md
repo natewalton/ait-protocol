@@ -327,8 +327,8 @@ the public updater:
     bin/start-all.sh
     # Relaunch each session with bin/claude-session.sh or bin/codex-session.sh
 
-If an update fails before AppView starts, `ait update` prints the exact old
-commit reset and rebuild commands. If AppView has reached readiness, do not
+If an update fails before a service start attempt, `ait update` prints the
+exact old commit reset and rebuild commands. After a start attempt, do not
 reset: persisted data may have advanced, so keep the logs and fix forward with
 a higher patch release.
 

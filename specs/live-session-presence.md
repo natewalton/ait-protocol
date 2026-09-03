@@ -1,6 +1,6 @@
 # Show whether an AIT session is live
 
-Status: proposed, 2026-09-03. Tracked by [#20](https://github.com/natewalton/ait-protocol/issues/20).
+Status: approved for implementation, 2026-09-03. Tracked by [#20](https://github.com/natewalton/ait-protocol/issues/20).
 
 ## Why
 
@@ -8,7 +8,9 @@ AIT's directory currently tells a user which handles exist, but not whether the 
 
 The supported launchers already produce the needed signal. `ait claude` starts the MCP in push mode (`bin/claude-session.sh:149`), `ait codex` starts a per-session driver in codex mode (`bin/codex-session.sh:84-85`), and both reach the same `startPushListener` registration path (`mcp/src/server.ts:182-190,247-260`; `mcp/src/codex/host.ts:114-122`). That path sends an authenticated `ait.notification.registerPushTarget` request immediately and every 30 seconds (`mcp/src/push.ts:46-48,76-86,94-112`). AppView already binds each accepted registration to the authenticated caller's DID and keeps its push target in memory (`appview/src/server.ts:260-318`; `appview/src/pushRegistry.ts:23,49-80`).
 
-The crude solution is the chosen one: make that existing authenticated registration the heartbeat. AppView derives `live` from how recently it accepted the registration and exposes the result through the directory and profile views users already consult. Do not create a second timer, repository status record, database state, or exit-hook protocol.
+The current process lifecycle cannot stand in for connection lifecycle. On 2026-09-03, `pgrep -f 'mcp/dist/server.js'` followed by `ps -o pid=,ppid=,command=` found 12 of 24 matching processes parented by PID 1, including processes 28 to 49 days old. The push listener and endless registration loop have no disposer (`mcp/src/push.ts:53-86`), so a Claude MCP must exit on stdin EOF rather than assuming the harness always reaps it.
+
+The crude solution is the chosen one: make that existing authenticated registration the heartbeat. AppView derives `live` from how recently it accepted the registration and exposes the result through the directory and profile views users already consult. Do not create a readiness flag, second timer, repository status record, database state, or exit-hook protocol.
 
 ## Proposed work
 
@@ -16,10 +18,10 @@ The crude solution is the chosen one: make that existing authenticated registrat
 
 The existing 30-second registration remains the only heartbeat. AppView stores the accepted time with the in-memory DID-to-URL registration and derives `live` at read time. A missing, failed, cleared, or five-minute-old registration is offline. A failed notification delivery continues to remove the registration and therefore makes the actor offline immediately (`appview/src/pushRegistry.ts:83-112`).
 
-Both launchers map their own lifecycle into the same notification-ready state:
+Both launchers use lifecycle signals that already exist:
 
-- Claude becomes ready after the MCP `initialized` handshake and stops renewing when its stdio connection ends.
-- Codex becomes ready after its per-session driver has connected and started or resumed the thread, and stops renewing while that app-server connection is down. Reconnection renews immediately.
+- Claude registration already starts after the MCP `initialized` handshake. The MCP process exits when its stdio transport ends, which also ends its listener and heartbeat.
+- Codex already represents a usable connection with `activeSink`. Keep one heartbeat loop and skip its beat while `activeSink` is null; reconnection restores the sink and renews immediately. Delete the duplicate Codex registration loop.
 
 The shared Codex app-server never owns presence. One AIT account belongs to one session runtime; multiple runtimes sharing an account are invalid and out of scope.
 
@@ -40,9 +42,9 @@ Twenty-one files:
 3. `appview/src/queries/searchActors.ts` adds live state to directory results.
 4. `lexicons/ait/actor/getProfile.json` publishes the profile field.
 5. `lexicons/ait/actor/searchActors.json` publishes the directory field.
-6. `mcp/src/push.ts` renews only while the session notification path is ready.
-7. `mcp/src/server.ts` maps the Claude MCP lifecycle to readiness.
-8. `mcp/src/codex/host.ts` maps the Codex driver lifecycle to readiness and removes any duplicate registration loop made unnecessary by the shared heartbeat.
+6. `mcp/src/push.ts` keeps the one shared heartbeat loop and accepts the existing Codex sink check without introducing lifecycle state.
+7. `mcp/src/server.ts` exits the Claude MCP when its stdio transport ends.
+8. `mcp/src/codex/host.ts` skips the shared beat while `activeSink` is null and removes the duplicate Codex registration loop.
 9. `mcp/src/tools/getProfile.ts` renders profile live state and advertises it in the tool description.
 10. `mcp/src/tools/searchActors.ts` renders directory live state and advertises it in the tool description.
 11. `mcp/src/aitty/agent.ts` carries the two response fields.
@@ -63,7 +65,7 @@ The count is above the repository's systems-review threshold because one existin
 
 - Persisting or reconstructing presence across AppView restarts.
 - A PDS/repository status record, firehose collection, database column, or presence history.
-- A new heartbeat interval, cron, sidecar, daemon, status endpoint, CLI command, or configuration flag.
+- A readiness flag, new heartbeat interval, cron, sidecar, daemon, status endpoint, CLI command, or configuration flag.
 - Busy, idle, working, recently active, or last-seen states.
 - Sorting, filtering, retiring, notifying, or blocking based on live state.
 - Supporting multiple runtimes on one AIT account.
@@ -83,10 +85,10 @@ The acceptance proof must show:
 5. A controlled clock just before five minutes remains live and at five minutes is offline.
 6. Failed push delivery makes the actor offline immediately.
 7. Clearing the registry, matching AppView restart, makes every actor offline; the next scheduled registration restores live within 30 seconds.
-8. Claude stdio loss and Codex app-server loss stop successful renewals; Codex reconnection renews immediately.
+8. Stdin EOF exits a Claude MCP and ends renewal; Codex app-server loss makes the existing heartbeat skip while `activeSink` is null, and reconnection renews immediately.
 9. Search results, profile results, MCP text, and aitty text agree on `live` versus `offline`.
 10. Offline actors remain present in search with unchanged ordering.
-11. Removing the readiness gate or expiry check makes a focused regression fail.
+11. Removing Claude exit-on-EOF, the Codex `activeSink` check, or the expiry check makes a focused regression fail.
 
 The released oracle launches one Claude and one Codex session with different handles, observes both as live from a third client, exits each launcher, and observes both expire under a controlled five-minute clock or a release-safe shortened test clock. It then restarts AppView, observes offline, and observes the still-running session restore live on its next existing registration. No production test waits five real minutes.
 

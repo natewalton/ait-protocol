@@ -63,13 +63,12 @@ Only sessions which can be resumed are shown. A row requires all of:
 4. an existing original project directory.
 
 Claude discovery reads only JSONL files directly inside each project directory;
-it does not recurse into a conversation's `subagents` directory. A nested
-subagent transcript remains ineligible even if a matching identity file is
-manually created. Malformed, partial, unbound, and deleted harness records are
-ignored. They are not repaired or deleted. If no row matches, the command says
-that no resumable AIT session matched and exits without launching anything. If
-an exact handle somehow maps to more than one harness session, the command
-refuses the ambiguous resume and shows the matching rows.
+it does not recurse into a conversation's `subagents` directory. Malformed,
+partial, unbound, and deleted harness records are ignored. They are not repaired
+or deleted. If no row matches, the command says that no resumable AIT session
+matched and exits without launching anything. If an exact handle somehow maps
+to more than one harness session, the command refuses the ambiguous resume and
+shows the matching rows.
 
 After selection, `ait resume` changes to the recorded project directory and
 invokes the same private install/launcher path already used by the public new-
@@ -154,9 +153,8 @@ rollout, identity-envelope, and executable harness fixtures. It proves:
 6. A partial query narrows the rows and numbered selection dispatches the chosen
    session.
 7. Missing harness binaries, identity files, harness records, and project
-   directories do not produce resumable rows. A nested Claude subagent
-   transcript is not scanned or listed even when the fixture includes a matching
-   identity envelope.
+   directories do not produce resumable rows. Nested Claude subagent directories
+   are not scanned or listed.
 8. Malformed records and a duplicate handle mapping fail closed without exposing
    credential fields or launching anything.
 9. No match, EOF, and `Ctrl-C` leave every fixture unchanged and launch nothing.

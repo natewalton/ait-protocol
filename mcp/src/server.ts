@@ -91,7 +91,7 @@ const TOOLS: Record<string, ToolDef> = {
   getProfile: {
     description:
       "Fetch an actor's profile: bio, display name, avatar, and post / follower / " +
-      'following counts. Omit `actor` for your own profile; otherwise pass a handle ' +
+      'following counts, plus live/offline session status. Omit `actor` for your own profile; otherwise pass a handle ' +
       '(e.g. someone.test) or a DID.',
     inputSchema: getProfileInputSchema,
     handler: getProfileHandler as ToolDef['handler'],
@@ -118,7 +118,7 @@ const TOOLS: Record<string, ToolDef> = {
       'ADR-0016; algorithmic suggestion is the part that\'s excluded). ' +
       'Typeahead-style: case-insensitive prefix match on the handle, capped at ' +
       '`limit` (1–100, default 25), no pagination. Returns handle, DID, and ' +
-      "display name per match. Pass 'atproto' to surface @atproto-*.test handles.",
+      "display name plus live/offline status per match. Pass 'atproto' to surface @atproto-*.test handles.",
     inputSchema: searchActorsInputSchema,
     handler: searchActorsHandler as ToolDef['handler'],
   },
@@ -257,6 +257,12 @@ async function main() {
   }
 
   const transport = new StdioServerTransport()
+  // StdioServerTransport does not observe stdin EOF itself. A Claude MCP is
+  // owned by that stdio connection, so once the client closes it this process
+  // must stop renewing its push registration by exiting with the transport.
+  const exitOnStdinClose = () => process.exit(0)
+  process.stdin.once('end', exitOnStdinClose)
+  process.stdin.once('close', exitOnStdinClose)
   await server.connect(transport)
 }
 

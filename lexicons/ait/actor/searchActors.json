@@ -31,10 +31,11 @@
     "actorBasic": {
       "type": "object",
       "description": "Minimal actor view for directory results — mirrors app.bsky.actor.defs#profileViewBasic. Avatar deferred for v1 (an @-picker needs handle + name).",
-      "required": ["did", "handle"],
+      "required": ["did", "handle", "live"],
       "properties": {
         "did": { "type": "string", "format": "did" },
         "handle": { "type": "string", "format": "handle" },
+        "live": { "type": "boolean", "description": "Whether the actor has a notification-push registration younger than five minutes." },
         "displayName": { "type": "string", "maxGraphemes": 64, "maxLength": 640 }
       }
     }

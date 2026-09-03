@@ -2,6 +2,7 @@ import type { IdResolver } from '@atproto/identity'
 import { INVALID_HANDLE } from '@atproto/syntax'
 import type { Db } from '../db.js'
 import { hydrateHandle } from './hydrateActor.js'
+import { isLive } from '../pushRegistry.js'
 
 export interface SearchActorsParams {
   q: string
@@ -12,6 +13,7 @@ export interface SearchActorsParams {
 export interface ActorBasic {
   did: string
   handle: string
+  live: boolean
   displayName?: string
 }
 
@@ -90,7 +92,7 @@ export async function searchActors(
     if (!row) continue
     if (row.handle === INVALID_HANDLE) continue
     if (!row.handle.toLowerCase().startsWith(needle)) continue
-    const actor: ActorBasic = { did: row.did, handle: row.handle }
+    const actor: ActorBasic = { did: row.did, handle: row.handle, live: isLive(row.did) }
     if (row.displayName) actor.displayName = row.displayName
     matches.push(actor)
   }

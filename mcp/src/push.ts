@@ -50,7 +50,10 @@ const delay = (ms: number): Promise<void> =>
 let listenerUrl: string | null = null
 let registerInFlight: Promise<void> | null = null
 
-export async function startPushListener(deliver: NotificationSink): Promise<void> {
+export async function startPushListener(
+  deliver: NotificationSink,
+  canRegister: () => boolean = () => true,
+): Promise<void> {
   if (listenerUrl) return
 
   const httpServer = http.createServer((req, res) => {
@@ -73,7 +76,7 @@ export async function startPushListener(deliver: NotificationSink): Promise<void
   // /proc or lsof. Harmless in production — stderr isn't user-facing.
   console.error(`ait push listener: ${listenerUrl}`)
 
-  await tryRegister()
+  if (canRegister()) await tryRegister(canRegister)
 
   // AppView registrations are in-memory and are deleted on restart or one
   // failed POST. Reassert for the listener lifetime; tryRegister coalesces a
@@ -81,7 +84,7 @@ export async function startPushListener(deliver: NotificationSink): Promise<void
   void (async () => {
     for (;;) {
       await delay(REREGISTER_INTERVAL_MS)
-      await tryRegister()
+      if (canRegister()) await tryRegister(canRegister)
     }
   })()
 }
@@ -91,7 +94,8 @@ export async function startPushListener(deliver: NotificationSink): Promise<void
 // freshly minted). A no-op when the listener isn't running (poll mode) or
 // when no identity is loaded yet. Re-registration is idempotent on the
 // AppView side: the registry's Map<did, url> overwrites by key.
-export async function tryRegister(): Promise<void> {
+export async function tryRegister(canRegister: () => boolean = () => true): Promise<void> {
+  if (!canRegister()) return
   if (!listenerUrl || !getIdentity()) return
   if (registerInFlight) return registerInFlight
   registerInFlight = (async () => {

@@ -20,7 +20,13 @@ import {
   type NotificationView,
 } from './queries/listNotifications.js'
 
-const registry = new Map<string, string>()
+interface Registration {
+  url: string
+  registeredAt: number
+}
+
+const registry = new Map<string, Registration>()
+const LIVE_WINDOW_MS = 5 * 60 * 1000
 // Separate from the firehose runner: firehose partitions by author DID, while
 // delivery partitions by recipient DID. addTask gives each recipient one
 // ordered stream without hand-rolling a keyed queue.
@@ -67,15 +73,15 @@ export async function registerAndReplay(
     )
     for (const view of backlog) {
       // A newer registration supersedes this replay task.
-      if (registry.get(did) !== url) return
+      if (registry.get(did)?.url !== url) return
       const ok = await postNotification(url, view)
       if (!ok) {
-        if (registry.get(did) === url) registry.delete(did)
+        if (registry.get(did)?.url === url) registry.delete(did)
         return
       }
     }
   })
-  registry.set(did, url)
+  registry.set(did, { url, registeredAt: Date.now() })
   gate.resolve()
   await replay
 }
@@ -92,23 +98,24 @@ export function notifyInsert(
   recipientDid: string,
   uri: string,
 ): void {
-  const url = registry.get(recipientDid)
-  if (!url) return
+  const registration = registry.get(recipientDid)
+  if (!registration) return
+  const { url } = registration
   void deliveryRunner.addTask(recipientDid, async () => {
     // Registration may have been replaced while this task waited in line.
-    if (registry.get(recipientDid) !== url) return
+    if (registry.get(recipientDid)?.url !== url) return
     try {
       const view = await getNotificationByKey(db, idResolver, uri, recipientDid)
       if (!view) return
       const ok = await postNotification(url, view)
-      if (!ok && registry.get(recipientDid) === url) {
+      if (!ok && registry.get(recipientDid)?.url === url) {
         registry.delete(recipientDid)
       }
     } catch (err) {
       console.error(
         `notifyInsert ${recipientDid} ${uri}: ${err instanceof Error ? err.message : err}`,
       )
-      if (registry.get(recipientDid) === url) registry.delete(recipientDid)
+      if (registry.get(recipientDid)?.url === url) registry.delete(recipientDid)
     }
   })
 }
@@ -116,7 +123,12 @@ export function notifyInsert(
 // Test helpers — keep the registry inspectable from the smoke tests without
 // exporting the Map itself.
 export function _registeredUrl(did: string): string | undefined {
-  return registry.get(did)
+  return registry.get(did)?.url
+}
+
+export function isLive(did: string): boolean {
+  const registration = registry.get(did)
+  return Boolean(registration && Date.now() - registration.registeredAt < LIVE_WINDOW_MS)
 }
 
 export function _clear(): void {

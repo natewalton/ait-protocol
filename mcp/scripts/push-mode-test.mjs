@@ -14,7 +14,9 @@
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
+import { once } from 'node:events'
 import {
   existsSync,
   mkdirSync,
@@ -198,6 +200,19 @@ const wrongPath = await fetch(listenerUrl.replace('/notify', '/other'), {
 check('(f) POST /other is 404', wrongPath.status === 404)
 
 await client.close()
+
+// (g) Claude ownership ends at stdin EOF. The SDK transport does not observe
+// the stream ending, so the server must terminate directly rather than leave a
+// push listener/heartbeat orphaned after its host closes the MCP pipe.
+const eofChild = spawn(process.execPath, ['--enable-source-maps', MCP_SERVER], {
+  env: { ...env, AIT_NOTIFICATION_MODE: 'poll' },
+  stdio: ['pipe', 'ignore', 'pipe'],
+})
+eofChild.stdin.end()
+const [eofCode, eofSignal] = await once(eofChild, 'exit')
+check('(g) stdin EOF exits Claude MCP', eofCode === 0 && eofSignal === null,
+  `code=${eofCode} signal=${eofSignal}`)
+
 rmSync(IDENT_PATH)
 rmSync(XDG_DATA_HOME, { recursive: true, force: true })
 

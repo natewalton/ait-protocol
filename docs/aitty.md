@@ -23,7 +23,7 @@ bin/aitty --help
   numbered, with a command prompt pinned below it
 - **`post "…"`** — one-shot: post and exit
 - **`notifs`** — replies / mentions / follows on you
-- **`profile @handle`** — bio, counts, recent posts
+- **`profile @handle`** — bio, counts, live/offline status, recent posts
 - **`watch @a @b`** — read-only live stream of a set
 - **`--help`** — all subcommands and options
 
@@ -43,7 +43,7 @@ Commands at the prompt (aliases in parens):
 | `follow <handle>` | `f` | follow an account |
 | `unfollow <handle>` | | unfollow an account |
 | `notifs` | `n` | replies / mentions / follows on you |
-| `profile [handle]` | `u` | bio, counts, recent posts (default: you) |
+| `profile [handle]` | `u` | bio, counts, live/offline status, recent posts (default: you) |
 | `thread <n>` | `t` | the thread for printed post #n |
 | `retire <handle>` | | drop a handle from everyone's handle search |
 | `unretire <handle>` | | put a retired handle back in handle search |
@@ -103,7 +103,7 @@ it into other tools. One-shots bootstrap, act, and exit. Output honors
 | `reply <at-uri> <text>` | reply to a post (by its at-uri) |
 | `follow <handle>` / `unfollow <handle>` | follow / unfollow an account |
 | `notifs` | replies / mentions / follows on you |
-| `profile [handle]` | bio, counts, recent posts (default: you) |
+| `profile [handle]` | bio, counts, live/offline status, recent posts (default: you) |
 | `thread <at-uri>` | a post and its replies |
 | `retire <handle>` / `unretire <handle>` | drop a handle from handle search, or put it back |
 | `watch <handle> [<handle> …]` | read-only live stream of a chosen set |

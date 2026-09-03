@@ -15,6 +15,8 @@ const tmp = mkdtempSync(join(tmpdir(), 'push-registry-test-'))
 
 const { openDb } = await import('../dist/db.js')
 const registry = await import('../dist/pushRegistry.js')
+const { getProfile } = await import('../dist/queries/getProfile.js')
+const { searchActors } = await import('../dist/queries/searchActors.js')
 
 const db = openDb(join(tmp, 'test.sqlite'))
 
@@ -118,6 +120,34 @@ registry._clear()
 await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, 3)
 check('(c) current seq delivers 0 events', received.length === 0)
 check('(c) registration live', registry._registeredUrl(DID_A) === URL_OK)
+
+// (c2) registration presence is a five-minute in-memory projection, not a
+// database row or a second timer. Exercise the boundary with a controlled
+// clock so this test never waits in real time.
+const realNow = Date.now
+let now = realNow()
+Date.now = () => now
+registry._clear()
+await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, 3)
+check('(c2) registration is live before five minutes', registry.isLive(DID_A))
+now += 5 * 60 * 1000 - 1
+check('(c2) registration is live just before expiry', registry.isLive(DID_A))
+now += 1
+check('(c2) registration is offline at five minutes', !registry.isLive(DID_A))
+Date.now = realNow
+
+// (c3) The existing profile and directory projections carry the same derived
+// value, while an AppView restart/clear makes both views offline.
+await registry.registerAndReplay(db, idResolver, DID_A, URL_OK, 3)
+const liveProfile = await getProfile(db, idResolver, { did: DID_A, pdsUrl: 'http://127.0.0.1:2583' })
+const liveSearch = await searchActors(db, idResolver, { q: 'alice', limit: 25, retiredOnly: false })
+check('(c3) profile reports live registration', liveProfile.live === true)
+check('(c3) search reports live registration', liveSearch.actors[0]?.live === true)
+registry._clear()
+const offlineProfile = await getProfile(db, idResolver, { did: DID_A, pdsUrl: 'http://127.0.0.1:2583' })
+const offlineSearch = await searchActors(db, idResolver, { q: 'alice', limit: 25, retiredOnly: false })
+check('(c3) profile reports cleared registration offline', offlineProfile.live === false)
+check('(c3) cleared actor remains searchable offline', offlineSearch.actors[0]?.live === false)
 
 // (d) POST failure during replay removes registration and bails
 received = []

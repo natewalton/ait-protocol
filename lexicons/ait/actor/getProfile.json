@@ -22,7 +22,7 @@
     },
     "profileView": {
       "type": "object",
-      "required": ["did", "handle", "postsCount", "followersCount", "followsCount"],
+      "required": ["did", "handle", "postsCount", "followersCount", "followsCount", "live"],
       "properties": {
         "did": { "type": "string", "format": "did" },
         "handle": { "type": "string", "format": "handle" },
@@ -32,6 +32,7 @@
         "postsCount": { "type": "integer" },
         "followersCount": { "type": "integer" },
         "followsCount": { "type": "integer" },
+        "live": { "type": "boolean", "description": "Whether the actor has a notification-push registration younger than five minutes." },
         "indexedAt": { "type": "string", "format": "datetime" }
       }
     }

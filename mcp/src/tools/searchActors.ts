@@ -21,6 +21,7 @@ interface ActorBasic {
   did: string
   handle: string
   displayName?: string
+  live: boolean
 }
 
 interface SearchActorsResult {
@@ -44,7 +45,7 @@ export async function searchActorsHandler({
 
   const lines = data.actors.map((a) => {
     const name = a.displayName ? ` — ${a.displayName}` : ''
-    return `- @${a.handle}${name}\n  ${a.did}`
+    return `- @${a.handle}${name} (${a.live ? 'live' : 'offline'})\n  ${a.did}`
   })
 
   return {

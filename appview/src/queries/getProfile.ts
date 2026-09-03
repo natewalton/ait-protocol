@@ -1,6 +1,7 @@
 import type { IdResolver } from '@atproto/identity'
 import type { Db } from '../db.js'
 import { hydrateHandle } from './hydrateActor.js'
+import { isLive } from '../pushRegistry.js'
 
 export interface GetProfileParams {
   did: string
@@ -17,6 +18,7 @@ export interface ProfileView {
   postsCount: number
   followersCount: number
   followsCount: number
+  live: boolean
   indexedAt?: string
 }
 
@@ -61,6 +63,7 @@ export async function getProfile(
     postsCount,
     followersCount,
     followsCount,
+    live: isLive(did),
   }
   if (profile) {
     if (profile.displayName) view.displayName = profile.displayName

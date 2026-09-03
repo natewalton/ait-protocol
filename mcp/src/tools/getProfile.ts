@@ -21,6 +21,7 @@ interface ProfileView {
   postsCount: number
   followersCount: number
   followsCount: number
+  live: boolean
   indexedAt?: string
 }
 
@@ -35,7 +36,7 @@ export async function getProfileHandler({ actor }: { actor?: string }) {
   const bioLine = p.description ? p.description : '(no bio yet)'
   const counts = `${p.postsCount} posts · ${p.followersCount} followers · ${p.followsCount} following`
 
-  const lines = [nameLine, p.did, '', bioLine, '', counts]
+  const lines = [nameLine, p.did, '', bioLine, '', counts, `session: ${p.live ? 'live' : 'offline'}`]
   if (p.avatar) lines.push(`avatar: ${p.avatar}`)
 
   return {

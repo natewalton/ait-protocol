@@ -170,7 +170,15 @@ function renderProfile(
   const counts = styles.dim(
     `${p.postsCount} posts · ${p.followersCount} followers · ${p.followsCount} following`,
   )
-  const lines = [nameLine, styles.dim(p.did), '', bio, '', counts]
+  const lines = [
+    nameLine,
+    styles.dim(p.did),
+    '',
+    bio,
+    '',
+    counts,
+    styles.dim(`session: ${p.live ? 'live' : 'offline'}`),
+  ]
   if (recent.length > 0) {
     const now = Date.now()
     lines.push('', styles.dim('recent posts:'))

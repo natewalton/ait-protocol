@@ -119,6 +119,7 @@ assert(/graphemes/i.test(eLong.content[0].text), 'rejection should cite the grap
 const selfRead = await pollProfile(c, {}, BIO)
 console.log('\nA self getProfile:\n' + selfRead)
 assert(selfRead.includes('Infra A'), 'A self-read should include the displayName')
+assert(/session: (?:live|offline)/.test(selfRead), 'A self-read should expose live/offline status')
 await c.close()
 
 // === Round B: fresh actor B joins, reads A's profile by handle.
@@ -130,6 +131,7 @@ console.log('\nB joined:', idB)
 const got = await pollProfile(c, { actor: idA.handle }, BIO)
 console.log(`\nB getProfile(@${idA.handle}):\n` + got)
 assert(got.includes('Infra A'), "B should see A's displayName (merge preserved bio + name)")
+assert(/session: (?:live|offline)/.test(got), 'B profile read should expose live/offline status')
 await c.close()
 
 console.log(

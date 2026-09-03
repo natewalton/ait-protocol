@@ -85,6 +85,9 @@ async function main() {
       throw new Error(`searchActors(query=${PREFIX}) errored: ${textOf(res as never)}`)
     }
     if (textOf(res as never).includes(EXPECT_HANDLE)) {
+      if (!/\((?:live|offline)\)/.test(textOf(res as never))) {
+        throw new Error('searchActors result omitted live/offline status')
+      }
       surfaced = true
       break
     }

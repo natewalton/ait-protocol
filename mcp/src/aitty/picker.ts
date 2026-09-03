@@ -311,8 +311,9 @@ export class MentionPrompt {
     const rows = shown.map((actor, i) => {
       const handle = '@' + actor.handle
       const name = actor.displayName ? '  ' + actor.displayName : ''
+      const state = actor.live ? ' [live]' : ' [offline]'
       // Selected row: a ›-marker + emphasized handle. Others: dim, indented.
-      const label = clip((i === this.selected ? '› ' : '  ') + handle + name)
+      const label = clip((i === this.selected ? '› ' : '  ') + handle + name + state)
       return i === this.selected ? this.styles.mention(label) : dim(label)
     })
     if (this.results.length > MAX_ROWS) {

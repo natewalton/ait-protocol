@@ -45,7 +45,6 @@ import { setIdentity, reloadIdentity } from '../session.js'
 import { readThreadSessionId, writeThreadSessionId } from './threadMap.js'
 
 const IDENTITY_POLL_INTERVAL_MS = 1000
-const PUSH_REREGISTER_INTERVAL_MS = 30_000
 // Delay between connection attempts to the shared server. We never give up: a
 // session waits for its server across a launchd restart or a not-yet-started
 // server, and an always-present backoff keeps a fast-failing lifecycle from
@@ -117,9 +116,12 @@ export async function runCodexSession(): Promise<void> {
   // while the server is down — or sit un-injected in a dropped sink — replay via
   // the re-register `since` handshake once we reconnect and re-register.
   let activeSink: NotificationSink | null = null
-  await startPushListener((view) => activeSink?.(view) ?? Promise.resolve())
+  await startPushListener(
+    (view) => activeSink?.(view) ?? Promise.resolve(),
+    () => activeSink !== null,
+  )
   console.error(`\n  Attach a TUI:  codex --remote unix://${socketPath}\n`)
-  void registerPushWhenReady()
+  void registerPushWhenReady(() => activeSink !== null)
 
   installSignalHandlers()
 
@@ -199,6 +201,7 @@ export async function runCodexSession(): Promise<void> {
         socketAnnounced = true
       }
       activeSink = createCodexSink(client, threadId)
+      void tryRegister(() => activeSink !== null)
       console.error(
         `ait codex session: session ${sessionId} → thread ${threadId}` +
           (openingTurnDone || resumeThreadId ? ' (resumed)' : ''),
@@ -273,7 +276,7 @@ function parseOpeningPrompt(argv: string[]): string | null {
 // `join`. Once present, hydrate this session and register its push listener URL
 // for that DID. appViewCall inside tryRegister self-heals auth from the stored
 // password, so a stale JWT snapshot is fine.
-async function registerPushWhenReady(): Promise<void> {
+async function registerPushWhenReady(canRegister: () => boolean): Promise<void> {
   // Wait for the model to join (identity appears in shared storage keyed by
   // AIT_SESSION_ID), then hydrate this session with it.
   let persisted = loadIdentity()
@@ -283,16 +286,7 @@ async function registerPushWhenReady(): Promise<void> {
   }
   setIdentity(persisted)
   console.error(`ait codex session: @${persisted.handle} joined — registering push target`)
-
-  // Heartbeat the registration. tryRegister swallows failures (a transient
-  // AppView 502 must not crash the session), so re-assert periodically: the first
-  // success registers, and later beats recover from a transient failure or an
-  // AppView restart (which drops in-memory push targets). Registration is
-  // per-DID, so this only ever (re)registers THIS session — never another's.
-  for (;;) {
-    await tryRegister()
-    await delay(PUSH_REREGISTER_INTERVAL_MS)
-  }
+  if (canRegister()) void tryRegister(canRegister)
 }
 
 // SIGINT/SIGTERM → exit cleanly. Unlike the old per-session sidecar, we do NOT

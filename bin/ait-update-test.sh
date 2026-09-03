@@ -40,8 +40,12 @@ version_home="$TMP_ROOT/version-home"
 mkdir -p "$version_home"
 version_output="$(HOME="$version_home" XDG_STATE_HOME="$TMP_ROOT/version-state" PATH="$ORIGINAL_PATH" "$REPO/ait" version)"
 assert_contains "$version_output" "AIT 0.1.0" "release version"
-assert_contains "$version_output" "development" "unreleased version marker"
-pass "offline development version"
+if git -C "$REPO" describe --exact-match --tags --match 'v[0-9]*' HEAD >/dev/null 2>&1; then
+  case "$version_output" in *development*) fail "release version marker" "exact release checkout reports development" ;; esac
+else
+  assert_contains "$version_output" "development" "development version marker"
+fi
+pass "offline version marker matches checkout state"
 offline_wrong_tag="$TMP_ROOT/offline-wrong-tag"
 git clone -q "$REPO" "$offline_wrong_tag"
 git -C "$offline_wrong_tag" tag v9.9.8 HEAD
@@ -55,6 +59,7 @@ annotated_version="$TMP_ROOT/annotated-version"
 git clone -q "$REPO" "$annotated_version"
 cp "$REPO/ait" "$annotated_version/ait"
 chmod +x "$annotated_version/ait"
+git -C "$annotated_version" tag -d v0.1.0 >/dev/null 2>&1 || true
 git -C "$annotated_version" tag -a -m "annotated release" v0.1.0 HEAD
 annotated_ref="$(git -C "$annotated_version" rev-parse refs/tags/v0.1.0)"
 git -C "$annotated_version" update-ref -d refs/tags/v0.1.0
@@ -134,6 +139,7 @@ pass "unreplaced template transition window"
 origin="$TMP_ROOT/origin.git"
 managed="$TMP_ROOT/managed"
 git clone -q --bare "$REPO" "$origin"
+git --git-dir="$origin" tag -d v0.1.0 >/dev/null 2>&1 || true
 git --git-dir="$origin" tag "v0.1.0" "$(git -C "$REPO" rev-parse HEAD)"
 release_commit="$(git -C "$REPO" rev-parse HEAD)"
 generated_asset="$TMP_ROOT/generated-install.sh"

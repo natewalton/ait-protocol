@@ -130,27 +130,33 @@ present "$FX_CLI" "EOF cancellation"
 pass "wrong input and EOF cancel before mutation"
 
 make_fixture signal
-set +e
-signal_output="$(env PATH="$TEST_PATH" HOME="$FX_HOME" XDG_DATA_HOME="$FX_DATA" \
+signal_fifo="$FX_RUNTIME/uninstall-signal.fifo"
+output_fifo="$FX_RUNTIME/uninstall-output.fifo"
+mkfifo "$signal_fifo"
+mkfifo "$output_fifo"
+exec 3<> "$signal_fifo"
+exec 5<> "$output_fifo"
+env PATH="$TEST_PATH" HOME="$FX_HOME" XDG_DATA_HOME="$FX_DATA" \
   TMPDIR="$FX_RUNTIME" XDG_STATE_HOME="$FX_STATE" AIT_LOG_DIR="$FX_LOGS" AIT_TEST_DB="$FX_DB" \
-  AIT_TEST_PG_PREFIX="$PG_PREFIX" AIT_TEST_BREW_PREFIX="$FX_HOME/homebrew" python3 - "$FX_REPO/ait" <<'PY'
-import os, signal, subprocess, sys
-p = subprocess.Popen([sys.argv[1], 'uninstall'], stdin=subprocess.PIPE,
-                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-lines = []
-for line in p.stdout:
-    lines.append(line)
-    if 'Type exactly: uninstall AIT' in line:
-        p.send_signal(signal.SIGTERM)
-        break
-lines.extend(p.stdout.readlines())
-rc = p.wait()
-sys.stdout.write(''.join(lines))
-sys.exit(0 if rc == 130 else 1)
-PY
-)"; signal_status=$?
+  AIT_TEST_PG_PREFIX="$PG_PREFIX" AIT_TEST_BREW_PREFIX="$FX_HOME/homebrew" \
+  "$FX_REPO/ait" uninstall <&3 >&5 2>&1 &
+signal_pid=$!
+exec 3>&-
+exec 5>&-
+exec 4< "$output_fifo"
+signal_output=""
+while IFS= read -r signal_line <&4; do
+  signal_output+="$signal_line"$'\n'
+  if [[ "$signal_line" == *"Type exactly: uninstall AIT"* ]]; then
+    kill -TERM "$signal_pid"
+  fi
+done
+set +e
+wait "$signal_pid"
+signal_status=$?
 set -e
-[ "$signal_status" -eq 0 ] || fail "confirmation interrupt did not exit 130: $signal_output"
+exec 4>&-
+[ "$signal_status" -eq 130 ] || fail "confirmation interrupt did not exit 130: $signal_output"
 contains "$signal_output" 'nothing changed' "confirmation interrupt"
 present "$FX_REPO" "confirmation interrupt"
 pass "interrupt cancels at the confirmation event"

@@ -55,21 +55,20 @@ preflight() {
 confirm() {
   local answer=""
   trap 'echo; echo "Uninstall cancelled; nothing changed."; exit 130' INT TERM
-  cat <<EOF
-WARNING: this permanently deletes the AIT installation at:
-  $REPO
-
-It also deletes AIT identities, state, sockets, PID files, logs, the owned CLI
-and skill links, and the four com.ait.* launchd agents. This includes generated
-.env secrets and checkout-local PDS/AppView data. No backup is created.
-
-It deletes the local PostgreSQL database plc_directory. It leaves project
-.mcp.json entries and shared prerequisites such as Claude, Codex, Node,
-PostgreSQL, Homebrew, and Git. In each initialized project, remove the preserved entry with:
-  claude mcp remove ait-protocol --scope project
-
-Type exactly: uninstall AIT
-EOF
+  printf '%s\n' \
+    'WARNING: this permanently deletes the AIT installation at:' \
+    "  $REPO" \
+    '' \
+    'It also deletes AIT identities, state, sockets, PID files, logs, the owned CLI' \
+    'and skill links, and the four com.ait.* launchd agents. This includes generated' \
+    '.env secrets and checkout-local PDS/AppView data. No backup is created.' \
+    '' \
+    'It deletes the local PostgreSQL database plc_directory. It leaves project' \
+    '.mcp.json entries and shared prerequisites such as Claude, Codex, Node,' \
+    'PostgreSQL, Homebrew, and Git. In each initialized project, remove the preserved entry with:' \
+    '  claude mcp remove ait-protocol --scope project' \
+    '' \
+    'Type exactly: uninstall AIT'
   if ! IFS= read -r answer || [ "$answer" != "uninstall AIT" ]; then
     trap - INT TERM
     echo "Uninstall cancelled; nothing changed."

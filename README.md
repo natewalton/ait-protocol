@@ -22,13 +22,14 @@ For a smaller trust step, download the published asset, inspect it, verify its
 published digest and embedded release identity, then execute that saved file:
 
 ```bash
-RELEASE_TAG=v0.1.2
+# Copy the install.sh SHA-256 digest from the published release page.
+RELEASE_DIGEST="${RELEASE_DIGEST:?Set the published install.sh digest, e.g. sha256:...}"
+RELEASE_TAG="${RELEASE_TAG:-v0.1.3}"
 ASSET="$TMPDIR/ait-install.sh"
 curl -fsSL "https://github.com/natewalton/ait-protocol/releases/download/$RELEASE_TAG/install.sh" > "$ASSET"
 less "$ASSET"
-expected_digest="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[] | select(.name == "install.sh") | .digest')"
-test "$(shasum -a 256 "$ASSET" | awk '{print $1}')" = "${expected_digest#sha256:}"
-"$ASSET" --verify-only
+test "$(shasum -a 256 "$ASSET" | awk '{print $1}')" = "${RELEASE_DIGEST#sha256:}"
+/bin/bash "$ASSET" --verify-only
 /bin/bash "$ASSET"
 ```
 
@@ -75,18 +76,20 @@ development, and recovery. Run everything from the repo root unless noted.
 ### Inspectable release installation
 
 To inspect each action while reaching the same managed state as the public
-installer, acquire one exact published tag first. Set the commit from that
-release's page; the values below identify the current published v0.1.2:
+installer, acquire one exact published tag first. The default below is the
+release being shipped. Copy the full commit shown for that tag on its public
+release page; no checkout or authenticated API client is required:
 
 ```bash
-RELEASE_TAG=v0.1.2
-RELEASE_COMMIT=3fc51b3ca74189a611d81c53c3992260810a4867
+RELEASE_TAG="${RELEASE_TAG:-v0.1.3}"
+RELEASE_COMMIT="${RELEASE_COMMIT:?Set the 40-character commit shown for $RELEASE_TAG}"
+printf '%s\n' "$RELEASE_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
 AIT_DIR="$HOME/.local/share/ait-protocol"
 mkdir -p "$(dirname "$AIT_DIR")"
 git init -q "$AIT_DIR"
 git -C "$AIT_DIR" remote add origin https://github.com/natewalton/ait-protocol
 git -C "$AIT_DIR" fetch -q --no-tags origin \
-  "refs/tags/$RELEASE_TAG:refs/ait-release/$RELEASE_TAG"
+  "refs/tags/${RELEASE_TAG}:refs/ait-release/${RELEASE_TAG}"
 test "$(git -C "$AIT_DIR" rev-parse "refs/ait-release/$RELEASE_TAG^{commit}")" = "$RELEASE_COMMIT"
 git -C "$AIT_DIR" checkout -q --detach "refs/ait-release/$RELEASE_TAG"
 cd "$AIT_DIR"
@@ -119,10 +122,10 @@ createdb plc_directory
 ### 3. Install Node deps in each component
 
 ```bash
-(cd plc && npm install)
-(cd pds && npm install)
-(cd appview && npm install)
-(cd mcp && npm install)
+(cd plc && npm ci)
+(cd pds && npm ci)
+(cd appview && npm ci)
+(cd mcp && npm ci)
 ```
 
 #### About the `npm audit` output

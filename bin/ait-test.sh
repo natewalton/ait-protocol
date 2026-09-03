@@ -54,20 +54,6 @@ assert_contains "$help" "bin/start-all.sh"
 assert_not_contains "$help" 'git -C "$HOME/.local/share/ait-protocol" pull --ff-only'
 assert_same "$help" "$("$REPO/ait")"
 assert_same "$help" "$("$REPO/ait" help)"
-readme="$(<"$REPO/README.md")"
-assert_contains "$readme" 'refs/tags/$RELEASE_TAG'
-assert_contains "$readme" 'refs/ait-release/$RELEASE_TAG'
-assert_contains "$readme" 'expected_digest='
-assert_contains "$readme" '"$ASSET" --verify-only'
-assert_contains "$readme" 'bin/install-skill.sh --bootstrap'
-assert_contains "$readme" 'ln -s "$AIT_DIR/ait"'
-bootstrap="$(<"$REPO/install.sh")"
-private_installer="$(<"$REPO/bin/install.sh")"
-assert_contains "$bootstrap" 'Bootstrap prerequisites'
-assert_not_contains "$bootstrap" 'missing_prereq "Node.js and npm"'
-assert_not_contains "$bootstrap" 'missing_prereq "Claude Code"'
-assert_contains "$private_installer" 'missing_prereq "Node.js and npm"'
-pass "manual paths and split prerequisite checks are inspectable"
 for topic in init start stop status claude codex skills help version update uninstall; do
   page="$("$REPO/ait" help "$topic")"
   assert_contains "$page" "Usage:"

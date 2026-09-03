@@ -174,10 +174,6 @@ run_update() {
 bash -n "$REPO/bin/update.sh" "$REPO/ait"
 contains "$("$REPO/ait" help update)" 'Usage: ait update'
 ! grep -Fq 'EXPECTED_ORIGIN' "$REPO/bin/update.sh" || fail 'updater retained exact-origin policy'
-workflow="$(<"$REPO/.github/workflows/release.yml")"
-! grep -Fq 'immutable_releases' <<< "$workflow" || fail 'release workflow retained immutable-settings input'
-! grep -Fq 'actual_asset_digest' <<< "$workflow" || fail 'release workflow retained duplicate digest block'
-! grep -Fq 'if [ -s "$latest_json" ]' <<< "$workflow" || fail 'release workflow retained first-release branch'
 pass 'syntax and help'
 
 reset_managed

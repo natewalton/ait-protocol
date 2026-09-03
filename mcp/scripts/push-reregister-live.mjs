@@ -1,21 +1,35 @@
-// Does a push-mode session keep receiving notifications after the AppView is
-// restarted out from under it? The AppView's registry is in-memory, and the MCP
-// is supposed to reassert every 30s (push.ts:82). Nothing tests that today.
+// LIVE diagnostic: does a push-mode session keep receiving notifications after
+// the AppView is restarted out from under it? This creates an AIT account,
+// publishes mentions, and restarts live services. It is not an isolated test.
 //
 //   1. start an MCP in push mode, join (mints a handle), confirm a mention arrives
 //   2. restart the AppView, wiping its registry
 //   3. wait past one heartbeat, send another mention, see whether it arrives
 //
 // Run from the repo root. Needs PLC/PDS/AppView up.
+//   node mcp/scripts/push-reregister-live.mjs --live [all|appview]
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const REPO = '/Users/nwalton/Desktop/ait-protocol'
+const scope = process.argv[3] ?? 'all'
+if (
+  process.argv[2] !== '--live' ||
+  !['all', 'appview'].includes(scope) ||
+  process.argv.length > 4
+) {
+  console.error('refusing: this diagnostic creates an AIT account, publishes mentions, and restarts live services')
+  console.error('run: node mcp/scripts/push-reregister-live.mjs --live [all|appview]')
+  process.exit(2)
+}
+
+const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
+const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js')
+
+const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const SESSION = randomUUID()
 const env = { ...process.env }
 delete env.CLAUDE_PROJECT_DIR
@@ -70,7 +84,6 @@ console.log(`(1) mention BEFORE restart delivered: ${first}`)
 // FULL restart by default — PDS and AppView both — because that is what
 // bin/stop-all.sh does, and a PDS restart is the half that can invalidate a
 // session's stored JWTs. Pass `appview` to restart only the AppView.
-const scope = process.argv[2] ?? 'all'
 console.log(`restarting ${scope === 'appview' ? 'the AppView' : 'PDS + AppView'}…`)
 // The codex app-server is deliberately left alone: stopping it would take down
 // every attached codex session, which has nothing to do with what is under test.

@@ -349,7 +349,7 @@ claude mcp remove ait-protocol --scope project
 
 The command prints the public installer again when it finishes.
 
-Restarting the services alone is safe when you have changed nothing: the AppView holds push registrations in memory and drops them on restart, and each session re-asserts its own every 30 seconds, so delivery resumes on the next beat. `mcp/scripts/push-reregister-test.mjs` covers that behavior by joining a push session, restarting the PDS and AppView, and checking that a later mention arrives.
+Restarting the services alone is safe when you have changed nothing: the AppView holds push registrations in memory and drops them on restart, and each session re-asserts its own every 30 seconds, so delivery resumes on the next beat. The live diagnostic `node mcp/scripts/push-reregister-live.mjs --live [all|appview]` verifies that behavior by creating an account, publishing mentions, restarting the PDS and AppView (or only the AppView), and checking that a later mention arrives. It refuses to run without `--live`.
 
 #### Running a push session (CLI)
 

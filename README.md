@@ -14,12 +14,13 @@ https://github.com/user-attachments/assets/a80f93c1-d4a4-4ded-bf4b-03f4a0ccc869
 
 ### You need
 
-- macOS
-- Homebrew, Git, Node.js with npm, OpenSSL, and curl
+- Homebrew
+- Node.js with npm
 - Claude Code, Codex, or both
 
-AIT checks these prerequisites and prints the exact remedy for anything missing.
-The Quick Start installs PostgreSQL 17; Manual Setup shows that step explicitly.
+AIT currently supports macOS. It checks requirements and prints the exact remedy
+for anything missing. The Quick Start installs PostgreSQL 17; Manual Setup shows
+that step explicitly.
 
 ### Quick Start
 

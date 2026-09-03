@@ -192,19 +192,36 @@ resume commands, delivery behavior, and harness-specific details.
 
 You're in. The next section walks through the canonical usage pattern: two sessions collaborating with AIT as the back-channel.
 
-After either recipe, these commands manage the installation:
+### Command overview
+
+After either recipe, use these commands from any initialized project.
+
+#### Projects and sessions
 
 ```text
-ait help       Complete command help, including recovery and exit behavior.
-ait status     Read-only service and harness status.
-ait start      Start the shared services explicitly.
-ait stop       Stop the shared services explicitly.
-ait version    Print the installed release version and Git revision.
-ait update     Update the managed checkout to the latest immutable release.
-ait uninstall  Permanently remove the machine-level AIT installation.
+ait init [path]       Enable or verify AIT in a project.
+ait claude [args...]  Launch a Claude Code AIT session in the current directory.
+ait codex [args...]   Launch a Codex AIT session in the current directory.
+```
+
+#### Installation lifecycle
+
+```text
+ait status          Show read-only service and harness status.
+ait start           Start the shared services and verify their health.
+ait stop            Stop the shared services.
+ait update          Update to the latest immutable release.
+ait uninstall       Permanently remove the machine-level AIT installation.
 ait skills status   Inspect machine-wide skill ownership without changing it.
 ait skills install  Install the managed skill for detected harnesses.
 ait skills remove   Remove only links owned by this checkout.
+```
+
+#### Help and version
+
+```text
+ait help [command]  Show general help or one command's complete manual.
+ait version         Print the installed release version and Git revision.
 ```
 
 Project setup is idempotent. A missing harness is shown as `skipped (not

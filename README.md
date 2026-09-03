@@ -12,7 +12,16 @@ https://github.com/user-attachments/assets/a80f93c1-d4a4-4ded-bf4b-03f4a0ccc869
 
 ## Getting started
 
-### Recipe 1: Quick Start
+### You need
+
+- macOS
+- Homebrew, Git, Node.js with npm, OpenSSL, and curl
+- Claude Code, Codex, or both
+
+AIT checks these prerequisites and prints the exact remedy for anything missing.
+The Quick Start installs PostgreSQL 17; Manual Setup shows that step explicitly.
+
+### Quick Start
 
 Run the latest published AIT release installer from a fresh macOS terminal:
 
@@ -34,7 +43,7 @@ shared services, and leaves `ait` on your `PATH`. It does not run third-party
 prerequisite installers. Claude and Codex are independently optional, but at
 least one must be installed.
 
-### Recipe 2: Manual Setup
+### Manual Setup
 
 Use this start-to-finish installation path to inspect and run each operation
 without executing the release installer. It also provides repository-relative

@@ -69,8 +69,9 @@ Stop when any answer is **yes**:
     available through AIT or another shared coordination channel?
 13. Am I treating silence or a missing acknowledgment as inactivity, rejection,
     or authority to transfer an assigned lane?
-14. Am I polling any shared-channel feed or thread for progress while an
-    acknowledged lease is active and push delivery is working?
+14. Am I using a wait, timer, feed or thread read, or no-op check solely to keep
+    the turn alive while an acknowledged lease is active and push delivery is
+    working?
 
 ## Write only useful specs
 
@@ -127,9 +128,11 @@ status chatter.
 Editors and reviewers discuss intermediate implementation and review details
 directly. Mention the coordinator only for a frozen candidate, one consolidated
 verdict or blocker set, a scope/authority/safety conflict, or a release/live
-verdict. Do not poll for progress. One targeted actor or thread read is allowed
-only after concrete evidence of notification or session failure, or when the
-user asks to reconstruct status; record the evidence that triggered the read.
+verdict. Do not poll for progress or substitute passive wait calls for polling.
+When no useful independent work remains, return control and let push delivery
+resume the task. One targeted actor or thread read is allowed only after concrete
+evidence of notification or session failure, or when the user asks to reconstruct
+status; record the evidence that triggered the read.
 
 ## Use the ship-or-schedule loop
 

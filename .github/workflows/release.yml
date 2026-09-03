@@ -98,10 +98,8 @@ jobs:
             echo "release already exists: $RELEASE_TAG" >&2
             exit 1
           fi
-          latest_response="$RUNNER_TEMP/latest-release.response"
           latest_json="$RUNNER_TEMP/latest-release.json"
-          gh api --include "repos/$GITHUB_REPOSITORY/releases/latest" > "$latest_response"
-          awk 'BEGIN { body=0 } /^$/{ body=1; next } body { print }' "$latest_response" > "$latest_json"
+          gh api "repos/$GITHUB_REPOSITORY/releases/latest" > "$latest_json"
           previous_release="$(node - "$latest_json" <<'NODE'
           const fs = require('fs');
           const r = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));

@@ -1,0 +1,180 @@
+# Resume an AIT session by its handle
+
+Status: draft for operator review, 2026-09-03. Tracked by [#24](https://github.com/natewalton/ait-protocol/issues/24).
+
+## Why
+
+An operator who wants to return to an AIT session currently has to keep its
+terminal open or retain a harness identifier. The AIT launchers can safely
+resume a known session, but they do not provide one place to find it:
+
+- Claude accepts a UUID, a name within the current project, or the newest
+  transcript in the current project (`bin/claude-session.sh:28-123`). Its AIT
+  launcher deliberately refuses Claude's bare picker because the selected UUID
+  would not reach the MCP identity resolver (`bin/claude-session.sh:73-93`).
+- Codex accepts an exact thread ID and otherwise starts a new session
+  (`bin/codex-session.sh:26-48`). Its native picker does not start the AIT
+  per-session driver or attach through the shared app-server path
+  (`bin/codex-session.sh:80-85,120-125`).
+
+The upstream tools already own session history and resume behavior. Claude
+stores resumable conversations as per-project JSONL transcripts, and Codex
+stores rollout files containing the thread ID and working directory. AIT already
+stores the missing relationship: identity envelopes contain the public handle
+(`mcp/src/storage.ts:48-58`), while Codex additionally records thread ID to AIT
+session ID (`mcp/src/codex/threadMap.ts:1-13,26-48`).
+
+On this machine on 2026-09-03, the existing files contain 130 AIT identity
+envelopes, 143 Claude transcripts, and 62 Codex thread maps. Matching the
+existing session-ID hash convention resolves 9 Claude and 33 Codex sessions to
+an AIT handle. This is enough to build the selection view at read time. A new
+AIT session registry would duplicate harness state and become another record to
+repair.
+
+The crude solution is the chosen one: add one `ait resume` command that joins
+the existing local records, lets the operator select by handle, and then invokes
+the existing safe launcher with the exact harness identifier.
+
+## Proposed work
+
+Add:
+
+```text
+ait resume [query]
+```
+
+With no query, the command shows every locally resumable AIT-bound Claude and
+Codex session, newest activity first. Each numbered row shows the AIT handle,
+harness, original project path, and when its harness record was last modified.
+The prompt accepts a row number or a new text query. A query filters
+case-insensitively by handle, harness, or project path. An exact handle match
+selects immediately.
+
+Only sessions which can be resumed are shown. A row requires all of:
+
+1. an installed supported harness;
+2. that harness's own transcript or rollout record;
+3. a matching AIT identity envelope with a valid public handle; and
+4. an existing original project directory.
+
+Malformed, partial, unbound, and deleted harness records are ignored. They are
+not repaired or deleted. If no row matches, the command says that no resumable
+AIT session matched and exits without launching anything. If an exact handle
+somehow maps to more than one harness session, the command refuses the ambiguous
+resume and shows the matching rows.
+
+After selection, `ait resume` changes to the recorded project directory and
+replaces itself with the existing supported path:
+
+- Claude: `ait claude --resume <conversation-uuid>`
+- Codex: `ait codex --resume <thread-id>`
+
+The selector never decrypts or prints credentials. It reads only the plaintext
+handle already present in the identity envelope, computes the existing
+session-ID-derived identity path, and passes the selected identifier directly to
+the launcher. The launchers remain the only code that applies harness options,
+restores the AIT identity, starts the Codex driver, or owns terminal signals and
+exit status.
+
+`ait resume` is an interactive terminal command. `Ctrl-C` or EOF cancels without
+starting a harness. It adds no flags. Users who already know a harness identifier
+may continue to use `ait claude --resume ...` or `ait codex --resume ...`.
+
+## Files touched
+
+Six files:
+
+1. `ait` adds the command, help page, and dispatch into the selected existing launcher.
+2. `mcp/src/storage.ts` exposes a read-only public-identity lookup for a supplied session UUID so discovery reuses the existing identity-path convention.
+3. `mcp/src/sessionPicker.ts` discovers the two harness record shapes, renders the selector, and returns the selected harness, project, and identifier to `ait`.
+4. `mcp/scripts/session-picker-test.mjs` exercises discovery, selection, cancellation, and launcher dispatch with isolated fixture homes.
+5. `README.md` documents `ait resume` under projects and sessions.
+6. `specs/resume-session-by-handle.md` records this contract.
+
+The systems model has four concepts: a harness session record, its existing AIT
+identity binding, one selector, and the existing launcher dispatch. No fifth
+catalog or lifecycle concept is introduced.
+
+## Out of scope
+
+- Deleting, archiving, expiring, or otherwise cleaning up old sessions. That is
+  a separate user outcome.
+- Keeping a session alive, deciding whether it is live, or preventing a user
+  from resuming a session which is already open. Live reachability is #20.
+- Renaming, forking, importing, exporting, or editing harness sessions.
+- Listing Claude or Codex sessions which never joined AIT.
+- Preserving sessions after the underlying harness removes its own transcript or
+  rollout.
+- Persisting an AIT session catalog, last-used value, index, cache, preference,
+  alias, or cross-machine session record.
+- Reimplementing either harness's resume operation or interactive TUI.
+
+## Tests
+
+Build MCP, run `node mcp/scripts/session-picker-test.mjs`, and run
+`bin/ait-test.sh`.
+
+The focused test uses isolated `HOME`, `XDG_DATA_HOME`, Claude transcript, Codex
+rollout, identity-envelope, and executable harness fixtures. It proves:
+
+1. A Claude transcript and matching AIT identity appear with handle, project,
+   harness, and transcript modification time.
+2. A Codex rollout, thread map, and matching AIT identity appear with the same
+   fields and are ordered by rollout modification time.
+3. Newest activity sorts first across both harnesses; the list is not limited to
+   the current project or an age window.
+4. Exact handle selection dispatches from the recorded project to the correct
+   existing launcher with the exact UUID or thread ID.
+5. A partial query narrows the rows and numbered selection dispatches the chosen
+   session.
+6. Missing harness binaries, identity files, harness records, and project
+   directories do not produce resumable rows.
+7. Malformed records and a duplicate handle mapping fail closed without exposing
+   credential fields or launching anything.
+8. No match, EOF, and `Ctrl-C` leave every fixture unchanged and launch nothing.
+9. Removing either harness-to-identity join makes its corresponding regression
+   fail.
+
+The production oracle joins one Claude and one Codex session in different
+projects, exits both, runs `ait resume`, and resumes each by its displayed AIT
+handle. Each session must reopen in its original project and report its original
+handle without another `join` call. A pre-existing non-AIT harness session must
+not appear.
+
+## Rollout
+
+Ship as one patch release after the released oracle passes for both supported
+harnesses. The new command reads existing data and requires no migration. A
+rollback removes the command; the harness transcripts, Codex maps, and AIT
+identities remain unchanged and the explicit launcher resume forms still work.
+
+Done means the released `ait resume` finds and resumes both real stopped test
+sessions by handle, each retains its original AIT identity and project, the same
+controlling reviewer reproduces that result, and issue #24 links the released
+version and evidence.
+
+## Rejected options
+
+- Rejected: an AIT-owned session database. It would duplicate the two harness
+  histories and add synchronization and repair without improving resume.
+- Rejected: delegating directly to the native pickers. Claude's picker does not
+  give the AIT launcher the explicit UUID needed for identity continuity, and
+  Codex's picker bypasses the AIT driver and shared app-server attachment.
+- Rejected: adding session management to aitty. Resume is a local machine and
+  terminal operation; the installed `ait` command already owns both launchers.
+- Rejected: a separate `ait sessions` listing command. Browsing exists only to
+  choose what `ait resume` launches, so separating it would make the user run two
+  commands for one outcome.
+- Rejected: recording more metadata at join time. The handle binding and harness
+  history already provide the required values, including for existing sessions.
+- Rejected: live-state filtering. An old but stopped session is the primary
+  target of this feature, while an old but connected session remains legitimately
+  live under #20.
+
+## Sources
+
+- [Issue #24](https://github.com/natewalton/ait-protocol/issues/24), the operator's session-recovery problem.
+- [Claude Code: Manage sessions](https://code.claude.com/docs/en/sessions), native picker, naming, all-project discovery, transcript location, and retention behavior.
+- [OpenAI Codex resume CLI source](https://github.com/openai/codex/blob/main/codex-rs/exec/src/cli.rs), native resume selector and identifier forms.
+- Current source locators cited above, inspected at `7caba4e495bc2ec8e5476c2a0c54b31d6e1a0ada` on 2026-09-03.
+- Read-only local count command reported in **Why**, run on 2026-09-03 without reading credential ciphertext.

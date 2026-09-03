@@ -12,17 +12,35 @@ https://github.com/user-attachments/assets/a80f93c1-d4a4-4ded-bf4b-03f4a0ccc869
 
 ## Getting started
 
-Install the latest published AIT release from a fresh macOS terminal with one command:
+### Quick Start
+
+Run the latest published AIT release installer from a fresh macOS terminal:
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://github.com/natewalton/ait-protocol/releases/latest/download/install.sh)"
 ```
 
-For a smaller trust step, download the published asset, inspect it, verify its
-published digest and embedded release identity, then execute that saved file:
+When it finishes, enable AIT in your first project and launch a session:
 
 ```bash
-# Copy the install.sh SHA-256 digest from the published release page.
+cd /absolute/path/to/my-project
+ait init
+ait claude "join AIT as @my-project-spec.test and wait"
+# or: ait codex "join AIT as @my-project-build.test and wait"
+```
+
+The installer checks prerequisites, installs or verifies the local checkout and
+shared services, and leaves `ait` on your `PATH`. It does not run third-party
+prerequisite installers. Claude and Codex are independently optional, but at
+least one must be installed.
+
+### Manual Install
+
+This recipe lets you inspect and verify the published installer before running
+it. Open the [latest release](https://github.com/natewalton/ait-protocol/releases/latest),
+copy its tag and the `install.sh` SHA-256 digest, then run the entire block:
+
+```bash
 RELEASE_DIGEST="${RELEASE_DIGEST:?Set the published install.sh digest, e.g. sha256:...}"
 RELEASE_TAG="${RELEASE_TAG:-v0.1.3}"
 ASSET="$TMPDIR/ait-install.sh"
@@ -33,13 +51,8 @@ test "$(shasum -a 256 "$ASSET" | awk '{print $1}')" = "${RELEASE_DIGEST#sha256:}
 /bin/bash "$ASSET"
 ```
 
-The installer checks prerequisites, installs or verifies the local checkout and
-shared services, and leaves `ait` on your `PATH`. It does not run third-party
-prerequisite installers; if Claude Code or Codex is missing, it prints the
-official recovery command. Claude and Codex are independently optional, but at
-least one must be installed.
-
-Then enable AIT in the first project and launch a session:
+When the verified installer finishes, enable AIT in your first project and
+launch a session:
 
 ```bash
 cd /absolute/path/to/my-project
@@ -47,6 +60,10 @@ ait init
 ait claude "join AIT as @my-project-spec.test and wait"
 # or: ait codex "join AIT as @my-project-build.test and wait"
 ```
+
+If a prerequisite is missing, the installer prints its official recovery
+command. If you prefer not to execute the release installer at all, use the
+separate [fully manual setup](#fully-manual-setup-and-diagnosis) recipe.
 
 Useful commands:
 
@@ -68,10 +85,12 @@ missing harness is shown as `skipped (not installed)`; no unavailable harness
 is started or configured. Read the complete manual for a command with `ait help
 <command>`.
 
-## Manual setup and diagnosis
+## Fully manual setup and diagnosis
 
-The following repository-relative commands remain supported for diagnosis,
-development, and recovery. Run everything from the repo root unless noted.
+This is a separate start-to-finish installation path for users who do not want
+to execute the release installer. It also provides repository-relative commands
+for diagnosis, development, and recovery. Run everything from the repo root
+unless noted.
 
 ### Inspectable release installation
 

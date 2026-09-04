@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   validate:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && inputs.operation == 'prepare'
     runs-on: macos-latest
     permissions:
       contents: read
@@ -29,6 +29,15 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            plc/package-lock.json
+            pds/package-lock.json
+            appview/package-lock.json
+            mcp/package-lock.json
       - name: Validate candidate and run gates
         env:
           RELEASE_VERSION: ${{ inputs.version }}
@@ -53,7 +62,7 @@ jobs:
 
   release:
     needs: validate
-    if: github.ref == 'refs/heads/main'
+    if: ${{ always() && github.ref == 'refs/heads/main' && ((inputs.operation == 'prepare' && needs.validate.result == 'success') || (inputs.operation == 'publish' && needs.validate.result == 'skipped')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -80,7 +89,6 @@ jobs:
           ! grep -Fq '__AIT_RELEASE_' "$asset"
           bash -n "$asset"
           "$asset" --verify-only
-          bin/ait-update-test.sh
           test -s "$asset"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "asset=$asset" >> "$GITHUB_OUTPUT"

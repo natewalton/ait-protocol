@@ -12,19 +12,18 @@ PLC and PDS servers do the same in their `start()` methods
 `pds/node_modules/@atproto/pds/dist/index.js:128`). Node binds an omitted host to
 `::` or `0.0.0.0`, not to loopback.
 
-Measured on the v0.1.9 host on 2026-09-04, `lsof` reported all three listeners
-as `TCP *`, and HTTP requests to the Mac's non-loopback `en0` address returned
-200 from PLC, PDS, and AppView health endpoints. The PDS's unauthenticated
-`com.atproto.server.describeServer` response also reported
-`inviteCodeRequired: false`. The macOS application firewall is enabled here,
-but AIT must not make firewall policy the security boundary for a stack whose
-intended consumers are on the same machine.
+Measured on a v0.1.9 development installation on 2026-09-04, `lsof` reported all
+three listeners as `TCP *`, and HTTP requests through a non-loopback interface
+returned 200 from PLC, PDS, and AppView health endpoints. The PDS's
+unauthenticated `com.atproto.server.describeServer` response also reported
+`inviteCodeRequired: false`. AIT must not make external firewall policy the
+security boundary for a stack whose intended consumers are on the same machine.
 
 Fresh installation already creates the four `.env` files under `umask 077` and
 calls `chmod 600` (`bin/install.sh:151-218`). The all-files-present path returns
 without repairing permissions, however, and the Manual Setup recipe creates the
-same files without setting their mode (`README.md:110-146`). On this host all
-four files are ignored by Git but mode `0644`; `plc/.env` and `pds/.env` contain
+same files without setting their mode (`README.md:110-146`). In the measured
+installation all four files were ignored by Git but mode `0644`; `plc/.env` and `pds/.env` contain
 the PLC admin secret, PDS JWT secret, PDS admin password, and PLC rotation
 private key. Another local account can therefore read them when the checkout
 directories are traversable.
@@ -36,7 +35,7 @@ manager, or new daemon is needed.
 
 Existing clients address the stack through `http://localhost:258x`
 (`bin/status.sh:40`, `bin/install.sh:158-169`, and
-`appview/src/server.ts:30-32`). On this Mac, `localhost` resolves to `::1` before
+`appview/src/server.ts:30-32`). In the tested macOS environment, `localhost` resolves to `::1` before
 `127.0.0.1`. Node 20 and later enable connection-family autoselection by
 default, so a refused IPv6 attempt falls back to the IPv4-only listener; older
 Node versions do not provide the required default. AIT therefore makes Node.js
@@ -154,7 +153,7 @@ restores wildcard listeners, so rollback is an emergency compatibility action,
 not the desired security state. Env files remain `0600`; loosening their mode is
 neither required nor permitted.
 
-Done means the released version is installed on this host, all three real
+Done means the released version is installed on a supported Mac, all three real
 services are loopback-only, the env files are private without content changes,
 the two-harness ledger oracle passes, the controlling reviewer independently
 verifies the released asset and runtime boundary, and issue #22 links the
@@ -179,4 +178,4 @@ release and evidence.
 
 - [Node.js `net.Server.listen` documentation](https://nodejs.org/api/net.html), omitted hosts bind the unspecified address.
 - [GitHub issue #22](https://github.com/natewalton/ait-protocol/issues/22), security-audit tracker.
-- Current source and host measurements cited above, inspected at `340d65cd9be8820d06d6f8b24e91ffd5f8990db7` on 2026-09-04.
+- Current source and reproducible development-install measurements cited above, inspected at `340d65cd9be8820d06d6f8b24e91ffd5f8990db7` on 2026-09-04.

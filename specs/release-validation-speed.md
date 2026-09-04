@@ -40,10 +40,18 @@ prepare run 33851440921 spent 16m13s in validation before an 18s draft job,
 and publish run 33852901560 repeated validation for 5m57s before a 10s publish
 job. The duration varies; the duplicated work does not.
 
+The first v0.1.13 prepare proved that restoring npm's cache alone is not enough.
+Run 33856889196 missed, saved a 47 MB four-lockfile cache, and validated in
+12m37s. Identical run 33858029513 restored that exact key but took 14m12s:
+ordinary `npm ci` still spent about five minutes each in PLC and PDS and three
+minutes in AppView. In isolated copies backed by the same cache,
+`npm ci --prefer-offline --no-audit` completed PLC in 0.74s and PDS in 2.61s.
+
 The crude solution is the right solution:
 
 1. use the official `actions/setup-node` npm cache keyed by all four lockfiles;
-2. keep the four ordinary `npm ci` installs and every prepare-time test;
+2. keep the four ordinary `npm ci` installs, prefer the restored cache, and
+   disable npm's non-blocking audit request in this release job;
 3. delete the second updater-suite invocation from the asset step; and
 4. run the validation job only for `prepare`, while allowing `publish` to run
    only its existing exact-draft checks.
@@ -66,10 +74,13 @@ commit `820762786026740c76f36085b0efc47a31fe5020` (v7.0.0), with
 
 The action caches npm's global package data rather than `node_modules`; its
 primary key includes the lockfile hash. Keep all four `npm --prefix ... ci`
-commands unchanged so a cache hit accelerates downloads without bypassing
-npm's clean, lockfile-enforcing install. The cache exists only in the read-only
-validate job; the write-capable release job does not install dependencies or
-restore package-manager cache data.
+commands, adding `--prefer-offline --no-audit`. `--prefer-offline` bypasses
+staleness checks for cached package data while still fetching anything missing;
+`--no-audit` removes a registry request whose vulnerability report does not
+affect the current command's exit status and is not a release gate. `npm ci`
+remains the clean, lockfile-enforcing authority. The cache exists only in the
+read-only validate job; the write-capable release job does not install
+dependencies or restore package-manager cache data.
 
 Run `validate` only when `operation == prepare` on `main`. The `release` job
 continues to depend on it, but its job condition explicitly evaluates even when
@@ -135,8 +146,9 @@ do not add a test suite that greps YAML text. Before release:
 2. Run all existing shell suites and AppView/MCP builds locally once to prove
    the workflow-only change has no runtime effect.
 3. Dispatch `prepare` on clean `main`. Require all product suites to appear
-   once, each of the four `npm ci` commands once, the updater suite once, a
-   cache miss or hit recorded by setup-node, and an exact draft asset.
+   once, each of the four `npm ci --prefer-offline --no-audit` commands once,
+   the updater suite once, a cache miss or hit recorded by setup-node, and an
+   exact draft asset.
 4. Record the cold-cache prepare timing. If the cache was already warm, use the
    setup-node cache log as the warm observation and record that no cold sample
    was available without deleting shared cache state.
@@ -190,6 +202,9 @@ timing-based correctness verdict, every release-security gate remains, and
 - Rejected: parallel background installs or a job matrix. They add failure and
   log coordination when the measured waste is uncached downloads and repeated
   work.
+- Rejected: restore npm's cache but keep the default online-preference and audit
+  requests. The exact-key hit still took 14m12s; the audit output was
+  informational rather than a release refusal.
 - Rejected: keep full validation on publish. Exact target and asset checks
   already refuse drift, while the second run added 21m30s to v0.1.11 publish.
 - Rejected: remove integrity gates or product suites. They are the authority
@@ -207,6 +222,8 @@ timing-based correctness verdict, every release-security gate remains, and
   [33843650424](https://github.com/natewalton/ait-protocol/actions/runs/33843650424),
   [33851440921](https://github.com/natewalton/ait-protocol/actions/runs/33851440921),
   [33852901560](https://github.com/natewalton/ait-protocol/actions/runs/33852901560),
+  [33856889196](https://github.com/natewalton/ait-protocol/actions/runs/33856889196),
+  [33858029513](https://github.com/natewalton/ait-protocol/actions/runs/33858029513),
   and
   [33844607534](https://github.com/natewalton/ait-protocol/actions/runs/33844607534),
   queried with `gh run view --json jobs` on 2026-09-04.
@@ -217,4 +234,7 @@ timing-based correctness verdict, every release-security gate remains, and
   official multi-lockfile npm-cache examples.
 - [npm ci documentation](https://docs.npmjs.com/cli/commands/npm-ci/), which
   defines the clean, lockfile-enforcing CI install behavior retained here.
+- [npm configuration documentation](https://docs.npmjs.com/cli/using-npm/config/#prefer-offline),
+  which specifies that `prefer-offline` skips cached-data staleness checks but
+  still requests missing data, and documents the `audit` switch.
 - [Issue #27](https://github.com/natewalton/ait-protocol/issues/27).

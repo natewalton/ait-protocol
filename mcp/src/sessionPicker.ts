@@ -8,6 +8,7 @@ import { readPublicIdentity, STORAGE_DIR } from './storage.js'
 
 const UUID_SHAPE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const APPVIEW_URL = process.env.APPVIEW_URL ?? 'http://localhost:2585'
 
 export type Harness = 'claude' | 'codex'
 
@@ -17,6 +18,16 @@ export interface ResumableSession {
   project: string
   identifier: string
   modifiedAt: number
+}
+
+interface SessionDiscovery {
+  offline: ResumableSession[]
+  live: ResumableSession[]
+}
+
+interface ActorBasic {
+  handle: string
+  live: boolean
 }
 
 function commandInstalled(name: Harness): boolean {
@@ -210,11 +221,47 @@ async function codexSessions(): Promise<ResumableSession[]> {
   return result
 }
 
-export async function discoverSessions(): Promise<ResumableSession[]> {
+export async function discoverSessions(): Promise<SessionDiscovery> {
   const sessions = [ ...(await claudeSessions()), ...(await codexSessions()) ]
-  return sessions.sort(
+  const liveHandles = new Set(
+    (
+      await Promise.all(
+        [...new Set(sessions.map((session) => session.handle.toLocaleLowerCase()))].map(
+          async (handle) => {
+            const url = new URL('/xrpc/ait.actor.searchActors', APPVIEW_URL)
+            url.searchParams.set('q', handle)
+            url.searchParams.set('limit', '100')
+            let response: Response
+            try {
+              response = await fetch(url)
+            } catch {
+              throw new Error('could not check which AIT sessions are live; run: ait start')
+            }
+            if (!response.ok) {
+              throw new Error('could not check which AIT sessions are live; run: ait start')
+            }
+            const body = (await response.json()) as { actors?: ActorBasic[] }
+            return body.actors?.some(
+              (actor) => actor.handle.toLocaleLowerCase() === handle && actor.live,
+            )
+              ? handle
+              : null
+          },
+        ),
+      )
+    ).filter((handle): handle is string => handle !== null),
+  )
+  const sorted = sessions.sort(
     (a, b) => b.modifiedAt - a.modifiedAt || a.handle.localeCompare(b.handle),
   )
+  return {
+    offline: sorted.filter(
+      (session) => !liveHandles.has(session.handle.toLocaleLowerCase()),
+    ),
+    live: sorted.filter(
+      (session) => liveHandles.has(session.handle.toLocaleLowerCase()),
+    ),
+  }
 }
 
 function matches(session: ResumableSession, query: string): boolean {
@@ -233,11 +280,44 @@ function exactMatches(sessions: ResumableSession[], query: string): ResumableSes
   )
 }
 
-function render(sessions: ResumableSession[], output: NodeJS.WritableStream): void {
-  sessions.forEach((session, index) => {
-    const modified = new Date(session.modifiedAt).toISOString()
-    output.write(`${index + 1}. @${session.handle}\t${session.harness}\t${session.project}\t${modified}\n`)
+function render(
+  sessions: ResumableSession[],
+  output: NodeJS.WritableStream,
+  hiddenLive = 0,
+): void {
+  const dateFormat = new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
   })
+  const rows = sessions.map((session, index) => ({
+    number: `${index + 1}.`,
+    handle: `@${session.handle}`,
+    harness: session.harness,
+    project: session.project,
+    modified: dateFormat.format(new Date(session.modifiedAt)),
+  }))
+  const numberWidth = Math.max('#'.length, ...rows.map((row) => row.number.length))
+  const handleWidth = Math.max('SESSION'.length, ...rows.map((row) => row.handle.length))
+  const harnessWidth = Math.max('HARNESS'.length, ...rows.map((row) => row.harness.length))
+  const projectWidth = Math.max('PROJECT'.length, ...rows.map((row) => row.project.length))
+
+  output.write(
+    `${'#'.padEnd(numberWidth)}  ${'SESSION'.padEnd(handleWidth)}  ` +
+    `${'HARNESS'.padEnd(harnessWidth)}  ${'PROJECT'.padEnd(projectWidth)}  LAST USED\n`,
+  )
+  rows.forEach((row) => {
+    output.write(
+      `${row.number.padEnd(numberWidth)}  ${row.handle.padEnd(handleWidth)}  ` +
+      `${row.harness.padEnd(harnessWidth)}  ${row.project.padEnd(projectWidth)}  ${row.modified}\n`,
+    )
+  })
+  if (hiddenLive > 0) {
+    output.write(`${hiddenLive} live session${hiddenLive === 1 ? '' : 's'} hidden\n`)
+  }
 }
 
 function selectInteractive(
@@ -302,7 +382,12 @@ export async function chooseSession(
   input: NodeJS.ReadableStream = process.stdin,
   output: NodeJS.WritableStream = process.stderr,
 ): Promise<ResumableSession | null> {
-  const sessions = await discoverSessions()
+  const { offline: sessions, live } = await discoverSessions()
+  const liveExact = query ? exactMatches(live, query) : []
+  if (liveExact.length > 0) {
+    output.write(`@${liveExact[0].handle} is live in another session; not resumable\n`)
+    return null
+  }
   const exact = query ? exactMatches(sessions, query) : []
   if (exact.length > 1) {
     output.write('error: resumable handle is ambiguous; choose one of:\n')
@@ -311,11 +396,12 @@ export async function chooseSession(
   }
   if (exact.length === 1) return exact[0]
   const narrowed = query ? sessions.filter((session) => matches(session, query)) : sessions
+  const hiddenLive = query ? live.filter((session) => matches(session, query)).length : live.length
   if (narrowed.length === 0) {
     output.write('no resumable AIT session matched\n')
     return null
   }
-  render(narrowed, output)
+  render(narrowed, output, hiddenLive)
   return selectInteractive(narrowed, input, output)
 }
 
@@ -329,5 +415,8 @@ async function main(): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  void main()
+  void main().catch((err: unknown) => {
+    process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}\n`)
+    process.exitCode = 1
+  })
 }

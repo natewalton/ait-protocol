@@ -45,15 +45,56 @@ const writeExecutable = (name) => {
   write(file, '#!/bin/sh\nexit 0\n')
   fs.chmodSync(file, 0o755)
 }
+
+const liveFile = path.join(root, 'live-handles.json')
+const appviewServerFile = path.join(root, 'appview-server.mjs')
+write(liveFile, '[]')
+write(appviewServerFile, `
+import { readFileSync } from 'node:fs'
+import { createServer } from 'node:http'
+const [liveFile, ...handles] = process.argv.slice(2)
+const server = createServer((request, response) => {
+  const url = new URL(request.url, 'http://localhost')
+  const query = (url.searchParams.get('q') ?? '').toLowerCase()
+  const live = new Set(JSON.parse(readFileSync(liveFile, 'utf8')))
+  const actors = handles
+    .filter((handle) => handle.startsWith(query))
+    .map((handle) => ({ did: 'did:plc:fixture', handle, live: live.has(handle) }))
+  response.setHeader('content-type', 'application/json')
+  response.end(JSON.stringify({ actors }))
+})
+server.listen(0, '127.0.0.1', () => {
+  process.stdout.write(String(server.address().port) + '\\n')
+})
+`)
+const appviewServer = spawn(
+  process.execPath,
+  [appviewServerFile, liveFile, claudeHandle, codexHandle],
+  { stdio: ['ignore', 'pipe', 'inherit'] },
+)
+const appviewPort = await new Promise((resolve, reject) => {
+  let output = ''
+  appviewServer.stdout.on('data', (chunk) => {
+    output += chunk.toString()
+    const line = output.split('\n')[0]
+    if (/^\d+$/.test(line)) resolve(Number(line))
+  })
+  appviewServer.once('exit', (status) => reject(new Error(`fixture AppView exited ${status}`)))
+})
 const env = {
   ...process.env,
   HOME: home,
   XDG_DATA_HOME: xdg,
+  APPVIEW_URL: `http://127.0.0.1:${appviewPort}`,
+  TZ: 'UTC',
   PATH: `${bin}${path.delimiter}${path.dirname(process.execPath)}${path.delimiter}/usr/bin${path.delimiter}/bin`,
 }
 const picker = path.resolve(new URL('../dist/sessionPicker.js', import.meta.url).pathname)
 const repo = path.resolve(new URL('../..', import.meta.url).pathname)
-process.on('exit', () => fs.rmSync(root, { recursive: true, force: true }))
+process.on('exit', () => {
+  appviewServer.kill()
+  fs.rmSync(root, { recursive: true, force: true })
+})
 
 mkdir(claudeProject)
 mkdir(codexProject)
@@ -95,10 +136,10 @@ write(path.join(xdg, 'ait-mcp', `codex-thread-${codexId}.json`), JSON.stringify(
 writeIdentity(codexId, codexHandle)
 fs.utimesSync(rollout, new Date(Date.now() + 1000), new Date(Date.now() + 1000))
 
-const run = (query = '', input = '') => spawnSync(
+const run = (query = '', input = '', envOverrides = {}) => spawnSync(
   process.execPath,
   [picker, query],
-  { env, input, encoding: 'utf8' },
+  { env: { ...env, ...envOverrides }, input, encoding: 'utf8' },
 )
 const assertSelection = (result, expectedHarness, expectedProject, expectedId) => {
   assert.equal(result.status, 0, result.stderr)
@@ -142,9 +183,40 @@ assert.match(result.stderr, /claude-session\.test/)
 // No query orders the newer Codex rollout first; EOF cancels without launch.
 result = run('', '')
 assert.equal(result.status, 0, result.stderr)
-assert.match(result.stderr, /1\. @codex-session\.test/)
+assert.match(result.stderr, /1\.\s+@codex-session\.test/)
+assert.equal(result.stderr.includes('\t'), false)
+const tableLines = result.stderr.split('\n')
+const headerLine = tableLines.find((line) => line.includes('SESSION') && line.includes('LAST USED'))
+const codexLine = tableLines.find((line) => line.includes('@codex-session.test'))
+const claudeLine = tableLines.find((line) => line.includes('@claude-session.test'))
+assert.ok(headerLine && codexLine && claudeLine)
+const harnessColumn = headerLine.indexOf('HARNESS')
+const projectColumn = headerLine.indexOf('PROJECT')
+const lastUsedColumn = headerLine.indexOf('LAST USED')
+assert.equal(codexLine.slice(harnessColumn, projectColumn).trim(), 'codex')
+assert.equal(claudeLine.slice(harnessColumn, projectColumn).trim(), 'claude')
+assert.equal(codexLine.slice(projectColumn, lastUsedColumn).trim(), codexProject)
+assert.equal(claudeLine.slice(projectColumn, lastUsedColumn).trim(), claudeProject)
+assert.match(codexLine.slice(lastUsedColumn), /^[A-Z][a-z]{2} \d{1,2}, \d{4}, .* UTC$/)
+assert.match(claudeLine.slice(lastUsedColumn), /^[A-Z][a-z]{2} \d{1,2}, \d{4}, .* UTC$/)
 assert.match(result.stderr, /resume cancelled; no harness was started/)
 assert.equal(result.stdout, '')
+
+// AppView presence excludes a session that is already open. If presence is
+// unavailable, selection fails closed rather than offering sessions blindly.
+write(liveFile, JSON.stringify([codexHandle]))
+result = run('', '')
+assert.equal(result.status, 0, result.stderr)
+assert.match(result.stderr, /@claude-session\.test/)
+assert.doesNotMatch(result.stderr, /@codex-session\.test/)
+assert.match(result.stderr, /1 live session hidden/)
+result = run(codexHandle)
+assert.equal(result.status, 1)
+assert.match(result.stderr, /@codex-session\.test is live in another session; not resumable/)
+write(liveFile, '[]')
+result = run(claudeHandle, '', { APPVIEW_URL: 'http://127.0.0.1:1' })
+assert.equal(result.status, 1)
+assert.match(result.stderr, /could not check which AIT sessions are live; run: ait start/)
 
 // The installed-harness gate and record/project validity are fail-closed.
 fs.unlinkSync(path.join(bin, 'codex'))
@@ -211,4 +283,6 @@ assert.equal(result.status, 0, result.stderr)
 assert.equal(result.stdout.trim(), `PUBLIC ${claudeProject} claude ${claudeId}`)
 assert.equal(result.stderr.includes(fakeSecret), false)
 
+appviewServer.kill()
+await new Promise((resolve) => appviewServer.once('close', resolve))
 console.log('session picker tests passed')

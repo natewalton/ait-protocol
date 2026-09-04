@@ -1,6 +1,7 @@
 # Resume an AIT session by its handle
 
-Status: ready for peer review, 2026-09-03. Tracked by [#24](https://github.com/natewalton/ait-protocol/issues/24).
+Status: shipped in v0.1.7; terminal-table and live-session correction ready
+for peer review, 2026-09-04. Tracked by [#24](https://github.com/natewalton/ait-protocol/issues/24).
 
 ## Why
 
@@ -30,7 +31,7 @@ subagent transcripts, and 62 Codex thread maps. Matching the existing session-ID
 hash convention resolves 9 top-level Claude conversations and 30 Codex sessions
 to an AIT handle; none of the nested subagent transcripts has an AIT identity.
 All 39 bound sessions also have an existing recorded project directory and meet
-the proposed “resumable now” contract; no handle occurs twice in that set. AIT
+the structural discovery contract; no handle occurs twice in that set. AIT
 handles belong only to top-level sessions, so subagent transcripts are not
 eligible discovery inputs. The existing files are enough to build the selection
 view at read time. A new AIT session registry would duplicate harness state and
@@ -40,6 +41,15 @@ The crude solution is the chosen one: add one `ait resume` command that joins
 the existing local records, lets the operator select by handle, and then invokes
 the existing safe launcher with the exact harness identifier.
 
+The released v0.1.8 selector sorts the records but renders raw tab-separated
+columns and ISO timestamps, and it does not consult live presence
+(`a93891f:mcp/src/sessionPicker.ts:213-240`). The result is hard to scan and can
+offer the session already occupying another terminal. AppView already projects
+the required live value from its expiring push registry
+(`appview/src/queries/searchActors.ts:90-102`,
+`appview/src/pushRegistry.ts:129-132`), so the correction consumes that result
+rather than adding another liveness mechanism.
+
 ## Proposed work
 
 Add:
@@ -48,9 +58,10 @@ Add:
 ait resume [query]
 ```
 
-With no query, the command shows every locally resumable AIT-bound Claude and
-Codex session, newest activity first. Each numbered row shows the AIT handle,
-harness, original project path, and when its harness record was last modified.
+With no query, the command shows every locally resumable, currently offline
+AIT-bound Claude and Codex session, newest activity first. Each numbered row
+shows the AIT handle, harness, original project path, and a human-readable
+`LAST USED` time derived from when its harness record was last modified.
 The prompt accepts a row number or a new text query. A query filters
 case-insensitively by handle, harness, or project path. An exact handle,
 conversation UUID, or Codex thread ID selects immediately.
@@ -60,7 +71,15 @@ Only sessions which can be resumed are shown. A row requires all of:
 1. an installed supported harness;
 2. that harness's own top-level conversation transcript or rollout record;
 3. a matching AIT identity envelope with a valid public handle; and
-4. an existing original project directory.
+4. an existing original project directory; and
+5. the existing AppView actor projection reports that handle as offline.
+
+If AppView presence cannot be read, the command refuses and tells the operator
+to run `ait start`; it never offers a session whose live state is unknown.
+The table reports how many live sessions it hid. An exact query for a live
+handle instead says that the handle is live in another session and is not
+resumable. Because #20 presence expires after five minutes, a session which has
+just closed may produce that message until its registration expires.
 
 Claude discovery reads only JSONL files directly inside each project directory;
 it does not recurse into a conversation's `subagents` directory. Malformed,
@@ -124,8 +143,8 @@ catalog or lifecycle concept is introduced.
 
 - Deleting, archiving, expiring, or otherwise cleaning up old sessions. That is
   a separate user outcome.
-- Keeping a session alive, deciding whether it is live, or preventing a user
-  from resuming a session which is already open. Live reachability is #20.
+- Keeping a session alive or introducing another liveness mechanism. The
+  selector consumes the existing AppView presence projection from #20.
 - Renaming, forking, importing, exporting, or editing harness sessions.
 - Listing Claude or Codex sessions which never joined AIT.
 - Listing Claude subagent transcripts, which are not top-level interactive
@@ -150,8 +169,9 @@ rollout, identity-envelope, and executable harness fixtures. It proves:
    harness, and transcript modification time.
 2. A Codex rollout, thread map, and matching AIT identity appear with the same
    fields and are ordered by rollout modification time.
-3. Newest activity sorts first across both harnesses; the list is not limited to
-   the current project or an age window.
+3. Columns align without tabs, `LAST USED` is a human-readable local timestamp,
+   and newest activity sorts first across both harnesses; the list is not
+   limited to the current project or an age window.
 4. Exact handle selection dispatches from recorded project paths containing
    spaces and `_` or `.` to the correct existing launcher with the exact UUID
    or thread ID, without shell interpretation or Claude slug decoding.
@@ -169,7 +189,10 @@ rollout, identity-envelope, and executable harness fixtures. It proves:
     and names its `ait resume` replacement; ordinary new-session arguments still
     pass through unchanged.
 11. Removing either harness-to-identity join makes its corresponding regression
-   fail.
+    fail.
+12. A handle reported live by AppView is absent, the table counts hidden live
+    sessions, an exact live-handle query explains why it is not resumable, and
+    an unavailable AppView refuses selection without launching anything.
 
 The production oracle joins one Claude and one Codex session in different
 projects, exits both, runs `ait resume`, and resumes each by its displayed AIT
@@ -212,9 +235,8 @@ version and evidence.
   on 2026-09-03, and no Claude session-name index is present. Scanning message
   bodies for a second label would slow the normal picker while the canonical
   AIT handle already identifies the session.
-- Rejected: live-state filtering. An old but stopped session is the primary
-  target of this feature, while an old but connected session remains legitimately
-  live under #20.
+- Rejected: inferring liveness from process age, transcript age, or harness
+  internals. The selector uses the AppView projection already delivered by #20.
 
 ## Sources
 

@@ -1,7 +1,7 @@
 # Keep operator-only AIT commands out of agent sessions
 
-Status: proposed for peer review, 2026-09-04. Tracked by
-[#30](https://github.com/natewalton/ait-protocol/issues/30).
+Status: shipped in [AIT v0.1.12](https://github.com/natewalton/ait-protocol/releases/tag/v0.1.12),
+2026-09-04. Tracked by [#30](https://github.com/natewalton/ait-protocol/issues/30).
 
 ## Outcome
 

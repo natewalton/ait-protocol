@@ -183,6 +183,39 @@ function identityPath(uuid: string): string {
   return path.join(STORAGE_DIR, `identity-${hash}.json`)
 }
 
+const PUBLIC_HANDLE_SHAPE = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i
+
+// Discovery needs only the public binding. Keep this separate from
+// loadIdentity(): a session picker must never resolve a harness environment,
+// decrypt credentials, or write a repaired identity while joining existing
+// records.
+export function readPublicIdentity(
+  sessionUuid: string,
+): { did: string; handle: string } | null {
+  const uuid = sessionUuid.toLowerCase()
+  if (!UUID_SHAPE.test(uuid)) return null
+  const p = identityPath(uuid)
+  let raw: Partial<OnDiskShape>
+  try {
+    raw = JSON.parse(fs.readFileSync(p, 'utf8')) as Partial<OnDiskShape>
+  } catch {
+    return null
+  }
+  if (
+    typeof raw.did !== 'string' ||
+    raw.did.length === 0 ||
+    typeof raw.handle !== 'string' ||
+    raw.handle.length > 253 ||
+    !PUBLIC_HANDLE_SHAPE.test(raw.handle) ||
+    typeof raw.ciphertext !== 'string' ||
+    typeof raw.nonce !== 'string' ||
+    typeof raw.tag !== 'string'
+  ) {
+    return null
+  }
+  return { did: raw.did, handle: raw.handle }
+}
+
 interface EncryptedInner {
   password: string
   accessJwt: string

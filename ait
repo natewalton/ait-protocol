@@ -29,6 +29,7 @@ Commands:
   status            Show read-only service and harness status.
   claude [args...]  Launch a Claude Code AIT session in the current directory.
   codex [args...]   Launch a Codex AIT session in the current directory.
+  resume [query]    Find and resume one stopped AIT session by its handle.
   skills <command>  Install, remove, or inspect the delivery-coordination skill.
   help [command]    Show this help or a command's complete help page.
   version           Show this checkout's release version and Git revision.
@@ -144,6 +145,25 @@ Exit behavior: 0/native success, 1 prerequisite/harness failure, 2 invalid
 AIT arguments.
 EOF
       ;;
+    resume)
+      cat <<'EOF'
+ait resume — find and resume an existing AIT session by its handle.
+
+Usage: ait resume [query]
+Arguments: optional case-insensitive handle, harness, project, Claude UUID, or
+Codex thread ID. Without an exact identifier, choose a numbered result.
+Prerequisites: built MCP, an installed Claude Code or Codex, and the original
+project directory and AIT identity still present on disk.
+Changes: starts only the selected existing session in its original project;
+discovery reads existing harness records and never writes a session catalog.
+Example: ait resume @my-project-spec.test
+Normal result: resumes the selected session with its original AIT identity.
+Recovery: no match, ambiguity, EOF, and Ctrl-C launch nothing.
+Exit behavior: 0 when a launcher exits successfully, 1 when no session can be
+selected or discovery fails, 130 when selection is interrupted, 2 invalid
+arguments.
+EOF
+      ;;
     codex)
       cat <<'EOF'
 ait codex — launch the existing Codex AIT session launcher.
@@ -188,8 +208,8 @@ EOF
 ait help — show the canonical AIT command manual.
 
 Usage: ait help [command]
-Arguments: optional command: init, start, stop, status, claude, codex, skills,
-help, version, update, or uninstall. Options: --help, -h.
+Arguments: optional command: init, start, stop, status, claude, codex, resume,
+skills, help, version, update, or uninstall. Options: --help, -h.
 Prerequisites: none.
 Changes: none; help is read-only and works with services stopped.
 Example: ait help init
@@ -353,6 +373,27 @@ case "${1:-help}" in
       exec "$REPO/bin/update.sh"
     fi
     ;;
+  resume)
+    if [ "${2:-}" = "-h" ] || [ "${2:-}" = "--help" ]; then
+      [ "$#" -eq 2 ] || invalid_args "$@"
+      command_help resume
+    else
+      [ "$#" -le 2 ] || invalid_args "$@"
+      selector="$REPO/mcp/dist/sessionPicker.js"
+      [ -f "$selector" ] || {
+        echo "error: built session selector is missing; run: ait start" >&2
+        exit 1
+      }
+      selection="$(node "$selector" "${2:-}")" || exit $?
+      IFS=$'\t' read -r harness project identifier <<< "$selection"
+      [ -n "$harness" ] && [ -n "$project" ] && [ -n "$identifier" ] || {
+        echo "error: session selector returned no resumable session" >&2
+        exit 1
+      }
+      cd -- "$project"
+      exec "$REPO/bin/install.sh" --launch "$harness" --resume "$identifier"
+    fi
+    ;;
   uninstall)
     if [ "${2:-}" = "-h" ] || [ "${2:-}" = "--help" ]; then
       [ "$#" -eq 2 ] || invalid_args "$@"
@@ -367,6 +408,20 @@ case "${1:-help}" in
       [ "$#" -eq 2 ] || invalid_args "$@"
       command_help "$1"
     else
+      case "${2:-}" in
+        --resume|-r|--session)
+          if [ "$#" -ge 3 ] && [ -n "${3:-}" ]; then
+            echo "error: public resume flags were replaced; use: ait resume \"$3\"" >&2
+          else
+            echo "error: public resume flags were replaced; use: ait resume" >&2
+          fi
+          exit 2
+          ;;
+        --resume-last)
+          echo "error: public resume flags were replaced; use: ait resume" >&2
+          exit 2
+          ;;
+      esac
       exec "$REPO/bin/install.sh" --launch "$1" "${@:2}"
     fi
     ;;

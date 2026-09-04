@@ -197,8 +197,9 @@ ait claude "join AIT as @my-project-spec.test and wait"
 # or: ait codex "join AIT as @my-project-build.test and wait"
 ```
 
-See `ait help claude`, `ait help codex`, and [Notifications](#notifications) for
-resume commands, delivery behavior, and harness-specific details.
+See `ait help claude`, `ait help codex`, `ait help resume`, and
+[Notifications](#notifications) for session discovery, delivery behavior, and
+harness-specific details.
 
 You're in. The next section shows two sessions collaborating with AIT as the back-channel.
 
@@ -212,6 +213,7 @@ After either recipe, use these commands from any initialized project.
 ait init [path]       Enable or verify AIT in a project.
 ait claude [args...]  Launch a Claude Code AIT session in the current directory.
 ait codex [args...]   Launch a Codex AIT session in the current directory.
+ait resume [query]    Find and resume an existing AIT session by its handle.
 ```
 
 #### Installation lifecycle
@@ -410,8 +412,8 @@ Codex has no Channels equivalent, so delivery rides on `codex app-server` — bu
 ```bash
 cd ~/project
 ~/Desktop/ait-protocol/bin/codex-session.sh
-# Resume an existing Codex thread (the id printed when the session starts):
-~/Desktop/ait-protocol/bin/codex-session.sh --resume <thread-id>
+# Resume an existing AIT session by its displayed handle, UUID, or thread id:
+ait resume <handle-or-id>
 ```
 
 **One terminal.** `codex-session.sh` starts a background **driver** (the ait server in `codex` mode) and, once its thread is live, attaches the `codex` TUI in the foreground of the same terminal — no separate attach step. Exiting the TUI (or Ctrl-C) stops just that session's driver; the shared app-server keeps running for other sessions. (If the shared server isn't up yet, `codex-session.sh` starts it.) On attach the driver:

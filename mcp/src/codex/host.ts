@@ -31,8 +31,8 @@
 // scoped to THIS session's DID (per-DID cursor + AppView DID filter), so a bounce
 // never replays another session's notifications.
 //
-// Resume: `--resume <threadId>` (or the legacy `--session` alias) recovers the
-// original AIT handle via the {threadId→UUID} map (threadMap.ts).
+// Resume: `--resume <threadId>` recovers the original AIT handle via the
+// {threadId→UUID} map (threadMap.ts).
 
 import * as fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -184,7 +184,7 @@ export async function runCodexSession(): Promise<void> {
           throw err
         }
       }
-      writeThreadSessionId(threadId, sessionId) // idempotent; enables --session rebind
+      writeThreadSessionId(threadId, sessionId) // idempotent; enables exact resume rebind
       if (socketFile && !socketAnnounced) {
         // A cold thread/resume response can arrive while one or more MCP
         // runtimes are still starting. Exposing the socket in that window lets
@@ -246,12 +246,11 @@ function threadConfig(sessionId: string): Record<string, string> {
   return config
 }
 
-// The resume target — a codex threadId from `--resume <threadId>` (with
-// `--session` retained as an alias). Absent means a new session. Mirrors `codex
-// resume <id>`; `codex fork` yields a new threadId (absent from the map → a
-// fresh handle).
+// The resume target — a codex threadId from `--resume <threadId>`. Absent means
+// a new session. Mirrors `codex resume <id>`; `codex fork` yields a new
+// threadId (absent from the map → a fresh handle).
 function parseSessionArg(argv: string[]): string | null {
-  const i = argv.findIndex((arg) => arg === '--resume' || arg === '--session')
+  const i = argv.findIndex((arg) => arg === '--resume')
   return i >= 0 && argv[i + 1] ? argv[i + 1] : null
 }
 
@@ -262,7 +261,7 @@ function parseOpeningPrompt(argv: string[]): string | null {
   const args = argv.slice(2) // drop node + script path
   const positional: string[] = []
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--resume' || args[i] === '--session') {
+    if (args[i] === '--resume') {
       i++ // skip the flag AND its value
       continue
     }

@@ -24,17 +24,14 @@
 #   ait codex "join AIT as @my-spec.test and wait for mentions"
 #
 # Resume: `codex-session.sh --resume <threadId>` re-opens an existing thread and
-# rebinds its original AIT handle. A bare
-# launch starts a new session.
+# rebinds its original AIT handle. A bare launch starts a new session.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 mcp_dir="$repo_root/mcp"
 
-# `--resume` with nothing after it used to start a NEW session and mint a NEW
-# handle, silently orphaning the one you meant to resume. Refuse it, the way
-# bin/claude-session.sh refuses a bare `claude --resume`.
-# The flag can only be missing its value by being the last argument.
+# The private launcher accepts only the exact `--resume <threadId>` form. Public
+# selection and migration errors are handled by `ait resume` and `ait`.
 case "${!#:-}" in
   --resume)
     cat >&2 <<'EOF'
@@ -46,7 +43,29 @@ The id is printed when a session starts ("→ thread <id>"), and by:
 Launch with no flag at all to start a new session on purpose.
 EOF
     exit 2 ;;
+  --session|-r|--resume-last)
+    echo "error: public resume forms were replaced; use: ait resume" >&2
+    exit 2 ;;
 esac
+
+for ((i = 1; i <= $#; i++)); do
+  if [ "${!i}" = "--resume" ]; then
+    next=$((i + 1))
+    resume_id="${!next:-}"
+    if [ -z "$resume_id" ]; then
+      echo "error: --resume needs a codex thread id" >&2
+      exit 2
+    fi
+    if ! printf '%s' "$resume_id" | grep -qE '^[0-9a-f-]{36}$'; then
+      echo "error: private Codex launcher requires an exact thread id" >&2
+      echo "Use: ait resume <handle-or-thread-id>" >&2
+      exit 2
+    fi
+  elif [ "${!i}" = "--session" ] || [ "${!i}" = "-r" ] || [ "${!i}" = "--resume-last" ]; then
+    echo "error: public resume forms were replaced; use: ait resume" >&2
+    exit 2
+  fi
+done
 
 if [ ! -f "$mcp_dir/dist/server.js" ] || [ ! -f "$mcp_dir/dist/codex/tuiRelay.js" ]; then
   echo "codex-session: building mcp…" >&2

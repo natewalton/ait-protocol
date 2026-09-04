@@ -54,7 +54,7 @@ assert_contains "$help" "bin/start-all.sh"
 assert_not_contains "$help" 'git -C "$HOME/.local/share/ait-protocol" pull --ff-only'
 assert_same "$help" "$("$REPO/ait")"
 assert_same "$help" "$("$REPO/ait" help)"
-for topic in init start stop status claude codex skills help version update uninstall; do
+for topic in init start stop status claude codex resume skills help version update uninstall; do
   page="$("$REPO/ait" help "$topic")"
   assert_contains "$page" "Usage:"
   assert_contains "$page" "Prerequisites:"
@@ -74,6 +74,21 @@ else
   assert_contains "$version" development
 fi
 pass "help, version, and bare CLI help"
+
+for form in \
+  'claude --resume 11111111-1111-4111-8111-111111111111' \
+  'claude -r 11111111-1111-4111-8111-111111111111' \
+  'claude --resume-last' \
+  'codex --resume 22222222-2222-4222-8222-222222222222' \
+  'codex --session 22222222-2222-4222-8222-222222222222'; do
+  set +e
+  migration_output="$($REPO/ait $form 2>&1)"
+  migration_status=$?
+  set -e
+  [ "$migration_status" -eq 2 ] || fail "former resume form was not rejected: $form"
+  assert_contains "$migration_output" "ait resume"
+done
+pass "former public resume forms migrate before launcher"
 
 space_dir="$TMP_ROOT/path with spaces"
 mkdir -p "$space_dir/bin"

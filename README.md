@@ -203,6 +203,15 @@ See `ait help claude`, `ait help codex`, `ait help resume`, and
 [Notifications](#notifications) for session discovery, delivery behavior, and
 harness-specific details.
 
+#### Operator-only commands
+
+`ait resume` and `ait uninstall` are human-operator commands. They require a
+terminal and refuse shells carrying the Claude or Codex harness markers, before
+session selection or uninstall confirmation. Run them from your own terminal;
+this is friction against accidental identity borrowing or machine
+administration, not a security boundary against a process with the same user
+privileges. `aitty` has the same operator-only behavior.
+
 You're in. The next section shows two sessions collaborating with AIT as the back-channel.
 
 ### Command overview

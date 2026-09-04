@@ -144,6 +144,86 @@ set -e
 assert_contains "$invalid" "Run: ait help"
 pass "invalid command exit"
 
+operator_fixture="$TMP_ROOT/operator"
+operator_capture="$TMP_ROOT/operator-capture"
+mkdir -p "$operator_fixture/mcp/dist" "$operator_fixture/bin"
+cp "$REPO/ait" "$operator_fixture/ait"
+cat > "$operator_fixture/mcp/dist/sessionPicker.js" <<'EOF'
+const fs = require('fs')
+fs.writeFileSync(process.env.AIT_OPERATOR_CAPTURE, 'resume-selector reached\n')
+process.stdout.write('\t\t\n')
+EOF
+cat > "$operator_fixture/bin/uninstall.sh" <<'EOF'
+#!/bin/bash
+printf '%s\n' 'uninstall script reached' > "$AIT_OPERATOR_CAPTURE"
+EOF
+chmod +x "$operator_fixture/ait" "$operator_fixture/bin/uninstall.sh"
+
+run_operator_tty() {
+  local command_name="$1" output status
+  rm -f "$operator_capture"
+  set +e
+  output="$(env -i PATH="$PATH" HOME="$HOME" AIT_OPERATOR_CAPTURE="$operator_capture" \
+    /usr/bin/script -q /dev/null /bin/bash -c "\"$operator_fixture/ait\" $command_name" 2>&1)"
+  status=$?
+  set -e
+  OPERATOR_OUTPUT="$output"
+  OPERATOR_STATUS=$status
+}
+
+run_operator_tty resume
+assert_file "$operator_capture"
+assert_contains "$OPERATOR_OUTPUT" "session selector returned no resumable session"
+run_operator_tty uninstall
+assert_contains "$(cat "$operator_capture")" "uninstall script reached"
+pass "human PTY reaches resume selector and uninstall confirmation path"
+
+for marker in CLAUDECODE CODEX_SESSION_ID CODEX_THREAD_ID; do
+  for command_name in resume uninstall; do
+    rm -f "$operator_capture"
+    set +e
+    refused_output="$(env -i PATH="$PATH" HOME="$HOME" AIT_OPERATOR_CAPTURE="$operator_capture" \
+      "$marker=1" "$operator_fixture/ait" "$command_name" 2>&1)"
+    refused_status=$?
+    set -e
+    [ "$refused_status" -eq 2 ] || fail "$marker $command_name was not refused"
+    assert_contains "$refused_output" "human operator"
+    assert_contains "$refused_output" "not a security boundary"
+    assert_absent "$operator_capture"
+  done
+done
+pass "Claude and Codex marker invocations refuse before operator work"
+
+rm -f "$operator_capture"
+set +e
+non_tty_output="$(env -i PATH="$PATH" HOME="$HOME" AIT_OPERATOR_CAPTURE="$operator_capture" \
+  "$operator_fixture/ait" resume < /dev/null 2>&1)"
+non_tty_status=$?
+set -e
+[ "$non_tty_status" -eq 2 ] || fail "non-TTY resume was not refused"
+assert_contains "$non_tty_output" "without a human terminal"
+assert_contains "$non_tty_output" "not a security boundary"
+assert_absent "$operator_capture"
+pass "non-TTY operator command refuses before selection"
+
+unguarded="$operator_fixture/ait-unguarded"
+sed '/refuse_operator_command resume/d; /refuse_operator_command uninstall/d' \
+  "$operator_fixture/ait" > "$unguarded"
+chmod +x "$unguarded"
+for marker in CLAUDECODE CODEX_SESSION_ID; do
+  for command_name in resume uninstall; do
+    rm -f "$operator_capture"
+    set +e
+    env -i PATH="$PATH" HOME="$HOME" AIT_OPERATOR_CAPTURE="$operator_capture" "$marker=1" \
+      "$unguarded" "$command_name" >/dev/null 2>&1
+    negative_status=$?
+    set -e
+    [ "$negative_status" -ne 2 ] || fail "removed public check did not regress: $marker $command_name"
+    assert_file "$operator_capture"
+  done
+done
+pass "removing the public operator check reaches both work paths"
+
 make_fixture() {
   local dir="$1" shim="$1/shim" f
   mkdir -p "$dir/bin" "$dir/plc" "$dir/pds" "$dir/appview" "$dir/mcp" "$shim" "$dir/home"

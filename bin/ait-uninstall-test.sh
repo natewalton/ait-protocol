@@ -104,7 +104,7 @@ run_uninstall() {
     TMPDIR="$FX_RUNTIME" \
     XDG_DATA_HOME="$FX_DATA" XDG_STATE_HOME="$FX_STATE" \
     AIT_LOG_DIR="$FX_LOGS" AIT_TEST_DB="$FX_DB" AIT_TEST_PG_PREFIX="$PG_PREFIX" \
-    AIT_TEST_BREW_PREFIX="$FX_HOME/homebrew" "$@" "$FX_REPO/ait" uninstall 2>&1)"
+    AIT_TEST_BREW_PREFIX="$FX_HOME/homebrew" "$@" "$FX_REPO/bin/uninstall.sh" 2>&1)"
   STATUS=$?
   set -e
 }
@@ -139,7 +139,7 @@ exec 5<> "$output_fifo"
 env PATH="$TEST_PATH" HOME="$FX_HOME" XDG_DATA_HOME="$FX_DATA" \
   TMPDIR="$FX_RUNTIME" XDG_STATE_HOME="$FX_STATE" AIT_LOG_DIR="$FX_LOGS" AIT_TEST_DB="$FX_DB" \
   AIT_TEST_PG_PREFIX="$PG_PREFIX" AIT_TEST_BREW_PREFIX="$FX_HOME/homebrew" \
-  "$FX_REPO/ait" uninstall <&3 >&5 2>&1 &
+  "$FX_REPO/bin/uninstall.sh" <&3 >&5 2>&1 &
 signal_pid=$!
 exec 3>&-
 exec 5>&-

@@ -292,6 +292,29 @@ invalid_args() {
   exit 2
 }
 
+refuse_operator_command() {
+  local command_name="$1" marker
+  case "$command_name" in
+    resume|uninstall) ;;
+    *) return 0 ;;
+  esac
+  for marker in CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_ENTRYPOINT \
+    CODEX_SESSION_ID CODEX_THREAD_ID AIT_SESSION_ID AI_AGENT; do
+    if [ -n "${!marker:-}" ]; then
+      echo "error: refusing to run ait $command_name from an agent shell ($marker is set)" >&2
+      echo "ask the human operator to run: ait $command_name" >&2
+      echo "this deters accidental use; it is not a security boundary against a same-user full-privilege shell" >&2
+      exit 2
+    fi
+  done
+  if [ ! -t 0 ]; then
+    echo "error: refusing to run ait $command_name without a human terminal" >&2
+    echo "ask the human operator to run: ait $command_name" >&2
+    echo "this deters accidental use; it is not a security boundary against a same-user full-privilege shell" >&2
+    exit 2
+  fi
+}
+
 case "${1:-help}" in
   help)
     shift || true
@@ -380,6 +403,7 @@ case "${1:-help}" in
       command_help resume
     else
       [ "$#" -le 2 ] || invalid_args "$@"
+      refuse_operator_command resume
       selector="$REPO/mcp/dist/sessionPicker.js"
       [ -f "$selector" ] || {
         echo "error: built session selector is missing; run: npm --prefix '$REPO/mcp' run build" >&2
@@ -401,6 +425,7 @@ case "${1:-help}" in
       command_help uninstall
     else
       [ "$#" -eq 1 ] || invalid_args "$@"
+      refuse_operator_command uninstall
       exec "$REPO/bin/uninstall.sh"
     fi
     ;;

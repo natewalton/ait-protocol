@@ -1,6 +1,6 @@
 # Keep AIT private to this Mac
 
-Status: proposed for peer review, 2026-09-04. Tracked by [#22](https://github.com/natewalton/ait-protocol/issues/22).
+Status: shipped in [v0.1.11](https://github.com/natewalton/ait-protocol/releases/tag/v0.1.11), 2026-09-04. Tracked by [#22](https://github.com/natewalton/ait-protocol/issues/22).
 
 ## Why
 

@@ -185,17 +185,22 @@ EOF
   chmod 600 "$file"
 }
 
+repair_environment_modes() {
+  local target
+  for target in "${ENV_TARGETS[@]}"; do
+    if ! chmod 600 "$target"; then
+      echo "error: could not set private mode on existing environment file: $target" >&2
+      return 1
+    fi
+  done
+}
+
 environment_files() {
   local present=0 target tmp
   local -a created=()
   for target in "${ENV_TARGETS[@]}"; do [ -e "$target" ] && present=$((present + 1)); done
   if [ "$present" -eq 4 ]; then
-    for target in "${ENV_TARGETS[@]}"; do
-      if ! chmod 600 "$target"; then
-        echo "error: could not set private mode on existing environment file: $target" >&2
-        return 1
-      fi
-    done
+    repair_environment_modes || return 1
     echo "Environment: ✓ existing four-file set preserved"
     return 0
   fi
@@ -288,6 +293,7 @@ rebuild_only() {
   for target in "${ENV_TARGETS[@]}"; do
     [ -f "$target" ] || { echo "error: required environment file is missing: $target" >&2; return 1; }
   done
+  repair_environment_modes || return 1
   install_dependencies || {
     echo "error: rebuild failed; services were not started" >&2
     return 1

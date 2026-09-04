@@ -295,6 +295,33 @@ assert_contains "$rerun_output" "existing four-file set preserved"
 for env_file in "$fixture"/{plc,pds,appview,mcp}/.env; do assert_mode_600 "$env_file"; done
 pass "safe machine rerun preserves env bytes"
 
+chmod 644 "$fixture"/{plc,pds,appview,mcp}/.env
+rebuild_output="$("$fixture/bin/install.sh" --rebuild-only)"
+assert_contains "$rebuild_output" "Rebuild: complete"
+for env_file in "$fixture"/{plc,pds,appview,mcp}/.env; do assert_mode_600 "$env_file"; done
+pass "rebuild repairs existing env modes before dependencies"
+
+chmod_failure="$TMP_ROOT/chmod-failure"
+make_fixture "$chmod_failure"
+chmod_failure="$(cd "$chmod_failure" && pwd -P)"
+export PATH="$chmod_failure/shim:/usr/bin:/bin" HOME="$chmod_failure/home"
+"$chmod_failure/bin/install.sh" >/dev/null
+cat > "$chmod_failure/shim/chmod" <<EOF
+#!/bin/bash
+if [ "\$1" = 600 ] && [ "\$2" = "$chmod_failure/plc/.env" ]; then exit 1; fi
+exec /bin/chmod "\$@"
+EOF
+chmod +x "$chmod_failure/shim/chmod"
+export PATH="$chmod_failure/shim:/usr/bin:/bin" HOME="$chmod_failure/home"
+set +e
+chmod_failure_output="$("$chmod_failure/bin/install.sh" --rebuild-only 2>&1)"
+chmod_failure_status=$?
+set -e
+[ "$chmod_failure_status" -ne 0 ] || fail "chmod failure unexpectedly succeeded"
+assert_contains "$chmod_failure_output" "could not set private mode on existing environment file:"
+assert_contains "$chmod_failure_output" "/plc/.env"
+pass "rebuild names an env file when chmod fails"
+
 boundary="$TMP_ROOT/process-boundary"
 make_fixture "$boundary"
 boundary="$(cd "$boundary" && pwd -P)"

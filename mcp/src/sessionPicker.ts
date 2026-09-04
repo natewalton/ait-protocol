@@ -320,15 +320,18 @@ function render(
   }
 }
 
-function selectInteractive(
-  sessions: ResumableSession[],
+function withPrompt<T>(
   input: NodeJS.ReadableStream,
   output: NodeJS.WritableStream,
-): Promise<ResumableSession | null> {
+  run: (
+    prompt: readline.Interface,
+    finish: (value: T | null, status?: number) => void,
+  ) => void,
+): Promise<T | null> {
+  const prompt = readline.createInterface({ input, crlfDelay: Infinity })
   return new Promise((resolve) => {
-    const prompt = readline.createInterface({ input, crlfDelay: Infinity })
     let settled = false
-    const finish = (value: ResumableSession | null, status = 0): void => {
+    const finish = (value: T | null, status = 0): void => {
       if (settled) return
       settled = true
       prompt.close()
@@ -349,6 +352,16 @@ function selectInteractive(
         finish(null)
       }
     })
+    run(prompt, finish)
+  })
+}
+
+async function selectInteractive(
+  sessions: ResumableSession[],
+  input: NodeJS.ReadableStream,
+  output: NodeJS.WritableStream,
+): Promise<ResumableSession | null> {
+  return withPrompt(input, output, (prompt, finish) => {
     const readAnswer = (choices: ResumableSession[]): void => {
       prompt.once('line', (answer) => {
         const trimmed = answer.trim()
@@ -377,6 +390,26 @@ function selectInteractive(
   })
 }
 
+async function confirmLiveResume(
+  session: ResumableSession,
+  input: NodeJS.ReadableStream,
+  output: NodeJS.WritableStream,
+): Promise<ResumableSession | null> {
+  return withPrompt(input, output, (prompt, finish) => {
+    prompt.once('line', (answer) => {
+      if (/^(?:y|yes)$/i.test(answer.trim())) finish(session)
+      else {
+        output.write('resume cancelled; no harness was started\n')
+        finish(null, 1)
+      }
+    })
+    output.write(
+      `@${session.handle} checked in within the last five minutes and may still be open.\n` +
+        'Resume it anyway? [y/N] ',
+    )
+  })
+}
+
 export async function chooseSession(
   query: string,
   input: NodeJS.ReadableStream = process.stdin,
@@ -384,16 +417,13 @@ export async function chooseSession(
 ): Promise<ResumableSession | null> {
   const { offline: sessions, live } = await discoverSessions()
   const liveExact = query ? exactMatches(live, query) : []
-  if (liveExact.length > 0) {
-    output.write(`@${liveExact[0].handle} is live in another session; not resumable\n`)
-    return null
-  }
   const exact = query ? exactMatches(sessions, query) : []
-  if (exact.length > 1) {
+  if (liveExact.length + exact.length > 1) {
     output.write('error: resumable handle is ambiguous; choose one of:\n')
-    render(exact, output)
+    render([...liveExact, ...exact], output)
     return null
   }
+  if (liveExact.length === 1) return confirmLiveResume(liveExact[0], input, output)
   if (exact.length === 1) return exact[0]
   const narrowed = query ? sessions.filter((session) => matches(session, query)) : sessions
   const hiddenLive = query ? live.filter((session) => matches(session, query)).length : live.length

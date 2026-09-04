@@ -212,6 +212,11 @@ this is friction against accidental identity borrowing or machine
 administration, not a security boundary against a process with the same user
 privileges. `aitty` has the same operator-only behavior.
 
+For `ait resume`, an exact handle, Claude UUID, or Codex thread ID that AppView
+still marks live is treated as recently live rather than definitively open. AIT
+prints a warning and asks `Resume it anyway? [y/N]`; only `y` or `yes` continues,
+so the default is safe. Partial searches continue to exclude live sessions.
+
 You're in. The next section shows two sessions collaborating with AIT as the back-channel.
 
 ### Command overview

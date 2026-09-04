@@ -89,6 +89,10 @@ const env = {
   TZ: 'UTC',
   PATH: `${bin}${path.delimiter}${path.dirname(process.execPath)}${path.delimiter}/usr/bin${path.delimiter}/bin`,
 }
+for (const marker of [
+  'CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT',
+  'CODEX_SESSION_ID', 'CODEX_THREAD_ID', 'AIT_SESSION_ID', 'AI_AGENT',
+]) delete env[marker]
 const picker = path.resolve(new URL('../dist/sessionPicker.js', import.meta.url).pathname)
 const repo = path.resolve(new URL('../..', import.meta.url).pathname)
 process.on('exit', () => {
@@ -202,17 +206,76 @@ assert.match(claudeLine.slice(lastUsedColumn), /^[A-Z][a-z]{2} \d{1,2}, \d{4}, .
 assert.match(result.stderr, /resume cancelled; no harness was started/)
 assert.equal(result.stdout, '')
 
-// AppView presence excludes a session that is already open. If presence is
-// unavailable, selection fails closed rather than offering sessions blindly.
+// Repeated narrowing keeps one readline interface, so piped lines are not lost.
+result = run('', 'session\n1\n')
+assertSelection(result, 'codex', codexProject, codexId)
+
+// AppView presence keeps live sessions out of the ordinary table. An exact
+// live handle or identifier gets one default-no confirmation instead.
 write(liveFile, JSON.stringify([codexHandle]))
 result = run('', '')
 assert.equal(result.status, 0, result.stderr)
 assert.match(result.stderr, /@claude-session\.test/)
 assert.doesNotMatch(result.stderr, /@codex-session\.test/)
 assert.match(result.stderr, /1 live session hidden/)
-result = run(codexHandle)
+result = run('codex-session')
 assert.equal(result.status, 1)
-assert.match(result.stderr, /@codex-session\.test is live in another session; not resumable/)
+assert.doesNotMatch(result.stderr, /Resume it anyway\? \[y\/N\]/)
+result = run(codexHandle, 'y\n')
+assertSelection(result, 'codex', codexProject, codexId)
+assert.match(result.stderr, /@codex-session\.test checked in within the last five minutes/)
+write(liveFile, JSON.stringify([claudeHandle, codexHandle]))
+result = run(claudeHandle, 'YeS\n')
+assertSelection(result, 'claude', claudeProject, claudeId)
+result = run(claudeId, 'yes\n')
+assertSelection(result, 'claude', claudeProject, claudeId)
+result = run(codexId, 'Y\n')
+assertSelection(result, 'codex', codexProject, codexId)
+write(liveFile, JSON.stringify([codexHandle]))
+result = run(claudeHandle, '')
+assertSelection(result, 'claude', claudeProject, claudeId)
+assert.doesNotMatch(result.stderr, /Resume it anyway\? \[y\/N\]/)
+for (const [answer, expectedStatus] of [['', 0], ['n\n', 1], ['later\n', 1]]) {
+  result = run(codexHandle, answer)
+  assert.equal(result.status, expectedStatus, answer || 'EOF')
+  assert.equal(result.stdout, '')
+  assert.match(result.stderr, /resume cancelled; no harness was started/)
+}
+
+// A duplicate exact handle remains ambiguous even when one record is live.
+const liveDuplicateId = '66666666-6666-4666-8666-666666666666'
+const liveDuplicateProject = path.join(root, 'live-duplicate.project')
+mkdir(liveDuplicateProject)
+write(path.join(claudeDir, `${liveDuplicateId}.jsonl`),
+  JSON.stringify({ cwd: liveDuplicateProject }) + '\n')
+writeIdentity(liveDuplicateId, codexHandle)
+write(liveFile, JSON.stringify([codexHandle]))
+result = run(codexHandle, 'y\n')
+assert.equal(result.status, 1)
+assert.match(result.stderr, /ambiguous/)
+assert.doesNotMatch(result.stderr, /Resume it anyway\? \[y\/N\]/)
+fs.unlinkSync(path.join(claudeDir, `${liveDuplicateId}.jsonl`))
+fs.unlinkSync(identityPath(liveDuplicateId))
+
+// Ctrl-C cancels the live confirmation without producing a launch record.
+const liveInterrupted = await new Promise((resolve) => {
+  const child = spawn(process.execPath, [picker, codexHandle], { env, stdio: ['pipe', 'pipe', 'pipe'] })
+  let stderr = ''
+  let signalled = false
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString()
+    if (!signalled && stderr.includes('Resume it anyway? [y/N]')) {
+      signalled = true
+      child.kill('SIGINT')
+    }
+  })
+  child.on('close', (status) => resolve({ status, stdout: '', stderr }))
+})
+assert.equal(liveInterrupted.status, 130)
+assert.match(liveInterrupted.stderr, /resume cancelled; no harness was started/)
+
+// If presence is unavailable, selection fails closed rather than offering
+// sessions blindly.
 write(liveFile, '[]')
 result = run(claudeHandle, '', { APPVIEW_URL: 'http://127.0.0.1:1' })
 assert.equal(result.status, 1)
@@ -274,13 +337,16 @@ fs.cpSync(path.join(repo, 'mcp', 'dist'), path.join(publicRoot, 'mcp', 'dist'), 
 write(path.join(publicRoot, 'bin', 'install.sh'),
   '#!/bin/sh\nprintf "PUBLIC %s %s %s\\n" "$PWD" "$2" "$4"\n')
 fs.chmodSync(path.join(publicRoot, 'bin', 'install.sh'), 0o755)
-result = spawnSync(path.join(publicRoot, 'ait'), ['resume', claudeHandle], {
-  env,
-  cwd: root,
-  encoding: 'utf8',
-})
+const publicOutput = path.join(root, 'public-output')
+const publicOutputFd = fs.openSync(publicOutput, 'w')
+result = spawnSync('/usr/bin/script', [
+  '-q', '/dev/null', '/bin/bash', '-c',
+  `${JSON.stringify(path.join(publicRoot, 'ait'))} resume ${claudeHandle}`,
+], { env, cwd: root, stdio: ['ignore', publicOutputFd, 'pipe'], encoding: 'utf8' })
+fs.closeSync(publicOutputFd)
+const publicStdout = fs.readFileSync(publicOutput, 'utf8')
 assert.equal(result.status, 0, result.stderr)
-assert.equal(result.stdout.trim(), `PUBLIC ${claudeProject} claude ${claudeId}`)
+assert.match(publicStdout, new RegExp(`PUBLIC ${claudeProject} claude ${claudeId}`))
 assert.equal(result.stderr.includes(fakeSecret), false)
 
 appviewServer.kill()

@@ -381,7 +381,7 @@ case "${1:-help}" in
       [ "$#" -le 2 ] || invalid_args "$@"
       selector="$REPO/mcp/dist/sessionPicker.js"
       [ -f "$selector" ] || {
-        echo "error: built session selector is missing; run: ait start" >&2
+        echo "error: built session selector is missing; run: npm --prefix '$REPO/mcp' run build" >&2
         exit 1
       }
       selection="$(node "$selector" "${2:-}")" || exit $?

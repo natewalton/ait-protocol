@@ -34,13 +34,32 @@ The crude solution is sufficient: bind the three servers explicitly to
 files at `0600`. No firewall rule, TLS layer, authentication proxy, secret
 manager, or new daemon is needed.
 
+Existing clients address the stack through `http://localhost:258x`
+(`bin/status.sh:40`, `bin/install.sh:158-169`, and
+`appview/src/server.ts:30-32`). On this Mac, `localhost` resolves to `::1` before
+`127.0.0.1`. Node 20 and later enable connection-family autoselection by
+default, so a refused IPv6 attempt falls back to the IPv4-only listener; older
+Node versions do not provide the required default. AIT therefore makes Node.js
+20 or later an explicit prerequisite rather than changing established env-file
+URLs and secret-bearing bytes during this repair.
+
 ## Proposed work
 
 PLC, PDS, and AppView listen only on IPv4 loopback. Their existing ports,
 routes, inter-service URLs, startup order, shutdown behavior, and CLI output do
-not change. The local launchers should start the existing service applications
-on `127.0.0.1`; do not patch `node_modules`, globally replace Node's `listen`, or
-add a proxy or packet-filter rule.
+not change. Each local PLC/PDS launcher wraps only its own Express app
+instance's `listen` method to insert `127.0.0.1`, then calls the dependency's
+existing `start()` and `destroy()` lifecycle unchanged. The PLC launcher mirrors
+the dependency executable's setup: read `DATABASE_URL`, create the exported
+Postgres database, run `migrateToLatestOrThrow`, apply the existing port default,
+create the exported `PlcServer`, then call `start()`. Do not patch
+`node_modules`, globally replace Node's `listen`, or add a proxy or packet-filter
+rule.
+
+Automated preflight and the README prerequisite list require Node.js 20 or
+later and print the existing Homebrew remedy when the installed major version is
+older. This is a hard prerequisite because every established `localhost` client
+must reach the new IPv4-only listeners consistently.
 
 The machine installer enforces mode `0600` on all four env files both when it
 creates them and when it finds a complete existing set. It preserves their
@@ -59,11 +78,11 @@ interface address cannot connect. The operator can see the changed boundary in
 
 Eight files are expected:
 
-1. `plc/launcher.js` starts the installed PLC application on loopback while preserving its database lifecycle.
+1. `plc/launcher.js` mirrors the installed PLC executable's setup, wraps only that server's app listener with the loopback host, and uses the library lifecycle.
 2. `bin/run-plc.sh` invokes the local PLC launcher instead of the dependency's all-interface executable.
-3. `pds/launcher.js` starts the installed PDS application on loopback while preserving its sequencer, queues, database, and shutdown lifecycle.
+3. `pds/launcher.js` wraps only the created PDS app listener with the loopback host, then calls the library's unchanged lifecycle.
 4. `appview/src/server.ts` supplies the loopback host to the existing listener.
-5. `bin/install.sh` repairs the complete existing env set to `0600` without changing contents.
+5. `bin/install.sh` requires Node.js 20 or later and repairs the complete existing env set to `0600` without changing contents.
 6. `bin/ait-test.sh` keeps only small deterministic regressions for listener host selection and existing-file permission repair.
 7. `README.md` states the local-only boundary and makes Manual Setup create private env files.
 8. `specs/local-security-boundary.md` records this contract.
@@ -99,7 +118,9 @@ Permanent tests stay small and behavioral:
    `127.0.0.1` as the listen host; removing the host makes the focused test fail.
 2. A complete existing four-file env set with permissive modes is preserved
    byte-for-byte and ends at `0600`; a chmod failure stops and names its target.
-3. `bin/ait-test.sh` and the existing AppView/MCP builds pass.
+3. Preflight accepts Node.js 20 and later, refuses an older major version, and
+   names the existing upgrade remedy.
+4. `bin/ait-test.sh` and the existing AppView/MCP builds pass.
 
 The one-off release regression is deliberately broader than the permanent
 suite. In an isolated install, start the real PLC, PDS, and AppView and prove:
@@ -107,6 +128,8 @@ suite. In an isolated install, start the real PLC, PDS, and AppView and prove:
 - all three health routes answer through `127.0.0.1`;
 - `lsof` names only loopback listeners and requests through an assigned
   non-loopback interface address fail;
+- `ait status` and one authenticated MCP read succeed through the unchanged
+  `localhost` URLs against the IPv4-only listeners;
 - the four env files are `0600` before and after an installer rerun and update;
 - a restart preserves existing handles, posts, follows, and AppView data; and
 - one real Claude session and one real Codex session exercise the current AIT

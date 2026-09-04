@@ -203,7 +203,7 @@ assert.equal(codexLine.slice(projectColumn, lastUsedColumn).trim(), codexProject
 assert.equal(claudeLine.slice(projectColumn, lastUsedColumn).trim(), claudeProject)
 assert.match(codexLine.slice(lastUsedColumn), /^[A-Z][a-z]{2} \d{1,2}, \d{4}, .* UTC$/)
 assert.match(claudeLine.slice(lastUsedColumn), /^[A-Z][a-z]{2} \d{1,2}, \d{4}, .* UTC$/)
-assert.match(result.stderr, /resume cancelled; no harness was started/)
+assert.match(result.stderr, /\nresume cancelled; no harness was started/)
 assert.equal(result.stdout, '')
 
 // Repeated narrowing keeps one readline interface, so piped lines are not lost.
@@ -239,7 +239,9 @@ for (const [answer, expectedStatus] of [['', 0], ['n\n', 1], ['later\n', 1]]) {
   result = run(codexHandle, answer)
   assert.equal(result.status, expectedStatus, answer || 'EOF')
   assert.equal(result.stdout, '')
-  assert.match(result.stderr, /resume cancelled; no harness was started/)
+  assert.match(result.stderr, answer === ''
+    ? /\nresume cancelled; no harness was started/
+    : /resume cancelled; no harness was started/)
 }
 
 // A duplicate exact handle remains ambiguous even when one record is live.
@@ -256,23 +258,6 @@ assert.match(result.stderr, /ambiguous/)
 assert.doesNotMatch(result.stderr, /Resume it anyway\? \[y\/N\]/)
 fs.unlinkSync(path.join(claudeDir, `${liveDuplicateId}.jsonl`))
 fs.unlinkSync(identityPath(liveDuplicateId))
-
-// Ctrl-C cancels the live confirmation without producing a launch record.
-const liveInterrupted = await new Promise((resolve) => {
-  const child = spawn(process.execPath, [picker, codexHandle], { env, stdio: ['pipe', 'pipe', 'pipe'] })
-  let stderr = ''
-  let signalled = false
-  child.stderr.on('data', (chunk) => {
-    stderr += chunk.toString()
-    if (!signalled && stderr.includes('Resume it anyway? [y/N]')) {
-      signalled = true
-      child.kill('SIGINT')
-    }
-  })
-  child.on('close', (status) => resolve({ status, stdout: '', stderr }))
-})
-assert.equal(liveInterrupted.status, 130)
-assert.match(liveInterrupted.stderr, /resume cancelled; no harness was started/)
 
 // If presence is unavailable, selection fails closed rather than offering
 // sessions blindly.
@@ -294,22 +279,41 @@ for (const query of ['nested-session.test', 'malformed-session.test', 'missing-p
   assert.match(result.stderr, /no resumable AIT session matched/)
 }
 
-// Ctrl-C cancels the interactive selector without producing a launch record.
-const interrupted = await new Promise((resolve) => {
-  const child = spawn(process.execPath, [picker], { env, stdio: ['pipe', 'pipe', 'pipe'] })
-  let stderr = ''
-  let signalled = false
-  child.stderr.on('data', (chunk) => {
-    stderr += chunk.toString()
-    if (!signalled && stderr.includes('Select a session by number or enter a search:')) {
-      signalled = true
-      child.kill('SIGINT')
-    }
+// One real PTY regression synchronizes on each prompt, sends Ctrl-C, and
+// captures the selector child's status inside the PTY shell.
+const ptyScript = path.join(root, 'cancel-prompt.exp')
+write(ptyScript, `
+set timeout -1
+spawn -noecho /bin/bash -c $env(AIT_PTY_COMMAND)
+expect {
+  -exact $env(AIT_PTY_PROMPT) {
+    send "\\003"
+    exp_continue
+  }
+  -exact "SELECTOR_CHILD_STATUS=130" { exit 0 }
+  eof { exit 1 }
+}
+`)
+const ptyCancel = (query, promptText) => {
+  const command = [process.execPath, picker, query].filter(Boolean)
+    .map((part) => JSON.stringify(part)).join(' ') +
+    '; child_status=$?; printf "\\nSELECTOR_CHILD_STATUS=%s\\n" "$child_status"'
+  const result = spawnSync('/usr/bin/expect', [ptyScript], {
+    env: { ...env, AIT_PTY_COMMAND: command, AIT_PTY_PROMPT: promptText },
+    cwd: root,
+    encoding: 'utf8',
   })
-  child.on('close', (status) => resolve({ status, stdout: '', stderr }))
-})
-assert.equal(interrupted.status, 130)
-assert.match(interrupted.stderr, /resume cancelled; no harness was started/)
+  return result.stdout + result.stderr
+}
+
+write(liveFile, '[]')
+let ptyOutput = await ptyCancel('', 'Select a session by number or enter a search:')
+assert.match(ptyOutput, /SELECTOR_CHILD_STATUS=130/)
+assert.match(ptyOutput, /\nresume cancelled; no harness was started/)
+write(liveFile, JSON.stringify([codexHandle]))
+ptyOutput = await ptyCancel(codexHandle, 'Resume it anyway? [y/N]')
+assert.match(ptyOutput, /SELECTOR_CHILD_STATUS=130/)
+assert.match(ptyOutput, /\nresume cancelled; no harness was started/)
 
 // The same record without its identity is not resumable, and a missing project
 // is not repaired or listed.

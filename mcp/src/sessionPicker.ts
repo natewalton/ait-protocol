@@ -338,19 +338,17 @@ function withPrompt<T>(
       process.exitCode = status
       resolve(value)
     }
-    const onSignal = (): void => {
-      output.write('resume cancelled; no harness was started\n')
-      finish(null, 130)
+    const cancel = (status = 0): void => {
+      output.write('\nresume cancelled; no harness was started\n')
+      finish(null, status)
     }
+    const onSignal = (): void => cancel(130)
     process.once('SIGINT', onSignal)
     prompt.on('SIGINT', onSignal)
     prompt.once('close', () => {
       process.removeListener('SIGINT', onSignal)
       prompt.removeListener('SIGINT', onSignal)
-      if (!settled) {
-        output.write('resume cancelled; no harness was started\n')
-        finish(null)
-      }
+      if (!settled) cancel()
     })
     run(prompt, finish)
   })

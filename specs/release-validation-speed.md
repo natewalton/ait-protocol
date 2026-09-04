@@ -1,7 +1,12 @@
 # Make release validation faster without weakening it
 
-Status: proposed for peer review, 2026-09-04. Tracked by
+Status: shipped in AIT v0.1.13, 2026-09-04. Tracked by
 [#27](https://github.com/natewalton/ait-protocol/issues/27).
+
+Prepare run 33859988189 validated in 2m35s with the restored four-lockfile
+cache; the four installs took 2s, 8s, 40s, and 3s. Publish run 33860395275
+skipped validation and published the inspected immutable release in 9s. The
+released v0.1.12 to v0.1.13 update oracle passed all 33 checks.
 
 ## Outcome
 

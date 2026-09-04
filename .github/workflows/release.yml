@@ -52,10 +52,10 @@ jobs:
           bin/ait-test.sh
           bin/ait-uninstall-test.sh
           bin/ait-update-test.sh
-          npm --prefix plc ci
-          npm --prefix pds ci
-          npm --prefix appview ci
-          npm --prefix mcp ci
+          npm --prefix plc ci --prefer-offline --no-audit
+          npm --prefix pds ci --prefer-offline --no-audit
+          npm --prefix appview ci --prefer-offline --no-audit
+          npm --prefix mcp ci --prefer-offline --no-audit
           npm --prefix appview run build
           npm --prefix mcp run build
           bin/check-single-lexicon.sh

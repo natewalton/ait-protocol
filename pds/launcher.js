@@ -2,7 +2,7 @@
 
 // Minimal PDS launcher for the AIT network.
 // Modeled on bluesky-social/pds/service/index.js, stripped of production-only
-// concerns (TLS check route, etc.).
+// concerns (TLS check route, etc.). The app listener is local to this machine.
 
 const {
   PDS,
@@ -19,6 +19,8 @@ const main = async () => {
   const cfg = envToCfg(env);
   const secrets = envToSecrets(env);
   const pds = await PDS.create(cfg, secrets);
+  const listen = pds.app.listen.bind(pds.app);
+  pds.app.listen = (port, ...args) => listen(port, "127.0.0.1", ...args);
   await pds.start();
   httpLogger.info(`pds started on port ${cfg.service.port}`);
 

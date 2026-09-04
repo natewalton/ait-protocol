@@ -29,7 +29,7 @@ missing_prereq() {
 }
 
 preflight() {
-  local failed=0 claude_installed=0 codex_installed=0
+  local failed=0 claude_installed=0 codex_installed=0 node_major
   echo "Prerequisites"
   if [ "$(uname -s 2>/dev/null || true)" != "Darwin" ]; then
     missing_prereq "macOS" "Run AIT on macOS." "https://github.com/natewalton/ait-protocol"
@@ -50,8 +50,10 @@ preflight() {
       failed=1
     fi
   fi
-  if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-    missing_prereq "Node.js and npm" "brew install node" "https://formulae.brew.sh/formula/node"
+  node_major="$(node --version 2>/dev/null | sed -n 's/^v\([0-9][0-9]*\)\..*/\1/p')"
+  if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1 ||
+     [ -z "$node_major" ] || [ "$node_major" -lt 20 ]; then
+    missing_prereq "Node.js 20 or later and npm" "brew install node" "https://formulae.brew.sh/formula/node"
     failed=1
   fi
   if ! command -v openssl >/dev/null 2>&1; then
@@ -188,6 +190,12 @@ environment_files() {
   local -a created=()
   for target in "${ENV_TARGETS[@]}"; do [ -e "$target" ] && present=$((present + 1)); done
   if [ "$present" -eq 4 ]; then
+    for target in "${ENV_TARGETS[@]}"; do
+      if ! chmod 600 "$target"; then
+        echo "error: could not set private mode on existing environment file: $target" >&2
+        return 1
+      fi
+    done
     echo "Environment: ✓ existing four-file set preserved"
     return 0
   fi

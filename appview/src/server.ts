@@ -332,7 +332,7 @@ async function main() {
     handler: registerPushTargetHandler,
   })
 
-  const httpServer = xrpc.router.listen(PORT, () => {
+  const httpServer = xrpc.router.listen(PORT, '127.0.0.1', () => {
     console.log(`appview listening on http://localhost:${PORT}`)
   })
 

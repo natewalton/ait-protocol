@@ -38,10 +38,50 @@ process_alive() {
   case "$state" in ''|Z*) return 1 ;; *) return 0 ;; esac
 }
 
-for f in install.sh ait bin/ait-test.sh bin/install.sh bin/status.sh bin/start-all.sh bin/claude-session.sh bin/codex-session.sh; do
+for f in install.sh ait bin/ait-test.sh bin/install.sh bin/status.sh bin/start-all.sh bin/claude-session.sh bin/codex-session.sh bin/run-plc.sh; do
   bash -n "$REPO/$f" || fail "syntax: $f"
 done
 pass "shell syntax"
+
+assert_mode_600() {
+  local mode
+  mode="$(stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1")"
+  [ "$mode" = 600 ] || fail "expected mode 600 for $1, got $mode"
+}
+
+launcher_fixture="$TMP_ROOT/launcher-host"
+mkdir -p "$launcher_fixture/plc/node_modules/@did-plc/server" \
+  "$launcher_fixture/pds/node_modules/@atproto/pds" "$launcher_fixture/results"
+cp "$REPO/plc/launcher.js" "$launcher_fixture/plc/launcher.js"
+cp "$REPO/pds/launcher.js" "$launcher_fixture/pds/launcher.js"
+cat > "$launcher_fixture/plc/node_modules/@did-plc/server/index.js" <<'EOF'
+const fs = require('fs')
+const result = process.env.AIT_LISTEN_RESULT
+const app = { listen(port, host) { fs.writeFileSync(result, JSON.stringify({ port, host })); return {} } }
+module.exports = {
+  Database: { mock() { return {} } },
+  PlcServer: { create({ port }) { return { app, start: async () => app.listen(port), destroy: async () => {} } } },
+}
+EOF
+cat > "$launcher_fixture/pds/node_modules/@atproto/pds/index.js" <<'EOF'
+const fs = require('fs')
+const result = process.env.AIT_LISTEN_RESULT
+const app = { listen(port, host) { fs.writeFileSync(result, JSON.stringify({ port, host })); return {} } }
+module.exports = {
+  PDS: { async create(cfg) { return { app, start: async () => app.listen(cfg.service.port), destroy: async () => {} } } },
+  envToCfg() { return { service: { port: 2583 } } },
+  envToSecrets() { return {} },
+  readEnv() { return {} },
+  httpLogger: { info() {} },
+}
+EOF
+printf '%s\n' '{"version":"0.4.226"}' > "$launcher_fixture/pds/node_modules/@atproto/pds/package.json"
+AIT_LISTEN_RESULT="$launcher_fixture/results/plc.json" node "$launcher_fixture/plc/launcher.js"
+assert_contains "$(cat "$launcher_fixture/results/plc.json")" '"host":"127.0.0.1"'
+AIT_LISTEN_RESULT="$launcher_fixture/results/pds.json" node "$launcher_fixture/pds/launcher.js"
+assert_contains "$(cat "$launcher_fixture/results/pds.json")" '"host":"127.0.0.1"'
+assert_contains "$(sed -n '/xrpc\.router\.listen(PORT/ p' "$REPO/appview/src/server.ts")" "127.0.0.1"
+pass "PLC, PDS, and AppView listener hosts are loopback"
 
 help="$("$REPO/ait" --help)"
 assert_contains "$help" "init [path]"
@@ -206,6 +246,23 @@ assert_contains "$prereq_failure_output" "missing: Homebrew"
 assert_contains "$prereq_failure_output" "Prerequisites: FAILED"
 pass "suppressed preflight failure retains diagnosis"
 
+node_floor="$TMP_ROOT/node-floor"
+make_fixture "$node_floor"
+rm -f "$node_floor/shim/node"
+cat > "$node_floor/shim/node" <<'EOF'
+#!/bin/sh
+if [ "$1" = --version ]; then echo v18.20.0; else exit 0; fi
+EOF
+chmod +x "$node_floor/shim/node"
+export PATH="$node_floor/shim:/usr/bin:/bin" HOME="$node_floor/home"
+set +e
+node_floor_output="$("$node_floor/bin/install.sh" 2>&1)"
+node_floor_status=$?
+set -e
+[ "$node_floor_status" -ne 0 ] || fail "old Node.js unexpectedly accepted"
+assert_contains "$node_floor_output" "Node.js 20 or later"
+pass "Node.js 20 floor is enforced"
+
 export PATH="$fixture/shim:/usr/bin:/bin"
 bare_update_output="$("$fixture/bin/install.sh")"
 assert_contains "$bare_update_output" "AIT files:"
@@ -230,10 +287,12 @@ pass "Codex-only machine preflight and plain Claude skip"
 export PATH="$fixture/shim:/usr/bin:/bin"
 export HOME="$fixture/home"
 before="$(shasum -a 256 "$fixture/plc/.env" | awk '{print $1}')"
+chmod 644 "$fixture"/{plc,pds,appview,mcp}/.env
 rerun_output="$("$fixture/bin/install.sh")"
 after="$(shasum -a 256 "$fixture/plc/.env" | awk '{print $1}')"
 assert_same "$before" "$after"
 assert_contains "$rerun_output" "existing four-file set preserved"
+for env_file in "$fixture"/{plc,pds,appview,mcp}/.env; do assert_mode_600 "$env_file"; done
 pass "safe machine rerun preserves env bytes"
 
 boundary="$TMP_ROOT/process-boundary"

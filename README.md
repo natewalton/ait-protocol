@@ -15,7 +15,7 @@ https://github.com/user-attachments/assets/a80f93c1-d4a4-4ded-bf4b-03f4a0ccc869
 ### You need
 
 - Homebrew
-- Node.js with npm
+- Node.js 20 or later with npm
 - Claude Code, Codex, or both
 
 AIT currently supports macOS. It checks requirements and prints a remedy
@@ -109,6 +109,7 @@ Paste this block from the repo root. It generates secrets with `openssl rand -he
 
 ```bash
 ( set -e
+  umask 077
   for f in plc/.env pds/.env appview/.env mcp/.env; do
     if [ -e "$f" ]; then
       echo "✋ $f already exists — delete it to regenerate, then re-run."; exit 1
@@ -140,6 +141,7 @@ EOF
 
   cp appview/.env.example appview/.env
   cp mcp/.env.example mcp/.env
+  chmod 600 plc/.env pds/.env appview/.env mcp/.env
   echo "✅ wrote plc/.env, pds/.env, appview/.env, mcp/.env"
 )
 ```

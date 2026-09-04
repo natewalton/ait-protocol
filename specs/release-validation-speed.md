@@ -20,9 +20,9 @@ few seconds needed to bind and publish the existing draft.
 The release workflow currently runs all three product suites, four sequential
 fresh `npm ci` commands, two TypeScript builds, syntax/version/head checks, and
 the lexicon check in one macOS validation step
-(`.github/workflows/release.yml:25-48`). It then runs
+(`.github/workflows/release.yml:32-52`). It then runs
 `bin/ait-update-test.sh` again while preparing the exact asset
-(`.github/workflows/release.yml:65-81`). The repository has four independent
+(`.github/workflows/release.yml:68-86`). The repository has four independent
 `package-lock.json` files and no root package or npm workspace, as shown by
 `rg --files -g package-lock.json -g package.json` on 2026-09-04.
 
@@ -33,7 +33,7 @@ took 8s. Publishing therefore repeated a full validation already completed
 before the draft was created, even though the publish step separately required
 the draft target to equal the current `origin/main` head and checked the draft
 asset digest before changing `draft=false`
-(`.github/workflows/release.yml:143-179`).
+(`.github/workflows/release.yml:161-190`).
 
 The v0.1.12 release reproduced the same waste with different network timing:
 prepare run 33851440921 spent 16m13s in validation before an 18s draft job,
@@ -199,7 +199,7 @@ timing-based correctness verdict, every release-security gate remains, and
 
 ## Sources
 
-- `.github/workflows/release.yml:25-48,65-81,143-179`, current validation,
+- `.github/workflows/release.yml:32-52,68-86,161-190`, current validation,
   duplicate updater test, and publication gates inspected at
   `c49e7d18b0eb01f94f744e71b4a9328e49d2d653`.
 - GitHub Actions runs

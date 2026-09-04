@@ -70,6 +70,12 @@ matched and exits without launching anything. If an exact handle somehow maps
 to more than one harness session, the command refuses the ambiguous resume and
 shows the matching rows.
 
+For Claude, the original project path comes from the first transcript record
+that contains `cwd`. The encoded project-directory name is only a storage slug
+and must not be decoded into a path; that transformation is lossy for project
+names containing characters such as `_`, `.`, and `-`. Codex uses the `cwd`
+recorded in its rollout metadata.
+
 After selection, `ait resume` changes to the recorded project directory and
 invokes the same private install/launcher path already used by the public new-
 session commands, supplying the exact resume identifier internally:
@@ -146,9 +152,9 @@ rollout, identity-envelope, and executable harness fixtures. It proves:
    fields and are ordered by rollout modification time.
 3. Newest activity sorts first across both harnesses; the list is not limited to
    the current project or an age window.
-4. Exact handle selection dispatches from a recorded project path containing
-   spaces to the correct existing launcher with the exact UUID or thread ID,
-   without shell interpretation.
+4. Exact handle selection dispatches from recorded project paths containing
+   spaces and `_` or `.` to the correct existing launcher with the exact UUID
+   or thread ID, without shell interpretation or Claude slug decoding.
 5. Exact Claude UUID and Codex thread ID selection resolve to the same rows
    without requiring a harness-specific command.
 6. A partial query narrows the rows and numbered selection dispatches the chosen

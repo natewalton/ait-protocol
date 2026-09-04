@@ -11,9 +11,8 @@ before those operator-only clients select another session, prompt for an
 uninstall, or mutate anything.
 
 The visible change is on the terminal surface: a human sees the existing resume
-selector or uninstall confirmation, a Codex session sees the public CLI refusal
-on stderr, and a Claude Bash tool call sees the explanatory hook refusal before
-the CLI fallback.
+selector or uninstall confirmation, while a Claude or Codex session sees the
+public CLI refusal on stderr in its shell-tool result.
 
 This is intentional friction against accidental identity borrowing or machine
 administration. It is not a security boundary against a process that already
@@ -36,8 +35,7 @@ AIT already uses the appropriate control for the comparable `aitty` operator
 client. `refuseWhenDrivenByAnAgent()` refuses known harness markers or stdin
 without a TTY, explains the boundary, and explicitly calls itself a deterrent
 rather than a hard sandbox (`mcp/src/aitty/main.ts:96-142`,
-`docs/aitty.md:126-141`). Claude's `PreToolUse` Bash hook supplies an earlier
-explanation for attempted aitty execution (`bin/guard-bash.sh:78-125`).
+`docs/aitty.md:126-141`).
 
 The current Codex tool shell was measured with `CODEX_SESSION_ID`,
 `CODEX_THREAD_ID`, and `AI_AGENT` set. The existing aitty marker list includes
@@ -46,10 +44,9 @@ Codex markers (`mcp/src/aitty/main.ts:99-105`). The public CLI has no equivalent
 operator-terminal check.
 
 The crude version is sufficient: copy aitty's two-signal decision into the
-public shell dispatcher for the two affected commands, add the missing Codex
-marker names to aitty, and extend the existing Claude explanation. No stronger
-authority exists at this layer, so more machinery would not make the boundary
-more truthful.
+public shell dispatcher for the two affected commands and add the missing Codex
+marker names to aitty. No stronger authority exists at this layer, so more
+machinery would not make the boundary more truthful.
 
 ## What changes
 
@@ -76,13 +73,6 @@ human terminals are unchanged.
 Use the same explicit marker vocabulary in aitty's existing runtime check.
 Its policy and TTY behavior do not otherwise change.
 
-Extend the existing Claude Bash guard with one execution-position rule for the
-public forms `ait resume` and `ait uninstall`. It gives the earlier explanation
-inside Claude, while the public CLI remains the common enforcement point for
-Claude and Codex. The guard must not match `ait help resume`, `ait help
-uninstall`, documentation reads, quoted prose, or an unrelated command that
-contains those words as later arguments.
-
 Do not add a flag, persisted state, password, token, daemon, privilege model,
 or harness-specific execution path.
 
@@ -94,10 +84,11 @@ Five files are expected:
    `uninstall` before either command performs work.
 2. `mcp/src/aitty/main.ts` adds the explicit Codex marker names to the existing
    runtime policy.
-3. `bin/guard-bash.sh` adds the Claude-side explanatory rule for executable
-   forms of the two commands.
-4. `bin/ait-test.sh` covers the public CLI and hook behavior without launching
-   or uninstalling anything.
+3. `bin/ait-test.sh` covers public CLI behavior without launching or
+   uninstalling anything.
+4. `bin/ait-uninstall-test.sh` exercises uninstall implementation behavior by
+   calling `bin/uninstall.sh` directly instead of routing its piped confirmation
+   fixtures through the now-interactive public command.
 5. `README.md` names `resume`, `uninstall`, and aitty as human-operator
    surfaces and accurately describes the check as friction, not security.
 
@@ -107,31 +98,30 @@ five mechanisms.
 
 ## Why this stays small
 
-The system has four concepts already present in the code: the two
-operator-only commands, the existing harness-marker vocabulary, stdin TTY
-state, and the existing Claude explanatory hook. Two refusal signals compose
-to one result. There is no state transition, retry, timing rule, recovery
-branch, or per-harness outcome.
+The system has three concepts already present in the code: the two
+operator-only commands, the existing harness-marker vocabulary, and stdin TTY
+state. Two refusal signals compose to one result. There is no state transition,
+retry, timing rule, recovery branch, or per-harness outcome.
 
-One public CLI check is the authoritative behavior. The aitty runtime check is
-its existing sibling policy, and the Claude hook is explicitly defense in
-depth. This is the smallest model that produces the same result in both
-supported harnesses while preserving normal operator use.
+One public CLI check is the authoritative behavior, and the aitty runtime check
+is its existing sibling policy. This is the smallest model that produces the
+same result in both supported harnesses while preserving normal operator use.
 
 ## Tests
 
 Keep permanent coverage small and behavioral:
 
-1. A PTY fixture with no harness markers reaches the existing resume selector
+1. A PTY fixture created with macOS `script -q /dev/null`, with the listed
+   harness markers removed through `env -u`, reaches the public resume selector
    and uninstall confirmation, then cancels without launching or mutating.
 2. Claude-marked invocations of both commands exit 2 before the selector or
    prompt and print the operator boundary.
 3. Codex-marked invocations of both commands have the same exit and ordering.
 4. A non-TTY invocation with no marker is refused, matching aitty.
-5. The Claude `PreToolUse` fixture blocks executable forms of both commands but
-   permits `ait help ...`, documentation reads, quoted prose, and unrelated
-   later arguments.
-6. Existing aitty runtime tests pass with explicit Claude and Codex markers.
+5. Existing aitty runtime tests pass with explicit Claude and Codex markers.
+6. The uninstall suite still covers confirmation, cancellation, ownership, and
+   cleanup through `bin/uninstall.sh` without bypassing the public CLI in
+   production.
 7. Removing the public CLI check makes the Claude and Codex cases fail.
 
 The release oracle runs both commands from a normal terminal far enough to see
@@ -165,8 +155,10 @@ reviewer verifies the released behavior, and #30 links the evidence.
   flow. It adds machinery without constraining an already trusted process.
 - Rejected: Claude-only hooks. They do not cover Codex; the public CLI is the
   common point.
-- Rejected: hooks as the only control. They are deliberately bypassable defense
-  in depth and cannot provide the cross-harness result.
+- Rejected: duplicating the public check in the Claude Bash hook. That hook is
+  configured only in this repository and its message lands on the same tool
+  result as the public CLI refusal; it adds a regex without another user
+  outcome.
 - Rejected: blocking every management command. The demonstrated concern is
   limited to resume, uninstall, and aitty's cross-handle operator identity.
 - Rejected: exhaustive private-path blocking. That turns a misuse nudge into an
@@ -178,7 +170,8 @@ reviewer verifies the released behavior, and #30 links the evidence.
 - `bin/uninstall.sh:27-79`, ownership, active-session, and confirmation checks.
 - `mcp/src/aitty/main.ts:96-142`, existing marker and TTY refusal.
 - `docs/aitty.md:126-141`, the nudge-not-wall contract.
-- `bin/guard-bash.sh:78-125`, Claude-side aitty invocation guard.
+- `bin/ait-uninstall-test.sh:103-107,142`, existing confirmation fixtures that
+  currently reach uninstall through piped or redirected stdin.
 - [Issue #30](https://github.com/natewalton/ait-protocol/issues/30) and operator
   direction on 2026-09-04: reuse the working aitty/Claude friction model, cover
   Claude and Codex equally, and do not pretend to sandbox a full-privilege

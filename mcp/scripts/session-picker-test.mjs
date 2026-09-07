@@ -47,21 +47,31 @@ const writeExecutable = (name) => {
 }
 
 const liveFile = path.join(root, 'live-handles.json')
+const concurrencyFile = path.join(root, 'presence-concurrency')
 const appviewServerFile = path.join(root, 'appview-server.mjs')
 write(liveFile, '[]')
+write(concurrencyFile, '0')
 write(appviewServerFile, `
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
-const [liveFile, ...handles] = process.argv.slice(2)
+const [liveFile, concurrencyFile, ...handles] = process.argv.slice(2)
+let active = 0
+let peak = 0
 const server = createServer((request, response) => {
+  active += 1
+  peak = Math.max(peak, active)
+  writeFileSync(concurrencyFile, String(peak))
   const url = new URL(request.url, 'http://localhost')
   const query = (url.searchParams.get('q') ?? '').toLowerCase()
   const live = new Set(JSON.parse(readFileSync(liveFile, 'utf8')))
   const actors = handles
     .filter((handle) => handle.startsWith(query))
     .map((handle) => ({ did: 'did:plc:fixture', handle, live: live.has(handle) }))
-  response.setHeader('content-type', 'application/json')
-  response.end(JSON.stringify({ actors }))
+  setTimeout(() => {
+    response.setHeader('content-type', 'application/json')
+    response.end(JSON.stringify({ actors }))
+    active -= 1
+  }, 15)
 })
 server.listen(0, '127.0.0.1', () => {
   process.stdout.write(String(server.address().port) + '\\n')
@@ -69,7 +79,7 @@ server.listen(0, '127.0.0.1', () => {
 `)
 const appviewServer = spawn(
   process.execPath,
-  [appviewServerFile, liveFile, claudeHandle, codexHandle],
+  [appviewServerFile, liveFile, concurrencyFile, claudeHandle, codexHandle],
   { stdio: ['ignore', 'pipe', 'inherit'] },
 )
 const appviewPort = await new Promise((resolve, reject) => {
@@ -158,6 +168,8 @@ const assertSelection = (result, expectedHarness, expectedProject, expectedId) =
 
 let result = run(codexHandle)
 assertSelection(result, 'codex', codexProject, codexId)
+assert.equal(fs.readFileSync(concurrencyFile, 'utf8'), '1',
+  'presence checks must not overlap')
 result = run(claudeHandle)
 assertSelection(result, 'claude', claudeProject, claudeId)
 result = run(claudeId)

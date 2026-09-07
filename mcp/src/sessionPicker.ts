@@ -223,34 +223,25 @@ async function codexSessions(): Promise<ResumableSession[]> {
 
 export async function discoverSessions(): Promise<SessionDiscovery> {
   const sessions = [ ...(await claudeSessions()), ...(await codexSessions()) ]
-  const liveHandles = new Set(
-    (
-      await Promise.all(
-        [...new Set(sessions.map((session) => session.handle.toLocaleLowerCase()))].map(
-          async (handle) => {
-            const url = new URL('/xrpc/ait.actor.searchActors', APPVIEW_URL)
-            url.searchParams.set('q', handle)
-            url.searchParams.set('limit', '100')
-            let response: Response
-            try {
-              response = await fetch(url)
-            } catch {
-              throw new Error('could not check which AIT sessions are live; run: ait start')
-            }
-            if (!response.ok) {
-              throw new Error('could not check which AIT sessions are live; run: ait start')
-            }
-            const body = (await response.json()) as { actors?: ActorBasic[] }
-            return body.actors?.some(
-              (actor) => actor.handle.toLocaleLowerCase() === handle && actor.live,
-            )
-              ? handle
-              : null
-          },
-        ),
-      )
-    ).filter((handle): handle is string => handle !== null),
-  )
+  const liveHandles = new Set<string>()
+  for (const handle of new Set(sessions.map((session) => session.handle.toLocaleLowerCase()))) {
+    const url = new URL('/xrpc/ait.actor.searchActors', APPVIEW_URL)
+    url.searchParams.set('q', handle)
+    url.searchParams.set('limit', '100')
+    let response: Response
+    try {
+      response = await fetch(url)
+    } catch {
+      throw new Error('could not check which AIT sessions are live; run: ait start')
+    }
+    if (!response.ok) {
+      throw new Error('could not check which AIT sessions are live; run: ait start')
+    }
+    const body = (await response.json()) as { actors?: ActorBasic[] }
+    if (body.actors?.some(
+      (actor) => actor.handle.toLocaleLowerCase() === handle && actor.live,
+    )) liveHandles.add(handle)
+  }
   const sorted = sessions.sort(
     (a, b) => b.modifiedAt - a.modifiedAt || a.handle.localeCompare(b.handle),
   )

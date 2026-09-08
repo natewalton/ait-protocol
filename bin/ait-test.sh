@@ -495,6 +495,46 @@ assert_contains "$init_output" "Project: ✓ AIT enabled"
 assert_file "$status_fixture/project dir/.mcp.json"
 pass "explicit project init preserves the native boundary"
 
+# The repository's pre-CLI configuration intentionally resolves its own MCP
+# build through CLAUDE_PROJECT_DIR so Git worktrees load the matching source.
+# It is ready only within the same repository; copying that expression into an
+# unrelated project must remain a conflict.
+legacy_root="$AIT_FAKE_MCP_ROOT"
+git init -q "$legacy_root"
+legacy_config="$legacy_root/.mcp.json"
+printf '{"mcpServers":{"ait-protocol":{"command":"node","args":["--enable-source-maps","${CLAUDE_PROJECT_DIR:-%s}/mcp/dist/server.js"],"env":{"PDS_URL":"http://localhost:2583"}}}}\n' \
+  "$legacy_root" > "$legacy_config"
+legacy_hash_before="$(shasum -a 256 "$legacy_config" | awk '{print $1}')"
+set +e
+legacy_init_output="$("$status_fixture/ait" init "$status_fixture" 2>&1)"
+legacy_init_status=$?
+set -e
+[ "$legacy_init_status" -eq 0 ] || fail "legacy project init exited $legacy_init_status: $legacy_init_output"
+assert_contains "$legacy_init_output" "Project: ✓ AIT enabled"
+assert_same "$legacy_hash_before" "$(shasum -a 256 "$legacy_config" | awk '{print $1}')"
+set +e
+legacy_launch_output="$(cd "$status_fixture" && "$status_fixture/bin/install.sh" --launch claude --resume not-a-uuid 2>&1)"
+legacy_launch_status=$?
+set -e
+[ "$legacy_launch_status" -eq 2 ] || fail "legacy project launch stopped at status $legacy_launch_status"
+assert_contains "$legacy_launch_output" "private Claude launcher requires an exact conversation UUID"
+assert_not_contains "$legacy_launch_output" "run ait init"
+
+legacy_foreign="$TMP_ROOT/legacy-foreign"
+mkdir -p "$legacy_foreign"
+git init -q "$legacy_foreign"
+printf '{"mcpServers":{"ait-protocol":{"command":"node","args":["--enable-source-maps","${CLAUDE_PROJECT_DIR:-%s}/mcp/dist/server.js"]}}\n' \
+  "$legacy_root" > "$legacy_foreign/.mcp.json"
+foreign_hash_before="$(shasum -a 256 "$legacy_foreign/.mcp.json" | awk '{print $1}')"
+set +e
+legacy_foreign_output="$("$status_fixture/ait" init "$legacy_foreign" 2>&1)"
+legacy_foreign_status=$?
+set -e
+[ "$legacy_foreign_status" -ne 0 ] || fail "foreign legacy expression unexpectedly succeeded"
+assert_contains "$legacy_foreign_output" "conflicting ait-protocol"
+assert_same "$foreign_hash_before" "$(shasum -a 256 "$legacy_foreign/.mcp.json" | awk '{print $1}')"
+pass "pre-CLI repository config is ready without weakening foreign conflicts"
+
 conflict_project="$TMP_ROOT/conflict-project"
 mkdir -p "$conflict_project"
 printf '{"mcpServers":{"ait-protocol":{"command":"wrong","args":["unchanged"]}}}\n' > "$conflict_project/.mcp.json"

@@ -387,17 +387,27 @@ resolve_project() {
 }
 
 config_state() {
-  local project="$1"
+  local project="$1" project_common repo_common legacy_allowed=0
   [ -f "$project/.mcp.json" ] || { echo missing; return; }
-  node - "$project/.mcp.json" "$REPO/mcp/dist/server.js" <<'NODE'
+  if project_common="$(git -C "$project" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" &&
+     repo_common="$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" &&
+     [ "$project_common" = "$repo_common" ]; then
+    legacy_allowed=1
+  fi
+  node - "$project/.mcp.json" "$REPO/mcp/dist/server.js" "$legacy_allowed" "$REPO" <<'NODE'
 const fs = require('fs');
-const [file, expected] = process.argv.slice(2);
+const [file, expected, legacyAllowed, repo] = process.argv.slice(2);
 try {
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
   const entry = data?.mcpServers?.['ait-protocol'];
+  const legacy = `\${CLAUDE_PROJECT_DIR:-${repo}}/mcp/dist/server.js`;
   if (!entry) console.log('missing');
   else if (entry.command === 'node' &&
-           JSON.stringify(entry.args) === JSON.stringify(['--enable-source-maps', expected])) console.log('exact');
+           Array.isArray(entry.args) &&
+           entry.args.length === 2 &&
+           entry.args[0] === '--enable-source-maps' &&
+           (entry.args[1] === expected ||
+            (legacyAllowed === '1' && entry.args[1] === legacy))) console.log('ready');
   else console.log('conflict');
 } catch (error) {
   console.log('conflict');
@@ -436,13 +446,13 @@ init_project() {
   if command -v claude >/dev/null 2>&1; then
     state="$(config_state "$project")"
     case "$state" in
-      exact) ;;
+      ready) ;;
       missing)
         if ! (cd "$project" && claude mcp add --scope project ait-protocol -- node --enable-source-maps "$REPO/mcp/dist/server.js"); then
           echo "error: Claude native project configuration failed" >&2
           return 1
         fi
-        [ "$(config_state "$project")" = exact ] || { echo "error: Claude project entry after add is not exact" >&2; return 1; }
+        [ "$(config_state "$project")" = ready ] || { echo "error: Claude project entry after add is not ready" >&2; return 1; }
         ;;
       conflict)
         echo "error: conflicting ait-protocol entry in $project/.mcp.json" >&2
@@ -480,7 +490,7 @@ launch_harness() {
   "$REPO/bin/status.sh" --check-core >/dev/null 2>&1 || { echo "error: AIT core is not healthy; run: ait start" >&2; return 1; }
   [ -f "$REPO/mcp/dist/server.js" ] || { echo "error: built MCP missing; run: ait start" >&2; return 1; }
   if [ "$kind" = "claude" ]; then
-    [ "$(config_state "$PWD")" = exact ] || { echo "error: run ait init in this project first" >&2; return 1; }
+    [ "$(config_state "$PWD")" = ready ] || { echo "error: run ait init in this project first" >&2; return 1; }
   fi
   exec "$REPO/bin/$kind-session.sh" "$@"
 }

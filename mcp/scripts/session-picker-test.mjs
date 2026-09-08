@@ -292,26 +292,66 @@ for (const query of ['nested-session.test', 'malformed-session.test', 'missing-p
 }
 
 // One real PTY regression synchronizes on each prompt, sends Ctrl-C, and
-// captures the selector child's status inside the PTY shell.
+// proves the selector is gone before the PTY shell continues. Merely observing
+// status 130 is insufficient: Bash can continue after its command-substitution
+// child handles SIGINT while that Node process still owns the terminal.
 const ptyScript = path.join(root, 'cancel-prompt.exp')
 write(ptyScript, `
 set timeout -1
-spawn -noecho /bin/bash -c $env(AIT_PTY_COMMAND)
+spawn -noecho /bin/zsh -f
+expect "% "
+send "PS1='AIT_TEST_SHELL> '\\r"
+expect "AIT_TEST_SHELL> "
+send "$env(AIT_PTY_COMMAND)\\r"
+expect -exact $env(AIT_PTY_PROMPT)
+send "\\003"
+set status_seen 0
+set cancel_seen 0
 expect {
-  -exact $env(AIT_PTY_PROMPT) {
-    send "\\003"
+  -exact "resume cancelled; no harness was started" {
+    set cancel_seen 1
     exp_continue
   }
-  -exact "SELECTOR_CHILD_STATUS=130" { exit 0 }
+  -exact "AIT_TEST_SHELL> " {
+    if {$cancel_seen == 0} { exit 1 }
+    after 200
+    send "$env(AIT_PTY_VERIFY)\\r"
+    exp_continue
+  }
+  -exact "SELECTOR_CHILD_STATUS=130" {
+    set status_seen 1
+    exp_continue
+  }
+  -exact "SELECTOR_CHILD_ALIVE=0" {
+    if {$status_seen == 1} { exit 0 }
+    exit 1
+  }
+  -exact "SELECTOR_CHILD_ALIVE=1" { exit 1 }
   eof { exit 1 }
 }
 `)
+const cancelPublicRoot = path.join(root, 'public-cancel-checkout')
+mkdir(path.join(cancelPublicRoot, 'mcp'))
+fs.copyFileSync(path.join(repo, 'ait'), path.join(cancelPublicRoot, 'ait'))
+fs.chmodSync(path.join(cancelPublicRoot, 'ait'), 0o755)
+fs.cpSync(path.join(repo, 'mcp', 'dist'), path.join(cancelPublicRoot, 'mcp', 'dist'), {
+  recursive: true,
+})
+const cancelPicker = path.join(cancelPublicRoot, 'mcp', 'dist', 'sessionPicker.js')
 const ptyCancel = (query, promptText) => {
-  const command = [process.execPath, picker, query].filter(Boolean)
-    .map((part) => JSON.stringify(part)).join(' ') +
-    '; child_status=$?; printf "\\nSELECTOR_CHILD_STATUS=%s\\n" "$child_status"'
+  const command = [path.join(cancelPublicRoot, 'ait'), 'resume', query].filter(Boolean)
+    .map((part) => JSON.stringify(part)).join(' ')
+  const verify = 'child_status=$?; printf "\\nSELECTOR_CHILD_STATUS=%s\\n" "$child_status"' +
+    `; ps -axo command= | awk -v needle=${JSON.stringify(cancelPicker)} ` +
+    `'index($0, needle) && $1 ~ /(^|\\/)node$/ { found=1 } ` +
+    `END { print "SELECTOR_CHILD_ALIVE=" (found ? 1 : 0) }'; exit`
   const result = spawnSync('/usr/bin/expect', [ptyScript], {
-    env: { ...env, AIT_PTY_COMMAND: command, AIT_PTY_PROMPT: promptText },
+    env: {
+      ...env,
+      AIT_PTY_COMMAND: command,
+      AIT_PTY_PROMPT: promptText,
+      AIT_PTY_VERIFY: verify,
+    },
     cwd: root,
     encoding: 'utf8',
   })
@@ -321,10 +361,31 @@ const ptyCancel = (query, promptText) => {
 write(liveFile, '[]')
 let ptyOutput = await ptyCancel('', 'Select a session by number or enter a search:')
 assert.match(ptyOutput, /SELECTOR_CHILD_STATUS=130/)
+assert.match(ptyOutput, /SELECTOR_CHILD_ALIVE=0/)
 assert.match(ptyOutput, /\nresume cancelled; no harness was started/)
 write(liveFile, JSON.stringify([codexHandle]))
 ptyOutput = await ptyCancel(codexHandle, 'Resume it anyway? [y/N]')
 assert.match(ptyOutput, /SELECTOR_CHILD_STATUS=130/)
+assert.match(ptyOutput, /SELECTOR_CHILD_ALIVE=0/)
+assert.match(ptyOutput, /\nresume cancelled; no harness was started/)
+
+// A delayed signal handler makes the public shell boundary deterministic. The
+// outer interactive shell must not redraw its prompt before the selector has
+// printed its cancellation result and terminated.
+write(cancelPicker, `
+process.stdin.resume()
+process.once('SIGINT', () => {
+  setTimeout(() => {
+    process.stderr.write('\\nresume cancelled; no harness was started\\n')
+    process.exitCode = 130
+    process.stdin.pause()
+  }, 250)
+})
+process.stderr.write('FIXTURE_RESUME_PROMPT')
+`)
+ptyOutput = await ptyCancel('', 'FIXTURE_RESUME_PROMPT')
+assert.match(ptyOutput, /SELECTOR_CHILD_STATUS=130/)
+assert.match(ptyOutput, /SELECTOR_CHILD_ALIVE=0/)
 assert.match(ptyOutput, /\nresume cancelled; no harness was started/)
 
 // The same record without its identity is not resumable, and a missing project

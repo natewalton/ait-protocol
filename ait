@@ -412,7 +412,22 @@ case "${1:-help}" in
         echo "error: built session selector is missing; run: npm --prefix '$REPO/mcp' run build" >&2
         exit 1
       }
-      selection="$(node "$selector" "${2:-}")" || exit $?
+      selection_file="$(mktemp "${TMPDIR:-/tmp}/ait-resume-selection.XXXXXX")" || {
+        echo "error: could not create temporary resume selection file" >&2
+        exit 1
+      }
+      cleanup_resume_selection() { rm -f -- "$selection_file"; }
+      trap cleanup_resume_selection EXIT
+      selector_status=0
+      trap ':' INT
+      node "$selector" "${2:-}" > "$selection_file" || selector_status=$?
+      trap - INT
+      if [ "$selector_status" -ne 0 ]; then
+        exit "$selector_status"
+      fi
+      selection="$(<"$selection_file")"
+      cleanup_resume_selection
+      trap - EXIT
       IFS=$'\t' read -r harness project identifier <<< "$selection"
       [ -n "$harness" ] && [ -n "$project" ] && [ -n "$identifier" ] || {
         echo "error: session selector returned no resumable session" >&2

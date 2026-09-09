@@ -1,4 +1,4 @@
 interface:
   display_name: "Delivery Coordination"
-  short_description: "Ship with lean, proportional safeguards"
-  default_prompt: "Use $delivery-coordination to make the smallest useful change, test proportionally, ship it, and verify the real outcome."
+  short_description: "Coordinate delivery without ceremony or drift"
+  default_prompt: "Use $delivery-coordination to keep authority and scope clear, test the supported path proportionally, protect live state, and finish the requested result."

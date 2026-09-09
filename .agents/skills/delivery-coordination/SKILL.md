@@ -5,9 +5,10 @@ description: Ship deployments, persisted-data changes, collectors, and multi-age
 
 # Lean delivery coordination
 
-Keep the process smaller than the work. One owner is the default. Delegate only
-independent work that materially saves time or tokens. Independent review is required
-only for destructive or irreversible persisted-data changes, security/auth
+Keep the process smaller than the work. One owner is the default. Delegate
+independent work when it will probably save time or tokens, or enable useful
+parallel progress. No formal justification or calculation is needed.
+Independent review is required only for destructive or irreversible persisted-data changes, security/auth
 changes, or when the user asks for it.
 
 ## Work

@@ -11,6 +11,9 @@ its artifact or decision boundary is distinct from work already assigned in the
 available request or handoff. Do not poll to reconfirm it. Only one session
 controls each shared artifact or decision at a time.
 
+When AIT is available, coordinate with other sessions through AIT rather than
+spawning local subagents.
+
 Collaboration has the highest value when another session can:
 
 - advance an independent workstream in parallel

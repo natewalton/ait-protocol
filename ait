@@ -298,7 +298,7 @@ invalid_args() {
 refuse_operator_command() {
   local command_name="$1" marker
   case "$command_name" in
-    resume|uninstall) ;;
+    claude|codex|resume|uninstall) ;;
     *) return 0 ;;
   esac
   for marker in CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_ENTRYPOINT \
@@ -466,6 +466,7 @@ case "${1:-help}" in
           exit 2
           ;;
       esac
+      refuse_operator_command "$1"
       exec "$REPO/bin/install.sh" --launch "$1" "${@:2}"
     fi
     ;;

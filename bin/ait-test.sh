@@ -157,7 +157,12 @@ cat > "$operator_fixture/bin/uninstall.sh" <<'EOF'
 #!/bin/bash
 printf '%s\n' 'uninstall script reached' > "$AIT_OPERATOR_CAPTURE"
 EOF
-chmod +x "$operator_fixture/ait" "$operator_fixture/bin/uninstall.sh"
+cat > "$operator_fixture/bin/install.sh" <<'EOF'
+#!/bin/bash
+printf 'launcher reached: %s\n' "$*" > "$AIT_OPERATOR_CAPTURE"
+EOF
+chmod +x "$operator_fixture/ait" "$operator_fixture/bin/install.sh" \
+  "$operator_fixture/bin/uninstall.sh"
 
 run_operator_tty() {
   local command_name="$1" output status
@@ -176,10 +181,14 @@ assert_file "$operator_capture"
 assert_contains "$OPERATOR_OUTPUT" "session selector returned no resumable session"
 run_operator_tty uninstall
 assert_contains "$(cat "$operator_capture")" "uninstall script reached"
-pass "human PTY reaches resume selector and uninstall confirmation path"
+run_operator_tty claude
+assert_contains "$(cat "$operator_capture")" "launcher reached: --launch claude"
+run_operator_tty codex
+assert_contains "$(cat "$operator_capture")" "launcher reached: --launch codex"
+pass "human PTY reaches launch, resume, and uninstall paths"
 
 for marker in CLAUDECODE CODEX_SESSION_ID CODEX_THREAD_ID; do
-  for command_name in resume uninstall; do
+  for command_name in claude codex resume uninstall; do
     rm -f "$operator_capture"
     set +e
     refused_output="$(env -i PATH="$PATH" HOME="$HOME" AIT_OPERATOR_CAPTURE="$operator_capture" \
@@ -192,26 +201,28 @@ for marker in CLAUDECODE CODEX_SESSION_ID CODEX_THREAD_ID; do
     assert_absent "$operator_capture"
   done
 done
-pass "Claude and Codex marker invocations refuse before operator work"
+pass "Claude and Codex marker invocations refuse all operator work"
 
-rm -f "$operator_capture"
-set +e
-non_tty_output="$(env -i PATH="$PATH" HOME="$HOME" AIT_OPERATOR_CAPTURE="$operator_capture" \
-  "$operator_fixture/ait" resume < /dev/null 2>&1)"
-non_tty_status=$?
-set -e
-[ "$non_tty_status" -eq 2 ] || fail "non-TTY resume was not refused"
-assert_contains "$non_tty_output" "without a human terminal"
-assert_contains "$non_tty_output" "not a security boundary"
-assert_absent "$operator_capture"
-pass "non-TTY operator command refuses before selection"
+for command_name in claude codex resume uninstall; do
+  rm -f "$operator_capture"
+  set +e
+  non_tty_output="$(env -i PATH="$PATH" HOME="$HOME" AIT_OPERATOR_CAPTURE="$operator_capture" \
+    "$operator_fixture/ait" "$command_name" < /dev/null 2>&1)"
+  non_tty_status=$?
+  set -e
+  [ "$non_tty_status" -eq 2 ] || fail "non-TTY $command_name was not refused"
+  assert_contains "$non_tty_output" "without a human terminal"
+  assert_contains "$non_tty_output" "not a security boundary"
+  assert_absent "$operator_capture"
+done
+pass "non-TTY operator commands refuse before work"
 
 unguarded="$operator_fixture/ait-unguarded"
-sed '/refuse_operator_command resume/d; /refuse_operator_command uninstall/d' \
+sed '/refuse_operator_command "$1"/d; /refuse_operator_command resume/d; /refuse_operator_command uninstall/d' \
   "$operator_fixture/ait" > "$unguarded"
 chmod +x "$unguarded"
 for marker in CLAUDECODE CODEX_SESSION_ID; do
-  for command_name in resume uninstall; do
+  for command_name in claude codex resume uninstall; do
     rm -f "$operator_capture"
     set +e
     env -i PATH="$PATH" HOME="$HOME" AIT_OPERATOR_CAPTURE="$operator_capture" "$marker=1" \
@@ -222,7 +233,7 @@ for marker in CLAUDECODE CODEX_SESSION_ID; do
     assert_file "$operator_capture"
   done
 done
-pass "removing the public operator check reaches both work paths"
+pass "removing the public operator checks reaches every work path"
 
 make_fixture() {
   local dir="$1" shim="$1/shim" f
@@ -589,7 +600,7 @@ pass "Git HOME root is rejected before writes"
 uninitialized="$TMP_ROOT/uninitialized-project"
 mkdir -p "$uninitialized"
 set +e
-uninitialized_output="$(cd "$uninitialized" && "$status_fixture/ait" claude 2>&1)"
+uninitialized_output="$(cd "$uninitialized" && "$status_fixture/bin/install.sh" --launch claude 2>&1)"
 uninitialized_status=$?
 set -e
 [ "$uninitialized_status" -ne 0 ] || fail "Claude launched without a project entry"
@@ -604,7 +615,8 @@ EOF
 chmod +x "$status_fixture/bin/codex-session.sh"
 codex_capture="$TMP_ROOT/codex-capture"
 set +e
-(cd "$git_project/src" && AIT_CAPTURE="$codex_capture" "$status_fixture/ait" codex "hello world" second)
+(cd "$git_project/src" && AIT_CAPTURE="$codex_capture" \
+  "$status_fixture/bin/install.sh" --launch codex "hello world" second)
 codex_exit=$?
 set -e
 [ "$codex_exit" -eq 7 ] || fail "Codex launcher exit status was not preserved"
@@ -621,7 +633,8 @@ EOF
 chmod +x "$status_fixture/bin/claude-session.sh"
 capture="$TMP_ROOT/claude-capture"
 set +e
-(cd "$status_fixture/project dir" && AIT_CAPTURE="$capture" "$status_fixture/ait" claude "hello world" second)
+(cd "$status_fixture/project dir" && AIT_CAPTURE="$capture" \
+  "$status_fixture/bin/install.sh" --launch claude "hello world" second)
 launch_exit=$?
 set -e
 [ "$launch_exit" -eq 7 ] || fail "Claude launcher exit status was not preserved"

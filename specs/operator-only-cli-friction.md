@@ -1,18 +1,20 @@
-# Keep operator-only AIT commands out of agent sessions
+# Keep operator-only AIT session lifecycle out of agent sessions
 
-Status: shipped in [AIT v0.1.12](https://github.com/natewalton/ait-protocol/releases/tag/v0.1.12),
-2026-09-04. Tracked by [#30](https://github.com/natewalton/ait-protocol/issues/30).
+Status: extended in AIT v0.1.20 on 2026-09-09. The original `resume`,
+`uninstall`, and `aitty` boundary shipped in
+[AIT v0.1.12](https://github.com/natewalton/ait-protocol/releases/tag/v0.1.12)
+and is tracked by [#30](https://github.com/natewalton/ait-protocol/issues/30).
 
 ## Outcome
 
-A human can still run `ait resume`, `ait uninstall`, and `aitty` from an
-interactive terminal. Claude and Codex sessions receive the same clear refusal
-before those operator-only clients select another session, prompt for an
-uninstall, or mutate anything.
+A human can still run `ait claude`, `ait codex`, `ait resume`, `ait uninstall`,
+and `aitty` from an interactive terminal. Claude and Codex sessions receive the
+same clear refusal before those operator-only clients launch or resume another
+session, prompt for an uninstall, or mutate anything.
 
-The visible change is on the terminal surface: a human sees the existing resume
-selector or uninstall confirmation, while a Claude or Codex session sees the
-public CLI refusal on stderr in its shell-tool result.
+The visible change is on the terminal surface: a human reaches the existing
+launcher, resume selector, or uninstall confirmation, while a Claude or Codex
+session sees the public CLI refusal on stderr in its shell-tool result.
 
 This is intentional friction against accidental identity borrowing or machine
 administration. It is not a security boundary against a process that already
@@ -31,6 +33,12 @@ ownership and active sessions and requires the literal confirmation
 `uninstall AIT` (`bin/uninstall.sh:27-79`), but an agent should be refused by
 the public CLI before it reaches those steps.
 
+The same boundary must cover `ait claude` and `ait codex`. A session using
+either command creates another top-level harness process, but functionally it
+has created and directed a subordinate collaborator. That bypasses the
+coordination contract's instruction to collaborate with existing AIT sessions
+and leaves session lifecycle under agent control rather than the user's.
+
 AIT already uses the appropriate control for the comparable `aitty` operator
 client. `refuseWhenDrivenByAnAgent()` refuses known harness markers or stdin
 without a TTY, explains the boundary, and explicitly calls itself a deterrent
@@ -43,32 +51,31 @@ Claude markers, `AI_AGENT`, and `AIT_SESSION_ID`, but not the two explicit
 Codex markers (`mcp/src/aitty/main.ts:99-105`). The public CLI has no equivalent
 operator-terminal check.
 
-The crude version is sufficient: copy aitty's two-signal decision into the
-public shell dispatcher for the two affected commands and add the missing Codex
-marker names to aitty. No stronger authority exists at this layer, so more
-machinery would not make the boundary more truthful.
+The crude version is sufficient: apply the public dispatcher's existing
+two-signal decision to the four affected commands. No stronger authority exists
+at this layer, so more machinery would not make the boundary more truthful.
 
 ## What changes
 
-Add one small shell function in the public `ait` dispatcher. Before dispatching
-`resume` or `uninstall`, it accepts only when stdin is a TTY and none of these
-supported-harness markers is set:
+The public `ait` dispatcher already has one small shell function for this
+boundary. Before dispatching `claude`, `codex`, `resume`, or `uninstall`, it
+accepts only when stdin is a TTY and none of these supported-harness markers is
+set:
 
 - Claude: `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`,
   `CLAUDE_CODE_ENTRYPOINT`;
 - Codex: `CODEX_SESSION_ID`, `CODEX_THREAD_ID`, `AIT_SESSION_ID`;
 - shared: `AI_AGENT`.
 
-Otherwise it exits 2 before selection, launch, confirmation, or mutation. The
+Otherwise it exits 2 before launch, selection, confirmation, or mutation. The
 message says the command is for the human operator and that this check deters
-accidental use rather than securing a full-privilege shell. For `resume`, it
-also tells the session to ask the operator to run the command. For `uninstall`,
-it tells the session to ask the operator to confirm and run it.
+accidental use rather than securing a full-privilege shell, and tells the
+session to ask the operator to run the command.
 
-An existing automation that drives `ait resume` or `ait uninstall` without a
-TTY will stop working and receive that refusal. This is intentional: both
-commands require a human choice or confirmation. Other commands and ordinary
-human terminals are unchanged.
+Help and the migration errors for removed public resume flags remain available
+before the launch check. An automation that drives any of the four commands
+without a TTY will receive the refusal. Other commands and ordinary human
+terminals are unchanged.
 
 Use the same explicit marker vocabulary in aitty's existing runtime check.
 Its policy and TTY behavior do not otherwise change.
@@ -78,28 +85,25 @@ or harness-specific execution path.
 
 ## Files
 
-Five files are expected:
+Six files are expected:
 
-1. `ait` adds the operator-terminal check and calls it only for `resume` and
-   `uninstall` before either command performs work.
-2. `mcp/src/aitty/main.ts` adds the explicit Codex marker names to the existing
-   runtime policy.
-3. `bin/ait-test.sh` covers public CLI behavior without launching or
-   uninstalling anything.
-4. `bin/ait-uninstall-test.sh` exercises uninstall implementation behavior by
-   calling `bin/uninstall.sh` directly instead of routing its piped confirmation
-   fixtures through the now-interactive public command.
-5. `README.md` names `resume`, `uninstall`, and aitty as human-operator
-   surfaces and accurately describes the check as friction, not security.
+1. `ait` applies its existing operator-terminal check to `claude` and `codex`
+   before either launcher performs work.
+2. `.agents/skills/delivery-coordination/SKILL.md` directs sessions to existing
+   collaborators rather than launching or resuming more sessions.
+3. `bin/ait-test.sh` covers the four public commands with fixture launchers and
+   no real harness or uninstall action.
+4. `README.md` names all four commands and aitty as human-operator surfaces.
+5. `VERSION` identifies the patch release.
+6. This spec records the extended boundary.
 
-The five-file spread reflects three existing consumers in two languages plus
-their behavioral tests and public documentation. It introduces one policy, not
-five mechanisms.
+The extension changes one existing policy at one dispatch point. It adds no
+second mechanism.
 
 ## Why this stays small
 
-The system has three concepts already present in the code: the two
-operator-only commands, the existing harness-marker vocabulary, and stdin TTY
+The system has three concepts already present in the code: operator-only session
+lifecycle commands, the existing harness-marker vocabulary, and stdin TTY
 state. Two refusal signals compose to one result. There is no state transition,
 retry, timing rule, recovery branch, or per-harness outcome.
 
@@ -111,23 +115,18 @@ same result in both supported harnesses while preserving normal operator use.
 
 Keep permanent coverage small and behavioral:
 
-1. A PTY fixture created with macOS `script -q /dev/null`, with the listed
-   harness markers removed through `env -u`, reaches the public resume selector
-   and uninstall confirmation, then cancels without launching or mutating.
-2. Claude-marked invocations of both commands exit 2 before the selector or
-   prompt and print the operator boundary.
-3. Codex-marked invocations of both commands have the same exit and ordering.
-4. A non-TTY invocation with no marker is refused, matching aitty.
-5. Existing aitty runtime tests pass with explicit Claude and Codex markers.
-6. The uninstall suite still covers confirmation, cancellation, ownership, and
-   cleanup through `bin/uninstall.sh` without bypassing the public CLI in
-   production.
-7. Removing the public CLI check makes the Claude and Codex cases fail.
+1. A marker-free PTY fixture reaches both harness launchers, the resume selector,
+   and the uninstall implementation without launching or mutating anything.
+2. Claude- and Codex-marked invocations of all four commands exit 2 before work
+   and print the operator boundary.
+3. Non-TTY invocations of all four commands receive the same refusal.
+4. Help and removed-resume-flag guidance remain reachable without launching.
+5. Removing the public checks makes the marker cases reach their fixture work,
+   proving the assertions cover the dispatch boundary.
 
-The release oracle runs both commands from a normal terminal far enough to see
-the selector or confirmation, then cancels. One real Claude session and one
-real Codex session each attempt both commands and receive the refusal. No
-identity is resumed and no installation is removed during the oracle.
+The release oracle verifies the refusal from the current session and verifies
+the normal launch path through an isolated PTY fixture. It does not start a real
+harness, resume an identity, or remove an installation.
 
 ## Out of scope
 
@@ -144,10 +143,10 @@ identity is resumed and no installation is removed during the oracle.
 ## Rollout and completion
 
 Ship as a normal patch release. No migration or service restart is required.
-Done means the immutable release is installed, a normal human terminal still
-reaches both operator flows, real Claude and Codex sessions receive the same
-refusal before work, aitty's existing protection still works, the controlling
-reviewer verifies the released behavior, and #30 links the evidence.
+Done means the immutable release is published, a normal human terminal still
+reaches the four operator flows in isolated fixtures, and a harness-marked
+session receives the refusal before launcher work. No service restart is
+required.
 
 ## Rejected options
 
@@ -160,13 +159,17 @@ reviewer verifies the released behavior, and #30 links the evidence.
   result as the public CLI refusal; it adds a regex without another user
   outcome.
 - Rejected: blocking every management command. The demonstrated concern is
-  limited to resume, uninstall, and aitty's cross-handle operator identity.
+  limited to session launch and resume, uninstall, and aitty's cross-handle
+  operator identity.
+- Rejected: treating `ait claude` and `ait codex` as acceptable because the
+  resulting process is technically top-level. The practical behavior is still
+  a session creating and directing a subordinate collaborator.
 - Rejected: exhaustive private-path blocking. That turns a misuse nudge into an
   unwinnable same-user sandbox.
 
 ## Sources
 
-- `ait:377-404`, public resume and uninstall dispatch.
+- `ait:298-318,403-468`, public operator check and session dispatch.
 - `bin/uninstall.sh:27-79`, ownership, active-session, and confirmation checks.
 - `mcp/src/aitty/main.ts:96-142`, existing marker and TTY refusal.
 - `docs/aitty.md:126-141`, the nudge-not-wall contract.

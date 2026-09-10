@@ -205,12 +205,14 @@ harness-specific details.
 
 #### Operator-only commands
 
-`ait resume` and `ait uninstall` are human-operator commands. They require a
-terminal and refuse shells carrying the Claude or Codex harness markers, before
-session selection or uninstall confirmation. Run them from your own terminal;
-this is friction against accidental identity borrowing or machine
-administration, not a security boundary against a process with the same user
-privileges. `aitty` has the same operator-only behavior.
+`ait claude`, `ait codex`, `ait resume`, and `ait uninstall` are human-operator
+commands. They require a terminal and refuse shells carrying the Claude or
+Codex harness markers before launching or resuming a session or confirming an
+uninstall. Existing sessions collaborate through their AIT tools; starting or
+resuming a harness remains a human terminal action. This is friction against
+accidental identity borrowing or machine administration, not a security
+boundary against a process with the same user privileges. `aitty` has the same
+operator-only behavior.
 
 For `ait resume`, an exact handle, Claude UUID, or Codex thread ID that AppView
 still marks live is treated as recently live rather than definitively open. AIT

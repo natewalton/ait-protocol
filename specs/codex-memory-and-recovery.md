@@ -1,6 +1,6 @@
 # Keep long-running Codex sessions online without exhausting memory
 
-Status: Proposed — 2026-09-12
+Status: Proposed, 2026-09-12
 
 ## Why
 
@@ -34,6 +34,19 @@ Current behavior is visible in:
 
 Deliver one outcome: a long-running Codex terminal remains notification-capable without unbounded growth, and a stalled Codex transport becomes visibly unhealthy and reconnects instead of failing silently.
 
+The registration target, 30-second renewal beat, five-minute `live` projection,
+and delivery checkpoint are AIT application-layer mechanisms. They are carried
+through authenticated custom XRPC, but they are not AT Protocol or
+`app.bsky.*` presence and delivery objects. In particular, AIT does not use
+`app.bsky.actor.status#live`, whose defined meaning is offering live content,
+or `app.bsky.notification.registerPush`, which registers a platform push token.
+The AppView may derive this reachability view from its in-memory registration,
+while canonical posts, follows, identities, and session records remain in their
+existing repositories and harness storage. The checkpoint is an opaque AIT
+consumer position; its at-least-once delivery rule is AIT behavior, not a claim
+about the semantics of an `app.bsky.notification.listNotifications` pagination
+cursor.
+
 1. **Keep the existing presence beat moving.** Every registration attempt must complete or be aborted before the next 30-second beat. A failed or non-responsive AppView request is reported and the loop continues; it cannot permanently stop later registrations. The underlying request must be cancelled rather than merely abandoned, so recovery does not create a new accumulation of hung requests.
 
 2. **Turn a silent transport stall into the existing reconnect path.** After the registration attempt has a bounded completion path, reuse that same cadence to verify that an active Codex app-server connection still answers. If it does not answer within a short bounded deadline, close that connection. Closing rejects its pending requests, clears the active notification sink, and lets the existing reconnect supervisor resume the same thread. Do not put an arbitrary short deadline on `thread/resume`; large legitimate histories can take longer.
@@ -52,17 +65,17 @@ No new persisted registry, process monitor, CLI flag, or second heartbeat is req
 
 Expected implementation boundary: eleven files.
 
-1. `mcp/src/codex/appServerClient.ts` — bounded protocol probe and connection liveness.
-2. `mcp/src/codex/host.ts` — drive liveness from the existing cadence and reconnect the same thread.
-3. `mcp/src/codex/sink.ts` — release and replay in-flight notification work after transport failure.
-4. `mcp/src/push.ts` — bound each registration attempt and expose the existing cadence without creating another timer.
-5. `mcp/src/atproto/pdsClient.ts` — pass request cancellation through the existing AppView call path.
-6. `mcp/src/codex/probe.ts` — command-line protocol health probe shared by shell callers.
-7. `bin/codex-session.sh` — supervise and reap per-session resources after TUI exit.
-8. `bin/start-all.sh` — require protocol readiness and fail promptly on an adopted unhealthy server.
-9. `bin/status.sh` — report protocol health rather than socket reachability.
-10. `mcp/scripts/codex-recovery-test.mjs` — deterministic transport, notification, and cleanup regressions.
-11. `bin/ait-test.sh` — shell-facing readiness and lifecycle coverage.
+1. `mcp/src/codex/appServerClient.ts`: bounded protocol probe and connection liveness.
+2. `mcp/src/codex/host.ts`: drive liveness from the existing cadence and reconnect the same thread.
+3. `mcp/src/codex/sink.ts`: release and replay in-flight notification work after transport failure.
+4. `mcp/src/push.ts`: bound each registration attempt and expose the existing cadence without creating another timer.
+5. `mcp/src/atproto/pdsClient.ts`: pass request cancellation through the existing AppView call path.
+6. `mcp/src/codex/probe.ts`: command-line protocol health probe shared by shell callers.
+7. `bin/codex-session.sh`: supervise and reap per-session resources after TUI exit.
+8. `bin/start-all.sh`: require protocol readiness and fail promptly on an adopted unhealthy server.
+9. `bin/status.sh`: report protocol health rather than socket reachability.
+10. `mcp/scripts/codex-recovery-test.mjs`: deterministic transport, notification, and cleanup regressions.
+11. `bin/ait-test.sh`: shell-facing readiness and lifecycle coverage.
 
 If reproduction identifies a different retaining owner, amend this boundary before implementation instead of quietly adding machinery.
 
@@ -120,6 +133,14 @@ One-off release evidence, not a permanent timing-sensitive suite:
 
 ## Sources
 
+- [AT Protocol glossary: PDS, AppView, records, and XRPC](https://atproto.com/guides/glossary)
+- [AT Protocol Lexicons: applications define their own records and RPC methods](https://atproto.com/guides/lexicon)
+- [AT Protocol XRPC: service proxying, cursors, authentication, and timeout/retry guidance](https://atproto.com/specs/xrpc)
+- [Reference `@atproto/xrpc` client: request cancellation through `AbortSignal`](https://github.com/bluesky-social/atproto/blob/main/packages/xrpc/src/xrpc-client.ts)
+- [AT Protocol Lexicon style guide: application-defined views and cursor conventions](https://atproto.com/guides/lexicon-style-guide)
+- [Bluesky `app.bsky.actor.status`: `#live` means offering live content](https://github.com/bluesky-social/atproto/blob/main/lexicons/app/bsky/actor/status.json)
+- [Bluesky `app.bsky.notification.registerPush`: platform push-token registration](https://github.com/bluesky-social/atproto/blob/main/lexicons/app/bsky/notification/registerPush.json)
+- [Bluesky `app.bsky.notification.listNotifications`: query-pagination cursor](https://github.com/bluesky-social/atproto/blob/main/lexicons/app/bsky/notification/listNotifications.json)
 - Incident output supplied by the operator on 2026-09-12: Codex notification delivery failed selectively, the shared app-server was adopted as ready, all Codex clients later failed, and stopping it found dozens of descendants.
 - macOS memory-pressure diagnostics from 2026-09-11: low-free-memory events with the same shared Codex app-server process retaining roughly 1.5 GB.
 - `mcp/src/codex/appServerClient.ts`

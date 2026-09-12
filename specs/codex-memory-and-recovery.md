@@ -24,40 +24,49 @@ Current behavior is visible in:
 - `mcp/src/codex/appServerClient.ts:85-123,297-316`: opening and JSON-RPC requests have no bounded liveness failure; pending requests reject only after the socket closes.
 - `mcp/src/codex/host.ts:113-124,131-227`: presence renewal depends on `activeSink`, which is cleared only after the current app-server lifecycle returns.
 - `mcp/src/codex/sink.ts:80-88,115-178`: notification delivery keeps one asynchronous pump marked as sending until its app-server request settles.
+- `mcp/src/push.ts:84-90` and `mcp/src/atproto/pdsClient.ts:206-216`: the 30-second registration loop awaits an AppView request with no deadline. One connected request that never answers stops every later registration beat, so presence expires.
 - `bin/codex-session.sh:99-144`: the wrapper checks its background driver during startup, then attaches the foreground TUI without supervising later driver health; driver output remains in a temporary log.
 - `bin/start-all.sh:50-108` and `bin/status.sh:22-35,55-59`: Codex app-server health is a successful raw Unix-socket connection, not a successful app-server handshake.
+- `bin/update.sh:69-78`: update accepts only `running`, `unreachable`, or `skipped` as the Codex service state; a new health result must be handled explicitly or the updater rejects it as unknown.
 - `bin/stop-codex-appserver.sh:2-16`: prior incidents already required cleanup of unreachable shared servers and long-lived descendants.
 
 ## Proposed work
 
 Deliver one outcome: a long-running Codex terminal remains notification-capable without unbounded growth, and a stalled Codex transport becomes visibly unhealthy and reconnects instead of failing silently.
 
-1. **Use protocol health for the shared app-server.** Add one small probe that opens the Unix-socket WebSocket, completes the Codex `initialize` exchange within a bounded deadline, and closes. `ait start` must not print `codex-appserver ready` until this succeeds. `ait status` must report a protocol-unhealthy server separately from a missing socket.
+1. **Keep the existing presence beat moving.** Every registration attempt must complete or be aborted before the next 30-second beat. A failed or non-responsive AppView request is reported and the loop continues; it cannot permanently stop later registrations. The underlying request must be cancelled rather than merely abandoned, so recovery does not create a new accumulation of hung requests.
 
-2. **Turn a silent transport stall into the existing reconnect path.** Reuse the existing 30-second registration cadence to verify that an active Codex app-server connection still answers. If it does not answer within a short bounded deadline, close that connection. Closing rejects its pending requests, clears the active notification sink, and lets the existing reconnect supervisor resume the same thread. Do not put an arbitrary short deadline on `thread/resume`; large legitimate histories can take longer.
+2. **Turn a silent transport stall into the existing reconnect path.** After the registration attempt has a bounded completion path, reuse that same cadence to verify that an active Codex app-server connection still answers. If it does not answer within a short bounded deadline, close that connection. Closing rejects its pending requests, clears the active notification sink, and lets the existing reconnect supervisor resume the same thread. Do not put an arbitrary short deadline on `thread/resume`; large legitimate histories can take longer.
 
 3. **Make notification retry state releasable.** When the client closes, an in-flight sink request must reject, return its batch to the queue, and release the `sending` state. Re-registration after reconnect then replays from the committed cursor. The AppView must not advance a cursor merely because it accepted the HTTP delivery.
 
-4. **Reap resources owned by an exited Codex session.** When the foreground TUI exits, stop and wait for that session's driver and any per-session relay before the wrapper exits. Do not stop the shared app-server or another live session. The driver must close its push listener and app-server connection on termination.
+4. **Use protocol health for the shared app-server.** Add one small probe that opens the Unix-socket WebSocket, completes the Codex `initialize` exchange within a bounded deadline, and closes. `ait start` must not print `codex-appserver ready` until this succeeds. A process that has not bound its socket may retain the current wait behavior; once a socket is bound, a failed bounded handshake makes `ait start` return nonzero promptly whether the process was adopted or newly launched. `ait status` reports that server as `protocol-unhealthy` and exits nonzero rather than calling it ready.
 
-5. **Measure the retaining owner before adding containment.** In an isolated home, repeat start/resume/exit cycles while recording the shared server's descendants and resident memory after quiescence. Exited-session processes must return to baseline, and memory must not retain another response-sized increment per cycle. If the remaining retention is inside the upstream Codex app-server, record an upstream reproduction and add only the smallest AIT containment that preserves every still-open session.
+5. **Keep update usable as the recovery path.** When the three core services are running and Codex is `protocol-unhealthy`, `ait update` treats the stack as running: after the existing active-session refusal, it stops the unhealthy stack, installs the verified release, and starts a protocol-healthy stack. The new state is never interpreted as an unknown partial service set.
+
+6. **Reap resources owned by an exited Codex session.** When the foreground TUI exits, stop and wait for that session's driver and any per-session relay before the wrapper exits. Do not stop the shared app-server or another live session. The driver must close its push listener and app-server connection on termination.
+
+7. **Measure the retaining owner before adding containment.** In an isolated home, repeat start/resume/exit cycles while recording the shared server's descendants and resident memory after quiescence. Exited-session processes must return to baseline, and memory must not retain another response-sized increment per cycle. If the remaining retention is inside the upstream Codex app-server, record an upstream reproduction and add only the smallest AIT containment that preserves every still-open session.
 
 No new persisted registry, process monitor, CLI flag, or second heartbeat is required.
 
 ## Files touched
 
-Expected implementation boundary: ten files.
+Expected implementation boundary: thirteen files.
 
 1. `mcp/src/codex/appServerClient.ts` — bounded protocol probe and connection liveness.
 2. `mcp/src/codex/host.ts` — drive liveness from the existing cadence and reconnect the same thread.
 3. `mcp/src/codex/sink.ts` — release and replay in-flight notification work after transport failure.
-4. `mcp/src/push.ts` — expose the existing cadence without creating another timer.
-5. `mcp/src/codex/probe.ts` — command-line protocol health probe shared by shell callers.
-6. `bin/codex-session.sh` — supervise and reap per-session resources after TUI exit.
-7. `bin/start-all.sh` — require protocol readiness before reporting ready.
-8. `bin/status.sh` — report protocol health rather than socket reachability.
-9. `mcp/scripts/codex-recovery-test.mjs` — deterministic transport, notification, and cleanup regressions.
-10. `bin/ait-test.sh` — shell-facing readiness and lifecycle coverage.
+4. `mcp/src/push.ts` — bound each registration attempt and expose the existing cadence without creating another timer.
+5. `mcp/src/atproto/pdsClient.ts` — pass request cancellation through the existing AppView call path.
+6. `mcp/src/codex/probe.ts` — command-line protocol health probe shared by shell callers.
+7. `bin/codex-session.sh` — supervise and reap per-session resources after TUI exit.
+8. `bin/start-all.sh` — require protocol readiness and fail promptly on an adopted unhealthy server.
+9. `bin/status.sh` — report protocol health rather than socket reachability.
+10. `bin/update.sh` — accept the unhealthy Codex state as a running stack that update can replace.
+11. `mcp/scripts/codex-recovery-test.mjs` — deterministic transport, notification, and cleanup regressions.
+12. `bin/ait-test.sh` — shell-facing readiness, update, and lifecycle coverage.
+13. `bin/ait-update-test.sh` — the unhealthy-service update path.
 
 If reproduction identifies a different retaining owner, amend this boundary before implementation instead of quietly adding machinery.
 
@@ -75,11 +84,13 @@ If reproduction identifies a different retaining owner, amend this boundary befo
 
 Permanent tests remain deterministic and isolated:
 
-1. A fake Unix-socket server accepts connections but never completes `initialize`; the protocol probe fails, `ait status` reports protocol-unhealthy, and `ait start` never reports ready.
-2. A connected fake server stops answering after initialization; the client closes it on the existing cadence, rejects pending requests, clears readiness, and reconnects to the same thread.
-3. A notification is accepted while its app-server request is stalled; after reconnect it is retried exactly from the last committed cursor and reaches the replacement sink.
-4. Exiting a fixture TUI reaps only its driver and relay. A second fixture session and the shared app-server remain alive.
-5. The existing Codex sink, rollout/resume, AIT CLI, and start/status suites continue to pass.
+1. A fake AppView accepts a registration connection but never answers; the current attempt is cancelled, the next registration beat still runs, and the number of outstanding requests does not grow.
+2. A fake Unix-socket server accepts connections but never completes `initialize`; the protocol probe fails, `ait status` reports `protocol-unhealthy` and exits nonzero, and `ait start` returns nonzero promptly without reporting ready. Run this for both an adopted process and a newly launched process that binds but does not answer.
+3. With the three core services running and Codex `protocol-unhealthy`, an update fixture reaches the normal stop, install, and healthy restart path instead of the unknown-status refusal.
+4. A connected fake server stops answering after initialization; the client closes it on the existing cadence, rejects pending requests, clears readiness, and reconnects to the same thread.
+5. A notification is accepted while its app-server request is stalled; after reconnect it is retried exactly from the last committed cursor and reaches the replacement sink.
+6. Exiting a fixture TUI reaps only its driver and relay. A second fixture session and the shared app-server remain alive.
+7. The existing Codex sink, rollout/resume, AIT CLI, updater, and start/status suites continue to pass.
 
 One-off release evidence, not a permanent timing-sensitive suite:
 
@@ -90,12 +101,13 @@ One-off release evidence, not a permanent timing-sensitive suite:
 
 ## Sequencing and rollout
 
-1. Reproduce the retained-resource curve and stalled-protocol state with fixtures before changing production behavior.
-2. Add protocol readiness and transport recovery.
-3. Add per-session cleanup and repeat the resource curve.
-4. Run the focused and inherited suites.
-5. Release normally, update an isolated prior-version install, and run the one-off two-session oracle.
-6. Keep the issue open if exited-session resources or per-cycle memory remain retained; do not ship a socket-only recovery as a complete memory fix.
+1. Reproduce the stopped registration beat, retained-resource curve, and stalled-protocol state with fixtures before changing production behavior.
+2. Bound and cancel the registration attempt so the existing beat always continues.
+3. Add transport recovery and protocol readiness, including the prompt `ait start` failure and usable `ait update` path.
+4. Add per-session cleanup and repeat the resource curve.
+5. Run the focused and inherited suites.
+6. Release normally, update an isolated prior-version install, and run the one-off two-session oracle.
+7. Keep the issue open if exited-session resources or per-cycle memory remain retained; do not ship a socket-only recovery as a complete memory fix.
 
 ## What was rejected
 
@@ -104,6 +116,7 @@ One-off release evidence, not a permanent timing-sensitive suite:
 - **Add short timeouts to every JSON-RPC method:** a large `thread/resume` can legitimately take longer; health should test transport responsiveness, not impose one latency budget on all work.
 - **Kill the server at a memory threshold:** this converts retention into user-visible data loss and can terminate valid long-running work.
 - **Rely on raw socket reachability:** the incident demonstrated that an accepting socket can still be protocol-dead.
+- **Race a deadline without cancelling the AppView request:** the beat would appear to continue while abandoned requests accumulate, recreating the resource problem in another form.
 
 ## Sources
 

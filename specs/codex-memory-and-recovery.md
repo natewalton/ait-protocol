@@ -24,6 +24,7 @@ Current behavior is visible in:
 - `mcp/src/codex/appServerClient.ts:85-123,297-316`: opening and JSON-RPC requests have no bounded liveness failure; pending requests reject only after the socket closes.
 - `mcp/src/codex/host.ts:113-124,131-227`: presence renewal depends on `activeSink`, which is cleared only after the current app-server lifecycle returns.
 - `mcp/src/codex/sink.ts:80-88,115-178`: notification delivery keeps one asynchronous pump marked as sending until its app-server request settles.
+- `mcp/src/codex/sink.ts:90-108,191-201`, `mcp/src/storage.ts:411-424`, and `appview/src/pushRegistry.ts:50-86`: the existing loss-avoidance boundary is the persisted notification cursor. AppView retains the backlog after delivery failure, and Codex advances the cursor only after a completed delivery turn.
 - `mcp/src/push.ts:84-90` and `mcp/src/atproto/pdsClient.ts:206-216`: the 30-second registration loop awaits an AppView request with no deadline. One connected request that never answers stops every later registration beat, so presence expires.
 - `bin/codex-session.sh:99-144`: the wrapper checks its background driver during startup, then attaches the foreground TUI without supervising later driver health; driver output remains in a temporary log.
 - `bin/start-all.sh:50-108` and `bin/status.sh:22-35,55-59`: Codex app-server health is a successful raw Unix-socket connection, not a successful app-server handshake.
@@ -37,7 +38,7 @@ Deliver one outcome: a long-running Codex terminal remains notification-capable 
 
 2. **Turn a silent transport stall into the existing reconnect path.** After the registration attempt has a bounded completion path, reuse that same cadence to verify that an active Codex app-server connection still answers. If it does not answer within a short bounded deadline, close that connection. Closing rejects its pending requests, clears the active notification sink, and lets the existing reconnect supervisor resume the same thread. Do not put an arbitrary short deadline on `thread/resume`; large legitimate histories can take longer.
 
-3. **Make notification retry state releasable.** When the client closes, an in-flight sink request must reject, return its batch to the queue, and release the `sending` state. Re-registration after reconnect then replays from the committed cursor. The AppView must not advance a cursor merely because it accepted the HTTP delivery.
+3. **Make every delivery failure delay-only.** A notification remains replayable until its matching Codex delivery turn completes and the persisted cursor advances. An AppView timeout, request abort, closed transport, accepted app-server request without a completed turn, failed or interrupted turn, or session exit must leave that cursor unchanged and return the notification to ordered replay. In-memory deduplication may suppress a duplicate only while another recoverable copy is still queued or in flight; replacing a sink cannot carry a suppression entry without its notification. When completion is ambiguous, replay and possible duplicate delivery are safer than loss. This uses the existing notification rows and cursor rather than adding a second retention store.
 
 4. **Use protocol health for the shared app-server.** Add one small probe that opens the Unix-socket WebSocket, completes the Codex `initialize` exchange within a bounded deadline, and closes. Measure the cold-start interval from socket bind to the first successful handshake, then give a socket-bound process one startup grace period based on that measurement. `ait start` retries the probe within that grace period, must not print `codex-appserver ready` until it succeeds, and returns nonzero promptly after the grace period whether the process was adopted or newly launched. A missing socket keeps reporting `unreachable`; `protocol-unhealthy` means the socket is present and its handshake failed past the grace period. That unhealthy state exits nonzero and gives the recovery sequence `ait stop`, `ait update`, `ait start` rather than calling the server ready.
 
@@ -74,6 +75,7 @@ If reproduction identifies a different retaining owner, amend this boundary befo
 - Changing AppView presence expiry or adding a second presence signal.
 - Restarting all live Codex sessions to recover one failed driver.
 - Treating this as proof of an upstream Codex defect before the retaining owner is measured.
+- Exactly-once delivery across a crash boundary; an occasional duplicate is acceptable when the alternative is permanently losing a notification.
 
 ## Tests
 
@@ -82,7 +84,7 @@ Permanent tests remain deterministic and isolated:
 1. A fake AppView accepts a registration connection but never answers; the current attempt is cancelled, the next registration beat still runs, and the number of outstanding requests does not grow.
 2. A fake Unix-socket server delays `initialize` within the measured startup grace period; `ait start` waits and then reports ready. When the fake server never completes `initialize`, the probe fails, `ait status` reports `protocol-unhealthy` and exits nonzero, and `ait start` returns nonzero after that grace period without reporting ready. Run the non-responsive case for both an adopted process and a newly launched process.
 3. A connected fake server stops answering after initialization; the client closes it on the existing cadence, rejects pending requests, clears readiness, and reconnects to the same thread.
-4. A notification is accepted while its app-server request is stalled; after reconnect it is retried exactly from the last committed cursor and reaches the replacement sink.
+4. A table-driven delivery test interrupts each supported boundary: AppView request timeout, transport close, app-server acceptance without turn completion, failed turn, and session exit. In every case the persisted cursor remains at the last visibly completed notification, pending notifications replay in order through the replacement sink, and none is permanently suppressed by deduplication. The ambiguous-completion case may deliver twice but never zero times.
 5. Exiting a fixture TUI reaps only its driver and relay. A second fixture session and the shared app-server remain alive.
 6. The existing Codex sink, rollout/resume, AIT CLI, updater, and start/status suites continue to pass.
 
@@ -113,6 +115,7 @@ One-off release evidence, not a permanent timing-sensitive suite:
 - **Kill the server at a memory threshold:** this converts retention into user-visible data loss and can terminate valid long-running work.
 - **Rely on raw socket reachability:** the incident demonstrated that an accepting socket can still be protocol-dead.
 - **Race a deadline without cancelling the AppView request:** the beat would appear to continue while abandoned requests accumulate, recreating the resource problem in another form.
+- **Add an exactly-once delivery ledger:** it duplicates the existing durable notification rows and cursor while still being unable to resolve a crash between visible delivery and local acknowledgement. Prefer at-least-once replay.
 
 ## Sources
 

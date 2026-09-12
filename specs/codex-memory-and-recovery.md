@@ -42,7 +42,7 @@ Deliver one outcome: a long-running Codex terminal remains notification-capable 
 
 4. **Use protocol health for the shared app-server.** Add one small probe that opens the Unix-socket WebSocket, completes the Codex `initialize` exchange within a bounded deadline, and closes. Measure the cold-start interval from socket bind to the first successful handshake, then give a socket-bound process one startup grace period based on that measurement. `ait start` retries the probe within that grace period, must not print `codex-appserver ready` until it succeeds, and returns nonzero promptly after the grace period whether the process was adopted or newly launched. A missing socket keeps reporting `unreachable`; `protocol-unhealthy` means the socket is present and its handshake failed past the grace period. That unhealthy state exits nonzero and gives the recovery sequence `ait stop`, `ait update`, `ait start` rather than calling the server ready.
 
-5. **Reap resources owned by an exited Codex session.** When the foreground TUI exits, stop and wait for that session's driver and any per-session relay before the wrapper exits. Do not stop the shared app-server or another live session. The driver must close its push listener and app-server connection on termination.
+5. **Reap resources owned by an exited Codex session.** When the foreground TUI exits, stop and wait for that session's driver and any per-session relay before the wrapper exits. Do not stop the shared app-server or another live session. The driver must close its push listener and app-server connection on termination. Cleanup must not delete or rewrite the Codex rollout, transcript, thread mapping, or AIT identity; reconnect and later resume use the same thread.
 
 6. **Measure the retaining owner before adding containment.** In an isolated home, repeat start/resume/exit cycles while recording the shared server's descendants and resident memory after quiescence. Exited-session processes must return to baseline, and memory must not retain another response-sized increment per cycle. If the remaining retention is inside the upstream Codex app-server, record an upstream reproduction and add only the smallest AIT containment that preserves every still-open session.
 
@@ -76,6 +76,7 @@ If reproduction identifies a different retaining owner, amend this boundary befo
 - Restarting all live Codex sessions to recover one failed driver.
 - Treating this as proof of an upstream Codex defect before the retaining owner is measured.
 - Exactly-once delivery across a crash boundary; an occasional duplicate is acceptable when the alternative is permanently losing a notification.
+- Pruning, compacting, moving, or deleting Codex transcripts and rollouts; process cleanup must preserve session history byte-for-byte.
 
 ## Tests
 
@@ -85,7 +86,7 @@ Permanent tests remain deterministic and isolated:
 2. A fake Unix-socket server delays `initialize` within the measured startup grace period; `ait start` waits and then reports ready. When the fake server never completes `initialize`, the probe fails, `ait status` reports `protocol-unhealthy` and exits nonzero, and `ait start` returns nonzero after that grace period without reporting ready. Run the non-responsive case for both an adopted process and a newly launched process.
 3. A connected fake server stops answering after initialization; the client closes it on the existing cadence, rejects pending requests, clears readiness, and reconnects to the same thread.
 4. A table-driven delivery test interrupts each supported boundary: AppView request timeout, transport close, HTTP delivery while `activeSink` is null, app-server acceptance without turn completion, failed turn, and session exit. In every case the persisted cursor remains at the last visibly completed notification, pending notifications replay in order through the replacement sink, and none is permanently suppressed by deduplication. The null-sink case must prove the next bounded registration beat replays the notification; the ambiguous-completion case may deliver twice but never zero times.
-5. Exiting a fixture TUI reaps only its driver and relay. A second fixture session and the shared app-server remain alive.
+5. Exiting a fixture TUI reaps only its driver and relay. A second fixture session and the shared app-server remain alive; the exited session's rollout, transcript, thread mapping, and identity remain byte-identical, and resuming selects the same thread.
 6. The existing Codex sink, rollout/resume, AIT CLI, updater, and start/status suites continue to pass.
 
 One-off release evidence, not a permanent timing-sensitive suite:

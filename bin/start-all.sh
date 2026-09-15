@@ -54,7 +54,8 @@ codex_protocol_ready() {
   [ -S "$sock" ] || return 1
   [ -f "$REPO/mcp/dist/codex/probe.js" ] || return 2
   command -v node >/dev/null 2>&1 || return 2
-  node "$REPO/mcp/dist/codex/probe.js" "$sock" 1000 >/dev/null 2>&1
+  node -e 'import(process.argv[1]).catch(() => { process.exitCode = 2 })' \
+    "$REPO/mcp/dist/codex/probe.js" "$sock" 1000 >/dev/null 2>&1
 }
 
 service_event_pid() {

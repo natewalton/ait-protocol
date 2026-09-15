@@ -1065,6 +1065,24 @@ codex_cleanup
 unset AIT_CODEX_PROBE_UNAVAILABLE
 pass "unavailable Codex probe reports a build problem without condemning the server"
 
+start_codex_fixture 0
+while [ ! -S "$AIT_CODEX_SHARED_SOCKET" ]; do sleep 0.1; done
+seed_codex_core_state
+cp "$codex_start_fixture/mcp/dist/codex/probe.js" "$TMP_ROOT/codex-probe-good.js"
+printf '%s\n' "import { missing } from './missing.js'" > "$codex_start_fixture/mcp/dist/codex/probe.js"
+set +e
+probe_load_output="$("$codex_start_fixture/bin/start-all.sh" 2>&1)"
+probe_load_status=$?
+set -e
+[ "$probe_load_status" -ne 0 ] || fail "unloadable Codex health probe unexpectedly passed start"
+assert_contains "$probe_load_output" "codex-appserver health probe unavailable"
+assert_contains "$probe_load_output" "codex-appserver  skipped (health probe unavailable"
+assert_not_contains "$probe_load_output" "codex-appserver protocol-unhealthy"
+assert_not_contains "$probe_load_output" "ait stop"
+mv "$TMP_ROOT/codex-probe-good.js" "$codex_start_fixture/mcp/dist/codex/probe.js"
+codex_cleanup
+pass "probe module-load failure reports a build problem without condemning the server"
+
 lifecycle="$TMP_ROOT/codex-session-lifecycle"
 mkdir -p "$lifecycle/bin" "$lifecycle/mcp/dist/codex" "$lifecycle/shim" \
   "$lifecycle/logs" "$lifecycle/artifacts" "$lifecycle-wrapper-pids"

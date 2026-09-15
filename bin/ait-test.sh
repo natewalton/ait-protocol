@@ -460,6 +460,11 @@ pass "unproven partial environment fails unchanged"
 status_fixture="$TMP_ROOT/status"
 make_fixture "$status_fixture"
 cp "$REPO/bin/status.sh" "$status_fixture/bin/status.sh"
+cp "$REPO/bin/run-codex-appserver.sh" "$status_fixture/bin/run-codex-appserver.sh"
+printf '#!/bin/sh\nexit 0\n' > "$status_fixture/bin/stop-codex-appserver.sh"
+chmod +x "$status_fixture/bin/stop-codex-appserver.sh"
+mkdir -p "$status_fixture/mcp/dist"
+: > "$status_fixture/mcp/dist/server.js"
 export HOME="$status_fixture/home"
 rm -f "$status_fixture/shim/curl"
 cat > "$status_fixture/shim/curl" <<'EOF'
@@ -489,7 +494,7 @@ codex_launch_capture="$TMP_ROOT/codex-launch.args"
 AIT_CODEX_CAPTURE="$codex_launch_capture" \
 AIT_CODEX_SHARED_SOCKET="$TMP_ROOT/codex-launch.sock" \
 CODEX_BIN="$status_fixture/shim/codex" NODE_BIN=/usr/bin/true \
-  "$REPO/bin/run-codex-appserver.sh"
+  "$status_fixture/bin/run-codex-appserver.sh"
 assert_contains "$(cat "$codex_launch_capture")" "thread_unload_delay_secs=0"
 pass "Codex protocol health and cleanup compatibility status"
 

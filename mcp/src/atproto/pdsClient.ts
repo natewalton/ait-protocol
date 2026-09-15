@@ -205,11 +205,16 @@ export async function withAuthedAgent<T>(
 // the lexicon at xrpc-client.js:59 (assertValidXrpcOutput).
 export async function appViewCall<T>(
   nsid: string,
-  opts: { params?: Record<string, unknown>; data?: unknown } = {},
+  opts: {
+    params?: Record<string, unknown>
+    data?: unknown
+    signal?: AbortSignal
+  } = {},
 ): Promise<T> {
   return withAuthedAgent(async (agent) => {
     const res = await agent.call(nsid, opts.params, opts.data, {
       headers: appviewProxyHeaders(),
+      signal: opts.signal,
     })
     return res.data as T
   })

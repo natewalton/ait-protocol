@@ -42,17 +42,23 @@ export interface NotificationView {
 // commit timing: the cursor must advance only after that runtime's delivery
 // signal, so a crash before delivery replays the tail on re-registration.
 export type NotificationSink = (view: NotificationView) => Promise<void>
+type RegisterCall = typeof appViewCall
 
 const REREGISTER_INTERVAL_MS = 30_000
-const delay = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms))
+const REGISTER_TIMEOUT_MS = 5_000
 
 let listenerUrl: string | null = null
 let registerInFlight: Promise<void> | null = null
+let listenerServer: http.Server | null = null
+let listenerGeneration = 0
+let heartbeatTimer: ReturnType<typeof setTimeout> | null = null
+let heartbeatWake: (() => void) | null = null
+let registerController: AbortController | null = null
 
 export async function startPushListener(
   deliver: NotificationSink,
   canRegister: () => boolean = () => true,
+  onBeat: () => Promise<void> = async () => {},
 ): Promise<void> {
   if (listenerUrl) return
 
@@ -70,6 +76,8 @@ export async function startPushListener(
     httpServer.listen(0, '127.0.0.1', resolve),
   )
   const addr = httpServer.address() as AddressInfo
+  listenerServer = httpServer
+  const generation = ++listenerGeneration
   listenerUrl = `http://127.0.0.1:${addr.port}/notify`
   // Visible on the MCP's stderr (Claude Code's debug log) so a paired-up
   // smoke test or operator can find the ephemeral port without spelunking
@@ -82,11 +90,42 @@ export async function startPushListener(
   // failed POST. Reassert for the listener lifetime; tryRegister coalesces a
   // beat with any startup/join registration already in flight.
   void (async () => {
-    for (;;) {
-      await delay(REREGISTER_INTERVAL_MS)
+    while (listenerGeneration === generation) {
+      await new Promise<void>((resolve) => {
+        heartbeatWake = resolve
+        heartbeatTimer = setTimeout(resolve, REREGISTER_INTERVAL_MS)
+      })
+      heartbeatTimer = null
+      heartbeatWake = null
+      if (listenerGeneration !== generation) return
       if (canRegister()) await tryRegister(canRegister)
+      try {
+        await onBeat()
+      } catch (err) {
+        console.error('push heartbeat error:', err)
+      }
     }
   })()
+}
+
+export async function stopPushListener(): Promise<void> {
+  listenerGeneration++
+  if (heartbeatTimer) {
+    clearTimeout(heartbeatTimer)
+    heartbeatTimer = null
+  }
+  heartbeatWake?.()
+  heartbeatWake = null
+  listenerUrl = null
+  registerController?.abort()
+  registerController = null
+  await registerInFlight
+  registerInFlight = null
+  const server = listenerServer
+  listenerServer = null
+  if (!server) return
+  server.closeAllConnections?.()
+  await new Promise<void>((resolve) => server.close(() => resolve()))
 }
 
 // Register the listener URL with the AppView. Called from startup (if a
@@ -94,7 +133,11 @@ export async function startPushListener(
 // freshly minted). A no-op when the listener isn't running (poll mode) or
 // when no identity is loaded yet. Re-registration is idempotent on the
 // AppView side: the registry's Map<did, url> overwrites by key.
-export async function tryRegister(canRegister: () => boolean = () => true): Promise<void> {
+export async function tryRegister(
+  canRegister: () => boolean = () => true,
+  registerCall: RegisterCall = appViewCall,
+  timeoutMs = REGISTER_TIMEOUT_MS,
+): Promise<void> {
   if (!canRegister()) return
   if (!listenerUrl || !getIdentity()) return
   if (registerInFlight) return registerInFlight
@@ -105,10 +148,13 @@ export async function tryRegister(canRegister: () => boolean = () => true): Prom
     }
     if (checkpoint.kind === 'cursor') data.cursor = checkpoint.value
     if (checkpoint.kind === 'since') data.since = checkpoint.value
+    const controller = new AbortController()
+    registerController = controller
+    const timeout = setTimeout(() => controller.abort(), timeoutMs)
     try {
-      const result = await appViewCall<{ status: 'ok'; cursor: string }>(
+      const result = await registerCall<{ status: 'ok'; cursor: string }>(
         'ait.notification.registerPushTarget',
-        { data },
+        { data, signal: controller.signal },
       )
       // AppView returns the normalized starting cursor: for legacy `since` this
       // is its loss-safe seq predecessor; for a fresh identity it is the initial
@@ -116,6 +162,9 @@ export async function tryRegister(canRegister: () => boolean = () => true): Prom
       compareAndSwapNotificationCursor(checkpoint.value, result.cursor)
     } catch (err) {
       console.error('registerPushTarget error:', err)
+    } finally {
+      clearTimeout(timeout)
+      if (registerController === controller) registerController = null
     }
   })()
   try {

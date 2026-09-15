@@ -47,30 +47,25 @@ interrupt_start() {
 }
 trap interrupt_start INT TERM
 
-codex_socket_ready() {
+CODEX_START_GRACE_SECONDS="${AIT_TEST_CODEX_START_GRACE_SECONDS:-5}"
+
+codex_protocol_ready() {
   local sock="${AIT_CODEX_SHARED_SOCKET:-$HOME/.ait/codex-shared.sock}"
   [ -S "$sock" ] || return 1
-  if command -v python3 >/dev/null 2>&1; then
-    python3 -c 'import socket,sys
-s=socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.connect(sys.argv[1])
-s.close()' "$sock" >/dev/null 2>&1
-  elif command -v nc >/dev/null 2>&1; then
-    nc -zU "$sock" >/dev/null 2>&1
-  else
-    return 1
-  fi
+  [ -f "$REPO/mcp/dist/codex/probe.js" ] || return 2
+  command -v node >/dev/null 2>&1 || return 2
+  node "$REPO/mcp/dist/codex/probe.js" "$sock" 1000 >/dev/null 2>&1
 }
 
 service_event_pid() {
   if [ "$1" = codex-appserver ]; then
-    codex_socket_ready || return 0
+    [ -S "${AIT_CODEX_SHARED_SOCKET:-$HOME/.ait/codex-shared.sock}" ] || return 0
   fi
   running_pid "$1"
 }
 
 wait_for_codex() {
-  local pid=$1 pidfile=$2 adopted=$3 owner
+  local pid=$1 pidfile=$2 adopted=$3 owner probe_status started_at=$SECONDS
   STARTING_NAME="codex-appserver"
   STARTING_PID="$pid"
   STARTING_PIDFILE="$pidfile"
@@ -83,7 +78,9 @@ wait_for_codex() {
     fi
   fi
   while :; do
-    if codex_socket_ready; then
+    probe_status=0
+    codex_protocol_ready || probe_status=$?
+    if [ "$probe_status" -eq 0 ]; then
       owner="$(running_pid codex-appserver)"
       [ -n "$owner" ] && pid="$owner"
       echo "$pid" > "$pidfile"
@@ -94,8 +91,31 @@ wait_for_codex() {
       STARTING_ADOPTED=""
       return 0
     fi
+    if [ "$probe_status" -ge 2 ]; then
+      echo "codex-appserver health probe unavailable; run: npm --prefix '$REPO/mcp' ci && npm --prefix '$REPO/mcp' run build" >&2
+      FAILED="$FAILED codex-appserver"
+      STARTING_NAME=""
+      STARTING_PID=""
+      STARTING_PIDFILE=""
+      STARTING_ADOPTED=""
+      return 0
+    fi
     if ! kill -0 "$pid" 2>/dev/null; then
       echo "codex-appserver process exited before binding socket; see $LOGS/ait-codex-appserver.err" >&2
+      rm -f "$pidfile"
+      FAILED="$FAILED codex-appserver"
+      STARTING_NAME=""
+      STARTING_PID=""
+      STARTING_PIDFILE=""
+      STARTING_ADOPTED=""
+      return 0
+    fi
+    if [ $((SECONDS - started_at)) -ge "$CODEX_START_GRACE_SECONDS" ]; then
+      if [ -S "${AIT_CODEX_SHARED_SOCKET:-$HOME/.ait/codex-shared.sock}" ]; then
+        echo "codex-appserver protocol-unhealthy after ${CODEX_START_GRACE_SECONDS}s; run: ait stop; ait update; ait start" >&2
+      else
+        echo "codex-appserver did not bind its socket within ${CODEX_START_GRACE_SECONDS}s; see $LOGS/ait-codex-appserver.err" >&2
+      fi
       rm -f "$pidfile"
       FAILED="$FAILED codex-appserver"
       STARTING_NAME=""

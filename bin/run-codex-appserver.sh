@@ -49,5 +49,6 @@ done
 unset AIT_SESSION_ID AIT_NOTIFICATION_MODE
 
 exec "$CODEX_BIN" app-server --listen "unix://$sock" \
+  -c "thread_unload_delay_secs=0" \
   -c "mcp_servers.ait.command=$NODE_BIN" \
   -c "mcp_servers.ait.args=[\"$server\"]"

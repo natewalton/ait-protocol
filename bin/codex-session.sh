@@ -74,7 +74,7 @@ fi
 
 # Ensure the SHARED codex app-server is running (start once; leave it running for
 # other sessions). bin/start-all.sh / launchd may already have started it.
-appserver_pidfile=/tmp/ait-codex-appserver.pid
+appserver_pidfile="${AIT_LOG_DIR:-/tmp}/ait-codex-appserver.pid"
 if ! { [ -f "$appserver_pidfile" ] && kill -0 "$(cat "$appserver_pidfile")" 2>/dev/null; }; then
   echo "codex-session: starting shared codex app-server…" >&2
   nohup "$repo_root/bin/run-codex-appserver.sh" \
@@ -105,8 +105,12 @@ env AIT_NOTIFICATION_MODE=codex AIT_CODEX_SOCKET_FILE="$sock_file" \
 driver_pid=$!
 
 cleanup() {
-  [ -z "$relay_pid" ] || kill "$relay_pid" 2>/dev/null || true
+  if [ -n "$relay_pid" ]; then
+    kill "$relay_pid" 2>/dev/null || true
+    wait "$relay_pid" 2>/dev/null || true
+  fi
   kill "$driver_pid" 2>/dev/null || true   # stop only OUR session; shared server keeps running
+  wait "$driver_pid" 2>/dev/null || true
   rm -f "$sock_file"
   [ -z "$relay_sock" ] || rm -f "$relay_sock"
   [ -z "$relay_dir" ] || rmdir "$relay_dir" 2>/dev/null || true

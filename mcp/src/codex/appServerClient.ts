@@ -45,6 +45,7 @@ const OVERLOAD_BASE_DELAY_MS = 200
 // session. Keep a high bounded default for the local unix-socket transport,
 // while allowing recovery of unusually large histories without a code change.
 const DEFAULT_MAX_PAYLOAD_BYTES = 1024 * 1024 * 1024
+export const CODEX_PROTOCOL_TIMEOUT_MS = 3_000
 
 export function codexMaxPayloadBytes(): number {
   const raw = process.env.AIT_CODEX_MAX_PAYLOAD_BYTES
@@ -84,7 +85,7 @@ export class AppServerClient {
 
   // Open the socket and run the initialize handshake. Resolves once the server
   // has acknowledged `initialize` and we've sent the `initialized` notification.
-  async connect(): Promise<void> {
+  async connect(timeoutMs?: number): Promise<void> {
     // Collapse repeated slashes (e.g. a $TMPDIR ending in '/') so the ws+unix
     // parser splits the socket path from the request path on the ':' correctly.
     const path = this.socketPath.replace(/\/{2,}/g, '/')
@@ -94,7 +95,7 @@ export class AppServerClient {
     })
     this.ws = ws
 
-    await new Promise<void>((resolve, reject) => {
+    await this.withDeadline(new Promise<void>((resolve, reject) => {
       const onOpen = () => { cleanup(); resolve() }
       const onError = (err: Error) => { cleanup(); reject(err) }
       const onUnexpected = (_req: unknown, res: { statusCode?: number }) => {
@@ -109,7 +110,7 @@ export class AppServerClient {
       ws.on('open', onOpen)
       ws.on('error', onError)
       ws.on('unexpected-response', onUnexpected)
-    })
+    }), timeoutMs, 'app-server socket open')
 
     ws.on('message', (data) => this.onMessage(data))
     ws.on('close', () => this.handleClose())
@@ -119,8 +120,27 @@ export class AppServerClient {
       clientInfo: CLIENT_INFO,
       capabilities: { experimentalApi: true, requestAttestation: false },
     }
-    await this.request('initialize', params)
+    await this.withDeadline(
+      this.request('initialize', params),
+      timeoutMs,
+      'app-server initialize',
+    )
     this.notify('initialized')
+  }
+
+  async assertResponsive(timeoutMs = CODEX_PROTOCOL_TIMEOUT_MS): Promise<void> {
+    try {
+      await this.withDeadline(
+        this.request('thread/list', { limit: 1 }),
+        timeoutMs,
+        'app-server protocol check',
+      )
+    } catch (err) {
+      // A JSON-RPC error is still a complete protocol response. Only transport
+      // failure or expiry means the connection has stopped answering.
+      if (err instanceof RpcError) return
+      throw err
+    }
   }
 
   async threadStart(params: ThreadStartParams = {}): Promise<ThreadStartResponse> {
@@ -288,8 +308,9 @@ export class AppServerClient {
     this.closeListeners.add(listener)
   }
 
-  close(): void {
-    this.ws?.close()
+  close(reason = new Error('app-server connection closed')): void {
+    this.handleClose(reason)
+    this.ws?.terminate()
   }
 
   // --- internals --------------------------------------------------------------
@@ -314,6 +335,29 @@ export class AppServerClient {
       this.pending.set(id, { resolve, reject })
       this.send(params === undefined ? { method, id } : { method, id, params })
     })
+  }
+
+  private async withDeadline<T>(
+    operation: Promise<T>,
+    timeoutMs: number | undefined,
+    label: string,
+  ): Promise<T> {
+    if (timeoutMs === undefined) return operation
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        operation,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            const error = new Error(`${label} timed out after ${timeoutMs}ms`)
+            this.close(error)
+            reject(error)
+          }, timeoutMs)
+        }),
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
   }
 
   private notify(method: string, params?: unknown): void {

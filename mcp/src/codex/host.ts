@@ -39,7 +39,12 @@ import { randomUUID } from 'node:crypto'
 import { AppServerClient } from './appServerClient.js'
 import { sharedAppServerSocketPath } from './paths.js'
 import { createCodexSink } from './sink.js'
-import { startPushListener, tryRegister, type NotificationSink } from '../push.js'
+import {
+  startPushListener,
+  stopPushListener,
+  tryRegister,
+  type NotificationSink,
+} from '../push.js'
 import { loadIdentity } from '../storage.js'
 import { setIdentity, reloadIdentity } from '../session.js'
 import { readThreadSessionId, writeThreadSessionId } from './threadMap.js'
@@ -116,14 +121,32 @@ export async function runCodexSession(): Promise<void> {
   // while the server is down — or sit un-injected in a dropped sink — replay via
   // the re-register `since` handshake once we reconnect and re-register.
   let activeSink: NotificationSink | null = null
+  let activeClient: AppServerClient | null = null
   await startPushListener(
-    (view) => activeSink?.(view) ?? Promise.resolve(),
+    (view) => activeSink?.(view) ?? Promise.reject(new Error('Codex notification sink unavailable')),
     () => activeSink !== null,
+    async () => {
+      const client = activeClient
+      if (!client) return
+      try {
+        await client.assertResponsive()
+      } catch (err) {
+        console.error('ait codex session: shared app-server stopped answering — reconnecting')
+        client.close(err instanceof Error ? err : new Error(String(err)))
+      }
+    },
   )
   console.error(`\n  Attach a TUI:  codex --remote unix://${socketPath}\n`)
   void registerPushWhenReady(() => activeSink !== null)
 
-  installSignalHandlers()
+  let shuttingDown = false
+  installSignalHandlers(() => {
+    if (shuttingDown) return
+    shuttingDown = true
+    activeSink = null
+    activeClient?.close()
+    void stopPushListener().finally(() => process.exit(0))
+  })
 
   let threadId: string | null = resumeThreadId
   let openingTurnDone = false
@@ -201,6 +224,7 @@ export async function runCodexSession(): Promise<void> {
         socketAnnounced = true
       }
       activeSink = createCodexSink(client, threadId)
+      activeClient = client
       void tryRegister(() => activeSink !== null)
       console.error(
         `ait codex session: session ${sessionId} → thread ${threadId}` +
@@ -223,6 +247,7 @@ export async function runCodexSession(): Promise<void> {
       console.error('ait codex session: not connected to shared app-server, retrying —', errMessage(err))
     }
     activeSink = null
+    if (activeClient === client) activeClient = null
     client.close()
     await delay(RECONNECT_BACKOFF_MS)
   }
@@ -292,8 +317,7 @@ async function registerPushWhenReady(canRegister: () => boolean): Promise<void> 
 // shut down the app-server here — it is shared and owned by launchd / start-all,
 // and other sessions may still be using it. Exiting just detaches this session;
 // the OS closes our socket fd.
-function installSignalHandlers(): void {
-  const shutdown = () => process.exit(0)
+function installSignalHandlers(shutdown: () => void): void {
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)
 }

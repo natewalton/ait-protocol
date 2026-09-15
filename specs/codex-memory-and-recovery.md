@@ -1,6 +1,6 @@
 # Keep long-running Codex sessions online without exhausting memory
 
-Status: Proposed, 2026-09-12
+Status: Approved, 2026-09-15
 
 ## Why
 
@@ -53,29 +53,52 @@ cursor.
 
 3. **Make every delivery failure delay-only.** A notification remains replayable until its matching Codex delivery turn completes and the persisted cursor advances. An AppView timeout, request abort, closed transport, notification received while no Codex sink exists, accepted app-server request without a completed turn, failed or interrupted turn, or session exit must leave that cursor unchanged and return the notification to ordered replay. In-memory deduplication may suppress a duplicate only while another recoverable copy is still queued or in flight; replacing a sink cannot carry a suppression entry without its notification. When completion is ambiguous, replay and possible duplicate delivery are safer than loss. This uses the existing notification rows and cursor rather than adding a second retention store.
 
-4. **Use protocol health for the shared app-server.** Add one small probe that opens the Unix-socket WebSocket, completes the Codex `initialize` exchange within a bounded deadline, and closes. Measure the cold-start interval from socket bind to the first successful handshake, then give a socket-bound process one startup grace period based on that measurement. `ait start` retries the probe within that grace period, must not print `codex-appserver ready` until it succeeds, and returns nonzero promptly after the grace period whether the process was adopted or newly launched. A missing socket keeps reporting `unreachable`; `protocol-unhealthy` means the socket is present and its handshake failed past the grace period. That unhealthy state exits nonzero and gives the recovery sequence `ait stop`, `ait update`, `ait start` rather than calling the server ready.
+4. **Use protocol health for the shared app-server.** Add one small probe that opens the Unix-socket WebSocket, completes the Codex `initialize` exchange within a bounded deadline, and closes. Measure the cold-start interval from socket bind to the first successful handshake, then give a socket-bound process one startup grace period based on that measurement. `ait start` retries the probe within that grace period, must not print `codex-appserver ready` until it succeeds, and returns nonzero promptly after the grace period whether the process was adopted or newly launched. A missing socket keeps reporting `unreachable`; `protocol-unhealthy` means the socket is present and its handshake ran but failed past the grace period. A missing probe build, dependency, or runtime is reported separately as a probe build problem and must never recommend stopping the server. The protocol-unhealthy state exits nonzero and gives the recovery sequence `ait stop`, `ait update`, `ait start` rather than calling the server ready.
 
 5. **Reap resources owned by an exited Codex session.** When the foreground TUI exits, stop and wait for that session's driver and any per-session relay before the wrapper exits. Do not stop the shared app-server or another live session. The driver must close its push listener and app-server connection on termination. Cleanup must not delete or rewrite the Codex rollout, transcript, thread mapping, or AIT identity; reconnect and later resume use the same thread.
 
 6. **Measure the retaining owner before adding containment.** In an isolated home, repeat start/resume/exit cycles while recording the shared server's descendants and resident memory after quiescence. Exited-session processes must return to baseline, and memory must not retain another response-sized increment per cycle. If the remaining retention is inside the upstream Codex app-server, record an upstream reproduction and add only the smallest AIT containment that preserves every still-open session.
 
+   The measured owner is Codex app-server's loaded thread runtime. On Codex
+   0.152, an isolated three-cycle run grew the app-server tree from four
+   processes and 58,176 KB RSS to four processes and 419,360 KB RSS; it still
+   held four processes and 419,648 KB after 70 seconds. The 0.152 source
+   hard-codes a 30-minute unload delay after the last subscriber exits. Codex
+   0.154 exposes `thread_unload_delay_secs`; with that release and AIT's
+   zero-delay setting, cleanup is driven directly by the last-subscriber
+   disconnect event. An isolated three-cycle run began at two processes and
+   84,528 KB RSS. The loaded trees reached 270,640, 251,584, and 252,016 KB,
+   then returned to two processes and 139,168, 141,600, and 142,448 KB within
+   1,371, 52, and 55 milliseconds of each disconnect. Resuming the first thread
+   selected the same ID, left all three rollout artifacts byte-identical, and
+   returned from 255,392 KB to two processes and 145,600 KB in 93 milliseconds.
+   Older Codex releases ignore the setting without failing, so
+   `ait status` must report both the installed Codex version and whether
+   immediate cleanup is active rather than claiming cleanup that is not
+   occurring.
+
 No new persisted registry, process monitor, CLI flag, or second heartbeat is required.
+`mcp/src/codex/sink.ts` already advances the cursor only after a matching
+successful turn completion and leaves failed, interrupted, or merely accepted
+delivery replayable. The six-boundary regression exercises that existing
+contract, so the sink itself needs no production change.
 
 ## Files touched
 
-Expected implementation boundary: eleven files.
+Candidate boundary: twelve files.
 
 1. `mcp/src/codex/appServerClient.ts`: bounded protocol probe and connection liveness.
 2. `mcp/src/codex/host.ts`: drive liveness from the existing cadence and reconnect the same thread.
-3. `mcp/src/codex/sink.ts`: release and replay in-flight notification work after transport failure.
-4. `mcp/src/push.ts`: bound each registration attempt and expose the existing cadence without creating another timer.
-5. `mcp/src/atproto/pdsClient.ts`: pass request cancellation through the existing AppView call path.
-6. `mcp/src/codex/probe.ts`: command-line protocol health probe shared by shell callers.
-7. `bin/codex-session.sh`: supervise and reap per-session resources after TUI exit.
-8. `bin/start-all.sh`: require protocol readiness and fail promptly on an adopted unhealthy server.
-9. `bin/status.sh`: report protocol health rather than socket reachability.
-10. `mcp/scripts/codex-recovery-test.mjs`: deterministic transport, notification, and cleanup regressions.
-11. `bin/ait-test.sh`: shell-facing readiness and lifecycle coverage.
+3. `mcp/src/push.ts`: bound each registration attempt and expose the existing cadence without creating another timer.
+4. `mcp/src/atproto/pdsClient.ts`: pass request cancellation through the existing AppView call path.
+5. `mcp/src/codex/probe.ts`: command-line protocol health probe shared by shell callers.
+6. `bin/codex-session.sh`: supervise and reap per-session resources after TUI exit.
+7. `bin/start-all.sh`: require protocol readiness and fail promptly on an adopted unhealthy server.
+8. `bin/status.sh`: report protocol health rather than socket reachability.
+9. `mcp/scripts/codex-recovery-test.mjs`: deterministic transport, notification, and cleanup regressions.
+10. `bin/ait-test.sh`: shell-facing readiness and lifecycle coverage.
+11. `bin/run-codex-appserver.sh`: request immediate upstream unloaded-thread cleanup on last-subscriber disconnect.
+12. `specs/codex-memory-and-recovery.md`: record the measured owner, compatibility behavior, and exact delivered boundary.
 
 If reproduction identifies a different retaining owner, amend this boundary before implementation instead of quietly adding machinery.
 
@@ -96,7 +119,7 @@ If reproduction identifies a different retaining owner, amend this boundary befo
 Permanent tests remain deterministic and isolated:
 
 1. A fake AppView accepts a registration connection but never answers; the current attempt is cancelled, the next registration beat still runs, and the number of outstanding requests does not grow.
-2. A fake Unix-socket server delays `initialize` within the measured startup grace period; `ait start` waits and then reports ready. When the fake server never completes `initialize`, the probe fails, `ait status` reports `protocol-unhealthy` and exits nonzero, and `ait start` returns nonzero after that grace period without reporting ready. Run the non-responsive case for both an adopted process and a newly launched process.
+2. A fake Unix-socket server delays `initialize` within the measured startup grace period; `ait start` waits and then reports ready. When the fake server never completes `initialize`, the probe fails, `ait status` reports `protocol-unhealthy` and exits nonzero, and `ait start` returns nonzero after that grace period without reporting ready. Run the non-responsive case for both an adopted process and a newly launched process. Separately, make the probe itself unavailable and prove status/start report the build problem without calling the server protocol-unhealthy or recommending `ait stop`.
 3. A connected fake server stops answering after initialization; the client closes it on the existing cadence, rejects pending requests, clears readiness, and reconnects to the same thread.
 4. A table-driven delivery test interrupts each supported boundary: AppView request timeout, transport close, HTTP delivery while `activeSink` is null, app-server acceptance without turn completion, failed turn, and session exit. In every case the persisted cursor remains at the last visibly completed notification, pending notifications replay in order through the replacement sink, and none is permanently suppressed by deduplication. The null-sink case must prove the next bounded registration beat replays the notification; the ambiguous-completion case may deliver twice but never zero times.
 5. Exiting a fixture TUI reaps only its driver and relay. A second fixture session and the shared app-server remain alive; the exited session's rollout, transcript, thread mapping, and identity remain byte-identical, and resuming selects the same thread.
@@ -130,6 +153,8 @@ One-off release evidence, not a permanent timing-sensitive suite:
 - **Rely on raw socket reachability:** the incident demonstrated that an accepting socket can still be protocol-dead.
 - **Race a deadline without cancelling the AppView request:** the beat would appear to continue while abandoned requests accumulate, recreating the resource problem in another form.
 - **Add an exactly-once delivery ledger:** it duplicates the existing durable notification rows and cursor while still being unable to resolve a crash between visible delivery and local acknowledgement. Prefer at-least-once replay.
+- **Refuse to start on Codex before 0.154:** this blocks the recovery command on the 0.152 machine where the incident occurred. Pass the forward-compatible setting and report whether it is active instead.
+- **Silently accept the old cleanup delay:** that would let AIT report healthy while the measured retention remains unchanged. Expose the effective support state in `ait status`.
 
 ## Sources
 
@@ -137,6 +162,8 @@ One-off release evidence, not a permanent timing-sensitive suite:
 - [AT Protocol Lexicons: applications define their own records and RPC methods](https://atproto.com/guides/lexicon)
 - [AT Protocol XRPC: service proxying, cursors, authentication, and timeout/retry guidance](https://atproto.com/specs/xrpc)
 - [Reference `@atproto/xrpc` client: request cancellation through `AbortSignal`](https://github.com/bluesky-social/atproto/blob/main/packages/xrpc/src/xrpc-client.ts)
+- [Codex 0.152 thread lifecycle: 30-minute unloaded-thread delay](https://github.com/openai/codex/blob/rust-v0.152.0/codex-rs/app-server/src/request_processors/thread_lifecycle.rs)
+- [Codex 0.154 configuration: configurable unloaded-thread delay](https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/config/src/config_toml.rs)
 - [AT Protocol Lexicon style guide: application-defined views and cursor conventions](https://atproto.com/guides/lexicon-style-guide)
 - [Bluesky `app.bsky.actor.status`: `#live` means offering live content](https://github.com/bluesky-social/atproto/blob/main/lexicons/app/bsky/actor/status.json)
 - [Bluesky `app.bsky.notification.registerPush`: platform push-token registration](https://github.com/bluesky-social/atproto/blob/main/lexicons/app/bsky/notification/registerPush.json)

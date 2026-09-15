@@ -459,6 +459,7 @@ pass "unproven partial environment fails unchanged"
 
 status_fixture="$TMP_ROOT/status"
 make_fixture "$status_fixture"
+cp "$REPO/bin/status.sh" "$status_fixture/bin/status.sh"
 export HOME="$status_fixture/home"
 rm -f "$status_fixture/shim/curl"
 cat > "$status_fixture/shim/curl" <<'EOF'
@@ -468,6 +469,11 @@ EOF
 chmod +x "$status_fixture/shim/curl"
 cat > "$status_fixture/shim/codex" <<'EOF'
 #!/bin/bash
+if [ "${1:-}" = --version ]; then
+  echo 'codex-cli 0.152.0'
+  exit 0
+fi
+[ -z "${AIT_CODEX_CAPTURE:-}" ] || printf '%s\n' "$*" > "$AIT_CODEX_CAPTURE"
 exit 0
 EOF
 chmod +x "$status_fixture/shim/codex"
@@ -475,7 +481,17 @@ export PATH="$status_fixture/shim:/usr/bin:/bin"
 status_output="$("$status_fixture/bin/status.sh")"
 assert_contains "$status_output" "plc"
 assert_contains "$status_output" "codex-appserver"
-pass "status table and Codex optional probe"
+assert_contains "$status_output" "immediate cleanup requires Codex 0.154+"
+sed -i '' 's/codex-cli 0\.152\.0/codex-cli 0.154.0/' "$status_fixture/shim/codex"
+status_output="$("$status_fixture/bin/status.sh")"
+assert_contains "$status_output" "exited-session cleanup immediate"
+codex_launch_capture="$TMP_ROOT/codex-launch.args"
+AIT_CODEX_CAPTURE="$codex_launch_capture" \
+AIT_CODEX_SHARED_SOCKET="$TMP_ROOT/codex-launch.sock" \
+CODEX_BIN="$status_fixture/shim/codex" NODE_BIN=/usr/bin/true \
+  "$REPO/bin/run-codex-appserver.sh"
+assert_contains "$(cat "$codex_launch_capture")" "thread_unload_delay_secs=0"
+pass "Codex protocol health and cleanup compatibility status"
 
 mkdir -p "$status_fixture/mcp/dist" "$status_fixture/project dir"
 : > "$status_fixture/mcp/dist/server.js"
@@ -791,6 +807,17 @@ codex_start_state="$TMP_ROOT/codex-start-state"
 codex_start_logs="$TMP_ROOT/codex-start-logs"
 codex_start_wrapper_pids="$TMP_ROOT/codex-start-wrapper-pids"
 mkdir -p "$codex_start_state" "$codex_start_logs" "$codex_start_wrapper_pids"
+mkdir -p "$codex_start_fixture/mcp/dist/codex"
+printf '{}\n' > "$codex_start_fixture/mcp/package.json"
+cat > "$codex_start_fixture/mcp/dist/codex/probe.js" <<'EOF'
+#!/usr/bin/env node
+const fs = require('node:fs')
+if (process.env.AIT_CODEX_PROBE_UNAVAILABLE) process.exit(2)
+process.exit(
+  !process.env.AIT_CODEX_FORCE_PROTOCOL_DEAD &&
+  fs.existsSync(process.env.AIT_CODEX_PROTOCOL_READY ?? '') ? 0 : 1,
+)
+EOF
 cat > "$codex_start_fixture/shim/curl" <<'EOF'
 #!/bin/bash
 echo '{}'
@@ -832,7 +859,7 @@ cat > "$codex_start_fixture/bin/run-codex-appserver.sh" <<'EOF'
 #!/bin/bash
 printf '%s' "$$" > "$AIT_START_WRAPPER_PID_DIR/codex-appserver"
 printf '%s\n' "$$" >> "$AIT_START_WRAPPER_PID_DIR/codex-launches"
-if [ "${AIT_START_MODE:-delayed}" = delayed ]; then sleep "${AIT_START_DELAY:-1}"; fi
+sleep "${AIT_CODEX_START_DELAY:-1}"
 python3 - "$AIT_CODEX_SHARED_SOCKET" <<'PY' &
 import socket
 import sys
@@ -846,13 +873,14 @@ except FileNotFoundError:
 server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 server.bind(path)
 server.listen(8)
+open(os.environ["AIT_CODEX_PROTOCOL_READY"], "w").close()
 while True:
     client, _ = server.accept()
     client.close()
 PY
 server_pid=$!
 printf '%s' "$server_pid" > "$AIT_START_WRAPPER_PID_DIR/codex-socket-owner"
-trap 'kill "$server_pid" 2>/dev/null || true; rm -f "$AIT_CODEX_SHARED_SOCKET"; exit 0' INT TERM
+trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true; rm -f "$AIT_CODEX_SHARED_SOCKET"; exit 0' INT TERM
 while :; do sleep 1; done
 EOF
 cat > "$codex_start_fixture/shim/codex" <<'EOF'
@@ -864,7 +892,8 @@ export PATH="$codex_start_fixture/shim:/usr/bin:/bin"
 export AIT_START_STATE="$codex_start_state"
 export AIT_START_WRAPPER_PID_DIR="$codex_start_wrapper_pids"
 export AIT_START_REPO="$(cd "$codex_start_fixture" && pwd)"
-export AIT_CODEX_SHARED_SOCKET="$codex_start_state/codex.sock"
+export AIT_CODEX_SHARED_SOCKET="$TMP_ROOT/codex.sock"
+export AIT_CODEX_PROTOCOL_READY="$TMP_ROOT/codex.protocol-ready"
 export AIT_LOG_DIR="$codex_start_logs"
 export AIT_START_MODE=delayed
 test_codex_pid=""
@@ -881,23 +910,32 @@ codex_cleanup() {
   for wrapper in plc pds appview; do
     kill "$(cat "$codex_start_wrapper_pids/$wrapper" 2>/dev/null)" 2>/dev/null || true
   done
-  rm -f "$codex_start_state"/* "$codex_start_wrapper_pids"/* "$codex_start_logs"/* "$AIT_CODEX_SHARED_SOCKET"
+  rm -f "$codex_start_state"/* "$codex_start_wrapper_pids"/* "$codex_start_logs"/* "$AIT_CODEX_SHARED_SOCKET" "$AIT_CODEX_PROTOCOL_READY"
   test_codex_pid=""
   test_decoy_pid=""
 }
 start_codex_fixture() {
-  export AIT_START_DELAY="$1"
+  export AIT_CODEX_START_DELAY="$1"
   "$codex_start_fixture/bin/run-codex-appserver.sh" >/dev/null 2>&1 &
   test_codex_pid=$!
   while [ ! -s "$codex_start_wrapper_pids/codex-appserver" ]; do sleep 0.1; done
 }
+seed_codex_core_state() {
+  local service
+  for service in plc pds appview; do printf '%s' "$$" > "$codex_start_state/$service"; done
+}
 
-start_codex_fixture 20
+seed_codex_core_state
+start_codex_fixture 2
 printf '%s' "$test_codex_pid" > "$codex_start_logs/ait-codex-appserver.pid"
 python3 -c 'import signal; signal.pause()' &
 test_decoy_pid=$!
 export AIT_CODEX_PIDS="$test_decoy_pid $test_codex_pid"
+set +e
 pidfile_output="$("$codex_start_fixture/bin/start-all.sh" 2>&1)"
+pidfile_status=$?
+set -e
+[ "$pidfile_status" -eq 0 ] || fail "Codex pre-bind adoption failed: $pidfile_output"
 assert_contains "$pidfile_output" "codex-appserver already running (pid $test_decoy_pid, adopted — discovered before socket bind); waiting for socket"
 assert_contains "$pidfile_output" "waiting for codex-appserver socket"
 socket_owner_pid="$(cat "$codex_start_wrapper_pids/codex-socket-owner")"
@@ -912,9 +950,14 @@ unset AIT_CODEX_PIDS AIT_CODEX_OWNER_PID
 codex_cleanup
 pass "Codex socket owner wins over pgrep and pidfile without a second wrapper"
 
-start_codex_fixture 20
+seed_codex_core_state
+start_codex_fixture 2
 rm -f "$codex_start_logs/ait-codex-appserver.pid"
+set +e
 discovered_output="$("$codex_start_fixture/bin/start-all.sh" 2>&1)"
+discovered_status=$?
+set -e
+[ "$discovered_status" -eq 0 ] || fail "Codex discovered-process adoption failed: $discovered_output"
 assert_contains "$discovered_output" "codex-appserver already running (pid $test_codex_pid, adopted — discovered before socket bind); waiting for socket"
 socket_owner_pid="$(cat "$codex_start_wrapper_pids/codex-socket-owner")"
 assert_contains "$discovered_output" "codex-appserver ready (pid $socket_owner_pid)"
@@ -927,6 +970,7 @@ false &
 exited_codex_pid=$!
 wait "$exited_codex_pid" 2>/dev/null || true
 printf '%s' "$exited_codex_pid" > "$codex_start_wrapper_pids/codex-appserver"
+seed_codex_core_state
 set +e
 exit_output="$("$codex_start_fixture/bin/start-all.sh" 2>&1)"
 exit_status=$?
@@ -938,18 +982,130 @@ assert_absent "$codex_start_wrapper_pids/codex-launches"
 codex_cleanup
 pass "adopted Codex process exit fails without a pidfile"
 
-export AIT_START_DELAY=1
+export AIT_CODEX_START_DELAY=1
+seed_codex_core_state
 codex_start_output="$("$codex_start_fixture/bin/start-all.sh" 2>&1)"
 assert_contains "$codex_start_output" "waiting for codex-appserver socket"
 assert_contains "$codex_start_output" "codex-appserver  running"
 codex_start_pid="$(cat "$codex_start_wrapper_pids/codex-appserver")"
 kill "$codex_start_pid" 2>/dev/null || true
+wait "$codex_start_pid" 2>/dev/null || true
 for wrapper in plc pds appview; do
   kill "$(cat "$codex_start_wrapper_pids/$wrapper" 2>/dev/null)" 2>/dev/null || true
 done
 rm -f "$codex_start_state"/plc "$codex_start_state"/pds "$codex_start_state"/appview
+rm -f "$AIT_CODEX_PROTOCOL_READY" "$AIT_CODEX_SHARED_SOCKET"
 rm -f "$codex_start_wrapper_pids"/plc "$codex_start_wrapper_pids"/pds "$codex_start_wrapper_pids"/appview "$codex_start_wrapper_pids"/codex-appserver
 pass "Codex start waits for the socket event and status treats it as informational"
+
+export AIT_START_MODE=delayed AIT_CODEX_START_DELAY=0 AIT_CODEX_FORCE_PROTOCOL_DEAD=1
+export AIT_TEST_CODEX_START_GRACE_SECONDS=3
+export AIT_CODEX_SHARED_SOCKET="$TMP_ROOT/codex-dead.sock"
+export AIT_CODEX_PROTOCOL_READY="$TMP_ROOT/codex-dead.protocol-ready"
+seed_codex_core_state
+set +e
+unhealthy_output="$("$codex_start_fixture/bin/start-all.sh" 2>&1)"
+unhealthy_status=$?
+set -e
+[ "$unhealthy_status" -ne 0 ] || fail "new protocol-dead Codex server unexpectedly passed start"
+grep -Fq "codex-appserver protocol-unhealthy" <<< "$unhealthy_output" || \
+  fail "new protocol-dead output was: $unhealthy_output; stderr: $(cat "$codex_start_logs/ait-codex-appserver.err" 2>/dev/null)"
+assert_not_contains "$unhealthy_output" "codex-appserver ready"
+assert_contains "$unhealthy_output" "ait stop; ait update; ait start"
+assert_contains "$unhealthy_output" "codex-appserver  protocol-unhealthy"
+new_unhealthy_pid="$(cat "$codex_start_wrapper_pids/codex-appserver")"
+kill "$new_unhealthy_pid" 2>/dev/null || true
+wait "$new_unhealthy_pid" 2>/dev/null || true
+for wrapper in plc pds appview; do
+  kill "$(cat "$codex_start_wrapper_pids/$wrapper" 2>/dev/null)" 2>/dev/null || true
+done
+rm -f "$codex_start_state"/* "$codex_start_wrapper_pids"/* "$codex_start_logs"/*
+pass "new socket-bound protocol-dead Codex server fails start promptly"
+
+export AIT_CODEX_SHARED_SOCKET="$TMP_ROOT/codex.sock"
+export AIT_CODEX_PROTOCOL_READY="$TMP_ROOT/codex.protocol-ready"
+start_codex_fixture 0
+while [ ! -S "$AIT_CODEX_SHARED_SOCKET" ]; do sleep 0.1; done
+rm -f "$AIT_CODEX_PROTOCOL_READY"
+export AIT_CODEX_FORCE_PROTOCOL_DEAD=1
+seed_codex_core_state
+set +e
+adopted_unhealthy_output="$("$codex_start_fixture/bin/start-all.sh" 2>&1)"
+adopted_unhealthy_status=$?
+set -e
+[ "$adopted_unhealthy_status" -ne 0 ] || fail "adopted protocol-dead Codex server unexpectedly passed start"
+assert_contains "$adopted_unhealthy_output" "codex-appserver protocol-unhealthy"
+assert_not_contains "$adopted_unhealthy_output" "codex-appserver ready"
+codex_cleanup
+unset AIT_CODEX_FORCE_PROTOCOL_DEAD
+unset AIT_TEST_CODEX_START_GRACE_SECONDS
+pass "adopted socket-bound protocol-dead Codex server fails start promptly"
+
+export AIT_CODEX_SHARED_SOCKET="$TMP_ROOT/codex.sock"
+export AIT_CODEX_PROTOCOL_READY="$TMP_ROOT/codex.protocol-ready"
+start_codex_fixture 0
+while [ ! -S "$AIT_CODEX_SHARED_SOCKET" ]; do sleep 0.1; done
+export AIT_CODEX_PROBE_UNAVAILABLE=1
+seed_codex_core_state
+set +e
+probe_unavailable_output="$("$codex_start_fixture/bin/start-all.sh" 2>&1)"
+probe_unavailable_status=$?
+set -e
+[ "$probe_unavailable_status" -ne 0 ] || fail "unavailable Codex health probe unexpectedly passed start"
+assert_contains "$probe_unavailable_output" "codex-appserver health probe unavailable"
+assert_contains "$probe_unavailable_output" "codex-appserver  skipped (health probe unavailable"
+assert_not_contains "$probe_unavailable_output" "codex-appserver protocol-unhealthy"
+assert_not_contains "$probe_unavailable_output" "ait stop"
+codex_cleanup
+unset AIT_CODEX_PROBE_UNAVAILABLE
+pass "unavailable Codex probe reports a build problem without condemning the server"
+
+lifecycle="$TMP_ROOT/codex-session-lifecycle"
+mkdir -p "$lifecycle/bin" "$lifecycle/mcp/dist/codex" "$lifecycle/shim" \
+  "$lifecycle/logs" "$lifecycle/artifacts" "$lifecycle-wrapper-pids"
+cp "$REPO/bin/codex-session.sh" "$lifecycle/bin/codex-session.sh"
+chmod +x "$lifecycle/bin/codex-session.sh"
+: > "$lifecycle/mcp/dist/server.js"
+: > "$lifecycle/mcp/dist/codex/tuiRelay.js"
+cat > "$lifecycle/shim/node" <<'EOF'
+#!/bin/bash
+printf '%s' "$$" > "$AIT_DRIVER_PID_FILE"
+printf '%s\n%s\n' "$AIT_FAKE_SHARED_SOCKET" '11111111-1111-4111-8111-111111111111' > "$AIT_CODEX_SOCKET_FILE"
+trap 'exit 0' INT TERM
+while :; do sleep 1; done
+EOF
+cat > "$lifecycle/shim/codex" <<'EOF'
+#!/bin/bash
+printf '%s\n' "$*" > "$AIT_TUI_CAPTURE"
+exit 0
+EOF
+chmod +x "$lifecycle/shim/node" "$lifecycle/shim/codex"
+for artifact in rollout transcript thread-map identity; do
+  printf '%s preserved\n' "$artifact" > "$lifecycle/artifacts/$artifact"
+done
+artifact_hash_before="$(shasum -a 256 "$lifecycle"/artifacts/*)"
+sleep 120 &
+shared_fixture_pid=$!
+printf '%s' "$shared_fixture_pid" > "$lifecycle/logs/ait-codex-appserver.pid"
+printf '%s' "$shared_fixture_pid" > "$lifecycle-wrapper-pids/shared"
+sleep 120 &
+second_session_pid=$!
+printf '%s' "$second_session_pid" > "$lifecycle-wrapper-pids/second-session"
+export AIT_LOG_DIR="$lifecycle/logs"
+export AIT_DRIVER_PID_FILE="$lifecycle/driver.pid"
+export AIT_FAKE_SHARED_SOCKET="$lifecycle/shared.sock"
+export AIT_TUI_CAPTURE="$lifecycle/tui.args"
+PATH="$lifecycle/shim:/usr/bin:/bin" "$lifecycle/bin/codex-session.sh" --resume 11111111-1111-4111-8111-111111111111 >/dev/null 2>&1
+driver_fixture_pid="$(cat "$lifecycle/driver.pid")"
+process_alive "$driver_fixture_pid" && fail "exited Codex session left its driver running"
+process_alive "$shared_fixture_pid" || fail "exited Codex session stopped the shared app-server"
+process_alive "$second_session_pid" || fail "exited Codex session stopped another session"
+assert_contains "$(cat "$lifecycle/tui.args")" "resume 11111111-1111-4111-8111-111111111111"
+assert_same "$artifact_hash_before" "$(shasum -a 256 "$lifecycle"/artifacts/*)"
+kill "$shared_fixture_pid" "$second_session_pid" 2>/dev/null || true
+wait "$shared_fixture_pid" "$second_session_pid" 2>/dev/null || true
+unset AIT_LOG_DIR AIT_DRIVER_PID_FILE AIT_FAKE_SHARED_SOCKET AIT_TUI_CAPTURE
+pass "Codex TUI exit reaps its driver and preserves shared state and session artifacts"
 
 public_asset="$TMP_ROOT/public-install.sh"
 sed -e 's/__AIT_RELEASE_TAG__/v0.1.2/g' \

@@ -12,7 +12,7 @@ BREW_PREFIX="$(brew --prefix 2>/dev/null || true)"
 CLI_LINK="$BREW_PREFIX/bin/ait"
 RELEASE_PAGE='https://github.com/natewalton/ait-protocol/releases/latest'
 OLD_COMMIT=''; OLD_VERSION=''; TARGET_COMMIT=''; TARGET_VERSION=''; TARGET_TAG=''
-WAS_READY=0; RECOVERY=''; LOCK_OWNED=0; TMP_DIR=''
+WAS_READY=0; RECOVERY=''; LOCK_OWNED=0; TMP_DIR=''; SPARE_PIDS=''
 
 fail() { echo "error: $*" >&2; exit 1; }
 sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'; else sha256sum "$1" | awk '{print $1}'; fi; }
@@ -90,13 +90,29 @@ acquire_lock() {
 
 check_sessions() {
   # A harness session runs the MCP server, so its own program is node. The codex
-  # app-server only names the same file in its -c arguments; matching the path
-  # anywhere on the command line counts that app-server as a session and refuses
-  # an update that the stop step below would have cleared. Same rule as
-  # bin/uninstall.sh.
-  local pids
-  pids="$(ps -ax -o pid=,command= | awk -v needle="$MANAGED/mcp/dist/server.js" 'index($0, needle) && $2 ~ /(^|\/)node$/ {print $1}')"
-  [ -z "$pids" ] || fail "active AIT session process(es) use this checkout: $pids; exit every harness session and retry"
+  # app-server only names the same file in its -c arguments, so matching the path
+  # anywhere on a command line counted that app-server as a session.
+  # A Claude Code spare is a prewarmed process that holds an MCP child without
+  # being a session anyone is using, so it is reported at the end, not refused.
+  local rows sessions
+  rows="$(ps -ax -o pid=,ppid=,command= | awk -v needle="$MANAGED/mcp/dist/server.js" '
+    { parent[$1] = $2; prog[$1] = $3; first_arg[$1] = $4 }
+    $3 ~ /(^|\/)node$/ && index($0, needle) { holder[$1] = 1 }
+    END {
+      for (pid in holder) {
+        par = parent[pid]
+        # A spare is claude started with bg-spare as its first argument. Reading
+        # the marker from that one field, rather than from anywhere in the row,
+        # keeps a live session whose prompt text happens to say bg-spare from
+        # being waved through as an idle spare.
+        if (prog[par] ~ /(^|\/)claude$/ && first_arg[par] == "bg-spare") print "spare", par
+        else print "session", pid
+      }
+    }
+  ')"
+  sessions="$(printf '%s\n' "$rows" | awk '$1 == "session" { printf " %s", $2 }')"
+  SPARE_PIDS="$(printf '%s\n' "$rows" | awk '$1 == "spare" { print $2 }' | sort -u | tr '\n' ' ' | sed 's/ *$//')"
+  [ -z "$sessions" ] || fail "active AIT session process(es) use this checkout:$sessions; exit every harness session and retry"
 }
 
 verify_asset() {
@@ -161,6 +177,11 @@ update() {
   RECOVERY=''
   echo "Updated AIT ${OLD_VERSION:-pre-release} -> $TARGET_VERSION"
   echo "Release notes: $RELEASE_PAGE"
+  if [ -n "$SPARE_PIDS" ]; then
+    echo "warning: an idle Claude Code spare still runs this checkout's pre-update MCP server."
+    echo "  Run: kill $SPARE_PIDS"
+    echo "  Left alone, that spare becomes your next session and serves it the old build."
+  fi
 }
 
 update

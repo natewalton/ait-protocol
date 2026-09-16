@@ -210,7 +210,7 @@ pass 'ready update restores ready state'
 
 : > "$ROOT/calls"
 noop="$(run_update AIT_TEST_STATE=partial \
-  "AIT_TEST_PS_OUTPUT=4242 node --enable-source-maps $managed_real/mcp/dist/server.js")" || fail 'no-op failed'
+  "AIT_TEST_PS_OUTPUT=4242 1 node --enable-source-maps $managed_real/mcp/dist/server.js")" || fail 'no-op failed'
 contains "$noop" 'already up to date'
 [ ! -s "$ROOT/calls" ] || fail 'no-op called services'
 pass 'no-op performs no lifecycle or session checks'
@@ -248,7 +248,7 @@ printf dirty > "$managed/dirty"
 refuses 'dirty checkout refusal' dirty run_update AIT_TEST_STATE=stopped
 rm "$managed/dirty"
 refuses 'active session refusal' 'active AIT session' run_update AIT_TEST_STATE=stopped \
-  "AIT_TEST_PS_OUTPUT=4242 node --enable-source-maps $managed_real/mcp/dist/server.js"
+  "AIT_TEST_PS_OUTPUT=4242 1 node --enable-source-maps $managed_real/mcp/dist/server.js"
 mkdir -p "$ROOT/state/ait-protocol/update.lock"; echo $$ > "$ROOT/state/ait-protocol/update.lock/pid"
 refuses 'live lock refusal' 'another AIT update' run_update AIT_TEST_STATE=stopped
 rm -rf "$ROOT/state/ait-protocol/update.lock"
@@ -256,11 +256,27 @@ refuses 'partial service refusal' 'partial or has an unknown status' run_update 
 pass 'ownership, session, lock, and service boundaries refuse before checkout'
 
 reset_managed
-appserver="1645 /opt/bin/codex app-server --listen unix:///tmp/codex.sock -c mcp_servers.ait.args=[\"$managed_real/mcp/dist/server.js\"]"
+appserver="1645 1 /opt/bin/codex app-server --listen unix:///tmp/codex.sock -c mcp_servers.ait.args=[\"$managed_real/mcp/dist/server.js\"]"
 out="$(run_update AIT_TEST_STATE=stopped "AIT_TEST_PS_OUTPUT=$appserver")" \
   || fail "codex app-server counted as a session: $out"
 contains "$out" 'Updated AIT 0.1.1 -> 0.1.2'
 pass 'the codex app-server naming the MCP path is not a session'
+
+reset_managed
+spare="11613 11571 node --enable-source-maps $managed_real/mcp/dist/server.js
+11571 1 claude bg-spare --bg-spare /tmp/cc-daemon/spare/b1a"
+out="$(run_update AIT_TEST_STATE=stopped "AIT_TEST_PS_OUTPUT=$spare")" \
+  || fail "idle spare blocked the update: $out"
+contains "$out" 'kill 11571'
+contains "$out" 'serves it the old build'
+pass 'an idle harness spare warns with the pid to kill instead of refusing'
+
+reset_managed
+prompt_session="47525 47382 node --enable-source-maps $managed_real/mcp/dist/server.js
+47382 1 claude --resume abc --model claude-opus-5 review the bg-spare classifier"
+refuses 'session naming bg-spare in its prompt still refuses' 'active AIT session' \
+  run_update AIT_TEST_STATE=stopped "AIT_TEST_PS_OUTPUT=$prompt_session"
+pass 'the spare marker is read from one argument, not from anywhere in the row'
 
 reset_managed
 set +e; recovery="$(run_update AIT_TEST_STATE=stopped AIT_TEST_FAIL_REBUILD=1 2>&1)"; rc=$?; set -e

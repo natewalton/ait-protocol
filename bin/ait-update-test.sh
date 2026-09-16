@@ -62,6 +62,7 @@ managed="$ROOT/managed"
 mkdir -p "$source_repo/bin" "$source_repo/appview/dist" "$source_repo/mcp/dist"
 cp "$REPO/ait" "$source_repo/ait"
 cp "$REPO/bin/update.sh" "$source_repo/bin/update.sh"
+cp "$REPO/bin/lib-mcp-holders.sh" "$source_repo/bin/lib-mcp-holders.sh"
 cat > "$source_repo/bin/install.sh" <<'EOF'
 #!/bin/sh
 [ "$1" = --rebuild-only ] || exit 2

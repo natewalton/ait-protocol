@@ -12,6 +12,9 @@ LOG_ROOT="${AIT_LOG_DIR:-/tmp}"
 RUNTIME_TMP="${TMPDIR:-/tmp}"
 PUBLIC_INSTALL='/bin/bash -c "$(curl -fsSL https://github.com/natewalton/ait-protocol/releases/latest/download/install.sh)"'
 CLI_LINK="$(brew --prefix 2>/dev/null || true)/bin/ait"
+SPARE_PIDS=''
+# shellcheck source=bin/lib-mcp-holders.sh
+. "$REPO/bin/lib-mcp-holders.sh"
 
 fail() {
   echo "error: $*" >&2
@@ -25,7 +28,7 @@ find_owned_cli() {
 }
 
 preflight() {
-  local head origin release_commit sessions version lock_pid=""
+  local head origin release_commit rows sessions version lock_pid=""
   case "$REPO" in ""|/|"$HOME") fail "refusing unsafe managed checkout path: $REPO" ;; esac
   [ -d "$INSTALL_ROOT" ] || fail "managed checkout not found: $INSTALL_ROOT"
   [ "$(cd -P "$INSTALL_ROOT" && pwd)" = "$REPO" ] ||
@@ -48,8 +51,10 @@ preflight() {
       fail "AIT update is active (pid $lock_pid); let it finish, then retry"
     fi
   fi
-  sessions="$(ps -ax -o pid=,command= | awk -v needle="$REPO/mcp/dist/server.js" 'index($0, needle) && $2 ~ /(^|\/)node$/ {print $1}')"
-  [ -z "$sessions" ] || fail "active AIT harness session process(es): $sessions; exit them and retry"
+  rows="$(mcp_holders "$REPO")"
+  sessions="$(mcp_session_pids "$rows")"
+  [ -z "$sessions" ] || fail "active AIT harness session process(es):$sessions; exit them and retry"
+  SPARE_PIDS="$(mcp_spare_pids "$rows")"
 }
 
 confirm() {
@@ -139,6 +144,13 @@ uninstall() {
   echo "Project .mcp.json entries and shared prerequisites were preserved."
   echo "Project cleanup: claude mcp remove ait-protocol --scope project"
   echo "Reinstall: $PUBLIC_INSTALL"
+  if [ -n "$SPARE_PIDS" ]; then
+    case "$SPARE_PIDS" in
+      *\ *) echo "warning: idle Claude Code spares still run the removed checkout's MCP server." ;;
+      *) echo "warning: an idle Claude Code spare still runs the removed checkout's MCP server." ;;
+    esac
+    echo "  Run: kill $SPARE_PIDS"
+  fi
 }
 
 uninstall

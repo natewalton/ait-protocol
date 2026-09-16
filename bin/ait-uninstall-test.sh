@@ -33,9 +33,14 @@ if [ "$*" = "--prefix postgresql@17" ]; then printf '%s\n' "$AIT_TEST_PG_PREFIX"
 elif [ "$*" = "--prefix" ]; then printf '%s\n' "$AIT_TEST_BREW_PREFIX"
 else exit 2; fi
 EOF
+# The process table the holder check reads. Only the -ax listing is answered
+# from the fixture, so any other ps caller still sees real processes.
 cat > "$SHIMS/ps" <<'EOF'
 #!/bin/bash
-if [ -n "${AIT_TEST_PS_OUTPUT:-}" ]; then printf '%s\n' "$AIT_TEST_PS_OUTPUT"; else exec /bin/ps "$@"; fi
+case "$1" in
+  -ax) [ -z "${AIT_TEST_PS_OUTPUT:-}" ] || { printf '%s\n' "$AIT_TEST_PS_OUTPUT"; exit 0; } ;;
+esac
+exec /bin/ps "$@"
 EOF
 cat > "$SHIMS/rm" <<'EOF'
 #!/bin/bash
@@ -71,6 +76,7 @@ make_fixture() {
   cp "$ROOT/VERSION" "$FX_REPO/VERSION"
   cp "$ROOT/bin/install.sh" "$FX_REPO/bin/install.sh"
   cp "$ROOT/bin/uninstall.sh" "$FX_REPO/bin/uninstall.sh"
+  cp "$ROOT/bin/lib-mcp-holders.sh" "$FX_REPO/bin/lib-mcp-holders.sh"
   chmod +x "$FX_REPO/ait" "$FX_REPO/bin/install.sh" "$FX_REPO/bin/uninstall.sh"
   cat > "$FX_REPO/bin/stop-all.sh" <<'EOF'
 #!/bin/bash
@@ -178,10 +184,38 @@ present "$FX_CLI" "foreign CLI"
 pass "release and CLI ownership fail closed"
 
 make_fixture session
-run_uninstall 'uninstall AIT\n' "AIT_TEST_PS_OUTPUT=123 node $FX_REPO/mcp/dist/server.js"
+run_uninstall 'uninstall AIT\n' "AIT_TEST_PS_OUTPUT=123 1 node $FX_REPO/mcp/dist/server.js"
 [ "$STATUS" -eq 1 ] || fail "active session exited $STATUS"
 contains "$OUTPUT" 'active AIT harness session' "active session"
 present "$FX_REPO" "active session"
+
+make_fixture spare
+run_uninstall 'uninstall AIT\n' "AIT_TEST_PS_OUTPUT=11613 11571 node $FX_REPO/mcp/dist/server.js
+11571 1 claude bg-spare --bg-spare /tmp/cc-daemon/spare/b1a"
+[ "$STATUS" -eq 0 ] || fail "idle spare blocked the uninstall: $OUTPUT"
+contains "$OUTPUT" 'kill 11571' "idle spare"
+absent "$FX_REPO" "idle spare"
+
+make_fixture appserver
+run_uninstall 'uninstall AIT\n' "AIT_TEST_PS_OUTPUT=1645 1 /opt/bin/codex app-server --listen unix:///tmp/codex.sock -c mcp_servers.ait.args=[\"$FX_REPO/mcp/dist/server.js\"]"
+[ "$STATUS" -eq 0 ] || fail "codex app-server counted as a session: $OUTPUT"
+absent "$FX_REPO" "codex app-server"
+
+make_fixture prompt_session
+run_uninstall 'uninstall AIT\n' "AIT_TEST_PS_OUTPUT=47525 47382 node $FX_REPO/mcp/dist/server.js
+47382 1 claude --resume abc review the bg-spare classifier"
+[ "$STATUS" -eq 1 ] || fail "session naming bg-spare in its prompt was waved through: $OUTPUT"
+contains "$OUTPUT" 'active AIT harness session' "prompt names bg-spare"
+present "$FX_REPO" "prompt names bg-spare"
+
+make_fixture mixed
+run_uninstall 'uninstall AIT\n' "AIT_TEST_PS_OUTPUT=11613 11571 node $FX_REPO/mcp/dist/server.js
+11571 1 claude bg-spare --bg-spare /tmp/cc-daemon/spare/b1a
+22222 22221 node $FX_REPO/mcp/dist/server.js
+22221 1 claude --resume def --model claude-opus-5"
+[ "$STATUS" -eq 1 ] || fail "a spare masked a live session: $OUTPUT"
+contains "$OUTPUT" '22222' "spare beside a live session"
+present "$FX_REPO" "spare beside a live session"
 
 make_fixture live_lock
 mkdir -p "$FX_STATE/ait-protocol/update.lock"

@@ -8,6 +8,8 @@ LOCK="${XDG_STATE_HOME:-$HOME/.local/state}/ait-protocol/update.lock"
 STATUS_SCRIPT="$MANAGED/bin/status.sh"
 START_SCRIPT="$MANAGED/bin/start-all.sh"
 STOP_SCRIPT="$MANAGED/bin/stop-all.sh"
+# shellcheck source=bin/lib-mcp-holders.sh
+. "$MANAGED/bin/lib-mcp-holders.sh"
 BREW_PREFIX="$(brew --prefix 2>/dev/null || true)"
 CLI_LINK="$BREW_PREFIX/bin/ait"
 RELEASE_PAGE='https://github.com/natewalton/ait-protocol/releases/latest'
@@ -89,29 +91,11 @@ acquire_lock() {
 }
 
 check_sessions() {
-  # A harness session runs the MCP server, so its own program is node. The codex
-  # app-server only names the same file in its -c arguments, so matching the path
-  # anywhere on a command line counted that app-server as a session.
-  # A Claude Code spare is a prewarmed process that holds an MCP child without
-  # being a session anyone is using, so it is reported at the end, not refused.
-  local rows sessions
-  rows="$(ps -ax -o pid=,ppid=,command= | awk -v needle="$MANAGED/mcp/dist/server.js" '
-    { parent[$1] = $2; prog[$1] = $3; first_arg[$1] = $4 }
-    $3 ~ /(^|\/)node$/ && index($0, needle) { holder[$1] = 1 }
-    END {
-      for (pid in holder) {
-        par = parent[pid]
-        # A spare is claude started with bg-spare as its first argument. Reading
-        # the marker from that one field, rather than from anywhere in the row,
-        # keeps a live session whose prompt text happens to say bg-spare from
-        # being waved through as an idle spare.
-        if (prog[par] ~ /(^|\/)claude$/ && first_arg[par] == "bg-spare") print "spare", par
-        else print "session", pid
-      }
-    }
-  ')"
-  sessions="$(printf '%s\n' "$rows" | awk '$1 == "session" { printf " %s", $2 }')"
-  SPARE_PIDS="$(printf '%s\n' "$rows" | awk '$1 == "spare" { print $2 }' | sort -u | tr '\n' ' ' | sed 's/ *$//')"
+  local rows
+  rows="$(mcp_holders "$MANAGED")"
+  SPARE_PIDS="$(mcp_spare_pids "$rows")"
+  local sessions
+  sessions="$(mcp_session_pids "$rows")"
   [ -z "$sessions" ] || fail "active AIT session process(es) use this checkout:$sessions; exit every harness session and retry"
 }
 
@@ -178,7 +162,10 @@ update() {
   echo "Updated AIT ${OLD_VERSION:-pre-release} -> $TARGET_VERSION"
   echo "Release notes: $RELEASE_PAGE"
   if [ -n "$SPARE_PIDS" ]; then
-    echo "warning: an idle Claude Code spare still runs this checkout's pre-update MCP server."
+    case "$SPARE_PIDS" in
+      *\ *) echo "warning: idle Claude Code spares still run this checkout's pre-update MCP server." ;;
+      *) echo "warning: an idle Claude Code spare still runs this checkout's pre-update MCP server." ;;
+    esac
     echo "  Run: kill $SPARE_PIDS"
     echo "  Left alone, that spare becomes your next session and serves it the old build."
   fi

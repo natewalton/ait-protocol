@@ -28,12 +28,11 @@ cat > "$ROOT/bin/curl" <<'EOF'
 for arg in "$@"; do case "$arg" in file://*) exec /usr/bin/curl -fsSL "$arg" ;; esac; done
 exit 1
 EOF
-cat > "$ROOT/bin/pgrep" <<'EOF'
+cat > "$ROOT/bin/ps" <<'EOF'
 #!/bin/sh
-[ "${AIT_TEST_ACTIVE:-0}" = 1 ] && echo 4242
-exit 0
+if [ -n "${AIT_TEST_PS_OUTPUT:-}" ]; then printf '%s\n' "$AIT_TEST_PS_OUTPUT"; else exec /bin/ps "$@"; fi
 EOF
-chmod +x "$ROOT/bin/curl" "$ROOT/bin/pgrep"
+chmod +x "$ROOT/bin/curl" "$ROOT/bin/ps"
 mkdir -p "$ROOT/cli/bin"
 cat > "$ROOT/bin/brew" <<EOF
 #!/bin/sh
@@ -121,6 +120,8 @@ write_api
 git clone -q "$origin" "$managed"
 git -C "$managed" checkout -q --detach "$base"
 mkdir -p "$ROOT/cli" "$ROOT/home/.claude/skills" "$ROOT/home/.agents/skills"
+# update.sh canonicalizes its own checkout path, so the ps fixtures below name
+# the resolved path too, or the session check would not see them.
 managed_real="$(cd "$managed" && pwd -P)"
 ln -s "$managed_real/ait" "$ROOT/cli/bin/ait"
 ln -s "$managed/skill-source" "$ROOT/home/.claude/skills/delivery-coordination"
@@ -193,7 +194,8 @@ run_update AIT_TEST_STATE=ready >/dev/null
 pass 'ready update restores ready state'
 
 : > "$ROOT/calls"
-noop="$(run_update AIT_TEST_STATE=partial AIT_TEST_ACTIVE=1)" || fail 'no-op failed'
+noop="$(run_update AIT_TEST_STATE=partial \
+  "AIT_TEST_PS_OUTPUT=4242 node --enable-source-maps $managed_real/mcp/dist/server.js")" || fail 'no-op failed'
 contains "$noop" 'already up to date'
 [ ! -s "$ROOT/calls" ] || fail 'no-op called services'
 pass 'no-op performs no lifecycle or session checks'
@@ -230,12 +232,20 @@ reset_managed
 printf dirty > "$managed/dirty"
 refuses 'dirty checkout refusal' dirty run_update AIT_TEST_STATE=stopped
 rm "$managed/dirty"
-refuses 'active session refusal' 'active AIT session' run_update AIT_TEST_STATE=stopped AIT_TEST_ACTIVE=1
+refuses 'active session refusal' 'active AIT session' run_update AIT_TEST_STATE=stopped \
+  "AIT_TEST_PS_OUTPUT=4242 node --enable-source-maps $managed_real/mcp/dist/server.js"
 mkdir -p "$ROOT/state/ait-protocol/update.lock"; echo $$ > "$ROOT/state/ait-protocol/update.lock/pid"
 refuses 'live lock refusal' 'another AIT update' run_update AIT_TEST_STATE=stopped
 rm -rf "$ROOT/state/ait-protocol/update.lock"
 refuses 'partial service refusal' 'partial or has an unknown status' run_update AIT_TEST_STATE=partial
 pass 'ownership, session, lock, and service boundaries refuse before checkout'
+
+reset_managed
+appserver="1645 /opt/bin/codex app-server --listen unix:///tmp/codex.sock -c mcp_servers.ait.args=[\"$managed_real/mcp/dist/server.js\"]"
+out="$(run_update AIT_TEST_STATE=stopped "AIT_TEST_PS_OUTPUT=$appserver")" \
+  || fail "codex app-server counted as a session: $out"
+contains "$out" 'Updated AIT 0.1.1 -> 0.1.2'
+pass 'the codex app-server naming the MCP path is not a session'
 
 reset_managed
 set +e; recovery="$(run_update AIT_TEST_STATE=stopped AIT_TEST_FAIL_REBUILD=1 2>&1)"; rc=$?; set -e

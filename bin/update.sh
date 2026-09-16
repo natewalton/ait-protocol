@@ -89,8 +89,13 @@ acquire_lock() {
 }
 
 check_sessions() {
+  # A harness session runs the MCP server, so its own program is node. The codex
+  # app-server only names the same file in its -c arguments; matching the path
+  # anywhere on the command line counts that app-server as a session and refuses
+  # an update that the stop step below would have cleared. Same rule as
+  # bin/uninstall.sh.
   local pids
-  pids="$(pgrep -f "$MANAGED/mcp/dist/server.js" 2>/dev/null || true)"
+  pids="$(ps -ax -o pid=,command= | awk -v needle="$MANAGED/mcp/dist/server.js" 'index($0, needle) && $2 ~ /(^|\/)node$/ {print $1}')"
   [ -z "$pids" ] || fail "active AIT session process(es) use this checkout: $pids; exit every harness session and retry"
 }
 

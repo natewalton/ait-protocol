@@ -217,6 +217,13 @@ run_uninstall 'uninstall AIT\n' "AIT_TEST_PS_OUTPUT=11613 11571 node $FX_REPO/mc
 contains "$OUTPUT" '22222' "spare beside a live session"
 present "$FX_REPO" "spare beside a live session"
 
+make_fixture desktop_spare
+run_uninstall 'uninstall AIT\n' "AIT_TEST_PS_OUTPUT=11613 11571 node $FX_REPO/mcp/dist/server.js
+11571 1 /Users/x/Library/Application Support/Claude/claude-code/2.1.270/claude.app/Contents/MacOS/claude bg-spare --bg-spare /tmp/cc-daemon/spare/b1a"
+[ "$STATUS" -eq 0 ] || fail "spare at a path containing a space blocked the uninstall: $OUTPUT"
+contains "$OUTPUT" 'kill 11571' "spare at a spacey path"
+absent "$FX_REPO" "spare at a spacey path"
+
 make_fixture live_lock
 mkdir -p "$FX_STATE/ait-protocol/update.lock"
 printf '%s\n' "$$" > "$FX_STATE/ait-protocol/update.lock/pid"

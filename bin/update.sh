@@ -167,7 +167,7 @@ update() {
       *) echo "warning: an idle Claude Code spare still runs this checkout's pre-update MCP server." ;;
     esac
     echo "  Run: kill $SPARE_PIDS"
-    echo "  Left alone, that spare becomes your next session and serves it the old build."
+    echo "  Left alone, it becomes your next session and serves it the old build."
   fi
 }
 

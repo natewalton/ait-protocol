@@ -188,7 +188,9 @@ run_update() {
     AIT_RELEASE_API_URL="file://$api" AIT_TEST_CALLS="$ROOT/calls" "$@" "$managed/bin/update.sh"
 }
 
-bash -n "$REPO/bin/update.sh" "$REPO/ait"
+for f in bin/update.sh bin/lib-mcp-holders.sh ait; do
+  bash -n "$REPO/$f" || fail "syntax: $f"   # bash -n parses only its first operand
+done
 contains "$("$REPO/ait" help update)" 'Usage: ait update'
 ! grep -Fq 'EXPECTED_ORIGIN' "$REPO/bin/update.sh" || fail 'updater retained exact-origin policy'
 pass 'syntax and help'
@@ -278,6 +280,23 @@ prompt_session="47525 47382 node --enable-source-maps $managed_real/mcp/dist/ser
 refuses 'session naming bg-spare in its prompt still refuses' 'active AIT session' \
   run_update AIT_TEST_STATE=stopped "AIT_TEST_PS_OUTPUT=$prompt_session"
 pass 'the spare marker is read from one argument, not from anywhere in the row'
+
+reset_managed
+mixed="11613 11571 node --enable-source-maps $managed_real/mcp/dist/server.js
+11571 1 claude bg-spare --bg-spare /tmp/cc-daemon/spare/b1a
+22222 22221 node --enable-source-maps $managed_real/mcp/dist/server.js
+22221 1 claude --resume def --model claude-opus-5"
+refuses 'a spare beside a live session still refuses' '22222' \
+  run_update AIT_TEST_STATE=stopped "AIT_TEST_PS_OUTPUT=$mixed"
+pass 'a spare does not mask a session running beside it'
+
+reset_managed
+desktop_spare="11613 11571 node --enable-source-maps $managed_real/mcp/dist/server.js
+11571 1 /Users/x/Library/Application Support/Claude/claude-code/2.1.270/claude.app/Contents/MacOS/claude bg-spare --bg-spare /tmp/cc-daemon/spare/b1a"
+out="$(run_update AIT_TEST_STATE=stopped "AIT_TEST_PS_OUTPUT=$desktop_spare")" \
+  || fail "spare at a path containing a space blocked the update: $out"
+contains "$out" 'kill 11571'
+pass 'a spare is recognized when claude sits at a path containing a space'
 
 reset_managed
 set +e; recovery="$(run_update AIT_TEST_STATE=stopped AIT_TEST_FAIL_REBUILD=1 2>&1)"; rc=$?; set -e

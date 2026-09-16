@@ -47,9 +47,11 @@ jobs:
           test "$(cat VERSION)" = "$RELEASE_VERSION"
           git fetch --quiet origin main
           test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
-          bash -n install.sh ait bin/install.sh bin/update.sh bin/uninstall.sh \
+          for f in install.sh ait bin/install.sh bin/update.sh bin/uninstall.sh \
             bin/lib-mcp-holders.sh bin/lib-service-pids.sh \
-            bin/ait-update-test.sh bin/ait-uninstall-test.sh
+            bin/ait-update-test.sh bin/ait-uninstall-test.sh; do
+            bash -n "$f"   # one file per call: bash -n parses only its first operand
+          done
           bin/ait-test.sh
           bin/ait-uninstall-test.sh
           bin/ait-update-test.sh

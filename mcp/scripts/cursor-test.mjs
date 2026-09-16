@@ -107,6 +107,29 @@ const reloaded = storage.loadIdentity()
 check('reload finds identity', reloaded?.handle === stub.handle)
 check('reload has fresh JWT', reloaded?.accessJwt === 'access-2')
 
+// Case normalization. Every session-id source is lowercased before it reaches
+// UUID_SHAPE, so one logical conversation cannot derive two encryption keys or
+// two identity files. Exercised here through the test-override source; the
+// production sources (AIT_SESSION_ID, CLAUDE_CODE_SESSION_ID) normalize on the
+// same line. Without it an uppercase id resolves to nothing, and `join` reads
+// that as a brand-new session and mints a second handle.
+const UPPER = SESSION.toUpperCase()
+process.env.AIT_MCP_TEST_SESSION_ID = UPPER
+let uppercaseRead = null
+try {
+  // Read-only on purpose. A save first would create the file at whatever path
+  // the uppercase id derives, so the handle would round-trip even if the
+  // lowercasing were gone and the check could no longer fail.
+  uppercaseRead = storage.loadIdentity()
+} catch (err) {
+  check('uppercase session id loads without throwing', false, String(err))
+}
+check(
+  'uppercase session id reads the identity written under the lowercase id',
+  uppercaseRead?.accessJwt === 'access-2',
+)
+process.env.AIT_MCP_TEST_SESSION_ID = SESSION
+
 rmSync(target)
 rmSync(process.env.XDG_DATA_HOME, { recursive: true, force: true })
 

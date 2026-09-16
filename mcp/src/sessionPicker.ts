@@ -4,9 +4,13 @@ import * as path from 'node:path'
 import * as readline from 'node:readline'
 import { pathToFileURL } from 'node:url'
 import { readThreadSessionId } from './codex/threadMap.js'
-import { readPublicIdentity, STORAGE_DIR } from './storage.js'
+import { canonicalUuid, readPublicIdentity, STORAGE_DIR } from './storage.js'
 
-const UUID_SHAPE =
+// A Codex thread id is a filename component, read back verbatim from
+// codex-thread-<id>.json and from rollout metadata, so it is shape-checked
+// without being re-cased. A Claude session id is the opposite: it becomes an
+// identity key, so it goes through canonicalUuid instead of this pattern.
+const THREAD_ID_SHAPE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const APPVIEW_URL = process.env.APPVIEW_URL ?? 'http://localhost:2585'
 
@@ -97,8 +101,8 @@ async function claudeSessions(): Promise<ResumableSession[]> {
     }
     for (const fileEntry of files) {
       if (!fileEntry.isFile() || !fileEntry.name.endsWith('.jsonl')) continue
-      const identifier = fileEntry.name.slice(0, -'.jsonl'.length)
-      if (!UUID_SHAPE.test(identifier)) continue
+      const identifier = canonicalUuid(fileEntry.name.slice(0, -'.jsonl'.length))
+      if (!identifier) continue
       const transcript = path.join(projectDir, fileEntry.name)
       const project = await firstClaudeCwd(transcript)
       const identity = readPublicIdentity(identifier)
@@ -113,7 +117,7 @@ async function claudeSessions(): Promise<ResumableSession[]> {
         handle: identity.handle,
         harness: 'claude',
         project,
-        identifier: identifier.toLowerCase(),
+        identifier,
         modifiedAt,
       })
     }
@@ -185,7 +189,7 @@ async function codexSessions(): Promise<ResumableSession[]> {
   const mappedThreads = maps
     .filter((entry) => entry.isFile() && /^codex-thread-[A-Za-z0-9-]+\.json$/.test(entry.name))
     .map((entry) => entry.name.slice('codex-thread-'.length, -'.json'.length))
-    .filter((threadId) => UUID_SHAPE.test(threadId) && readThreadSessionId(threadId))
+    .filter((threadId) => THREAD_ID_SHAPE.test(threadId) && readThreadSessionId(threadId))
   const result: ResumableSession[] = []
   for (const rollout of rollouts) {
     const metadata = firstJsonLine(rollout) as {
@@ -199,7 +203,7 @@ async function codexSessions(): Promise<ResumableSession[]> {
         : typeof metadata.payload.session_id === 'string'
           ? metadata.payload.session_id
           : ''
-    if (!UUID_SHAPE.test(threadId) || !mappedThreads.includes(threadId)) continue
+    if (!THREAD_ID_SHAPE.test(threadId) || !mappedThreads.includes(threadId)) continue
     const project = metadata.payload.cwd
     const sessionId = readThreadSessionId(threadId)
     const identity = sessionId ? readPublicIdentity(sessionId) : null

@@ -98,9 +98,20 @@ class MissingSessionIdError extends Error {
 }
 
 // Conversation UUIDs are 36-char dash-separated lowercase hex (RFC 4122).
-// Lowercase-only because sha256 is case-sensitive: accepting upper would
-// let the same logical UUID derive two different encryption keys.
+// The pattern stays lowercase-only because sha256 is case-sensitive: one
+// logical UUID in two cases would derive two different encryption keys and
+// two different identity files. Every source is lowercased before it reaches
+// this test, so a harness that starts emitting uppercase keeps its identity
+// instead of being read as a brand-new session and minting a second handle.
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+// The one spelling rule, so a source added later cannot forget it: trim,
+// lowercase, shape-check. Null means "not a usable conversation UUID".
+export function canonicalUuid(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const uuid = raw.trim().toLowerCase()
+  return UUID_SHAPE.test(uuid) ? uuid : null
+}
 
 // Re-pattern: same shape as UUID_SHAPE but with capturing group, for
 // extracting the UUID following a `--resume` token in argv.
@@ -127,9 +138,7 @@ function uuidFromParentArgv(): string | null {
     return null
   }
   const match = RESUME_UUID_RE.exec(argv)
-  if (!match) return null
-  const uuid = match[1].toLowerCase()
-  return UUID_SHAPE.test(uuid) ? uuid : null
+  return match ? canonicalUuid(match[1]) : null
 }
 
 // Four-source resolver. Each source serves a distinct host type (not
@@ -142,12 +151,12 @@ function uuidFromParentArgv(): string | null {
 function resolveSessionUuid(): string {
   const rawOverride = process.env.AIT_MCP_TEST_SESSION_ID
   if (rawOverride !== undefined) {
-    const override = rawOverride.trim()
-    if (UUID_SHAPE.test(override)) return override
-    if (override.length > 0) {
+    const override = canonicalUuid(rawOverride)
+    if (override) return override
+    if (rawOverride.trim().length > 0) {
       throw new Error(
         `AIT_MCP_TEST_SESSION_ID is set but does not match the UUID shape ` +
-          `(RFC 4122 lowercase 36-char hex). Got: ${JSON.stringify(rawOverride)}.`,
+          `(RFC 4122 36-char hex; case is normalized). Got: ${JSON.stringify(rawOverride)}.`,
       )
     }
     // Empty / whitespace-only override → fall through to production sources.
@@ -159,18 +168,12 @@ function resolveSessionUuid(): string {
   // — e.g. a codex session launched from inside a Claude session, which inherits
   // that env — can't shadow the explicit codex id. Never set on the Claude path,
   // so Claude resolution below stays byte-identical.
-  const fromCodex = process.env.AIT_SESSION_ID
-  if (fromCodex) {
-    const trimmed = fromCodex.trim()
-    if (UUID_SHAPE.test(trimmed)) return trimmed
-  }
+  const fromCodex = canonicalUuid(process.env.AIT_SESSION_ID)
+  if (fromCodex) return fromCodex
   const fromArgv = uuidFromParentArgv()
   if (fromArgv) return fromArgv
-  const fromEnv = process.env.CLAUDE_CODE_SESSION_ID
-  if (fromEnv) {
-    const trimmed = fromEnv.trim()
-    if (UUID_SHAPE.test(trimmed)) return trimmed
-  }
+  const fromEnv = canonicalUuid(process.env.CLAUDE_CODE_SESSION_ID)
+  if (fromEnv) return fromEnv
   throw new MissingSessionIdError()
 }
 
@@ -192,8 +195,8 @@ const PUBLIC_HANDLE_SHAPE = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i
 export function readPublicIdentity(
   sessionUuid: string,
 ): { did: string; handle: string } | null {
-  const uuid = sessionUuid.toLowerCase()
-  if (!UUID_SHAPE.test(uuid)) return null
+  const uuid = canonicalUuid(sessionUuid)
+  if (!uuid) return null
   const p = identityPath(uuid)
   let raw: Partial<OnDiskShape>
   try {

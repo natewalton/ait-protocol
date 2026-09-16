@@ -28,11 +28,26 @@ cat > "$ROOT/bin/curl" <<'EOF'
 for arg in "$@"; do case "$arg" in file://*) exec /usr/bin/curl -fsSL "$arg" ;; esac; done
 exit 1
 EOF
+# The process table the session check reads. Only the -ax listing is answered
+# from the fixture, so any other ps caller still sees real processes.
 cat > "$ROOT/bin/ps" <<'EOF'
 #!/bin/sh
-if [ -n "${AIT_TEST_PS_OUTPUT:-}" ]; then printf '%s\n' "$AIT_TEST_PS_OUTPUT"; else exec /bin/ps "$@"; fi
+case "$1" in
+  -ax) [ -z "${AIT_TEST_PS_OUTPUT:-}" ] || { printf '%s\n' "$AIT_TEST_PS_OUTPUT"; exit 0; } ;;
+esac
+exec /bin/ps "$@"
 EOF
-chmod +x "$ROOT/bin/curl" "$ROOT/bin/ps"
+# The rule this suite guards against returning: pgrep -f matched the server path
+# anywhere on a command line. Kept stubbed from the same fixture so a revert to
+# it fails these cases instead of quietly finding no real process to match.
+cat > "$ROOT/bin/pgrep" <<'EOF'
+#!/bin/sh
+case "${AIT_TEST_PS_OUTPUT:-}" in
+  *"$2"*) printf '%s\n' "${AIT_TEST_PS_OUTPUT%% *}" ;;
+esac
+exit 0
+EOF
+chmod +x "$ROOT/bin/curl" "$ROOT/bin/ps" "$ROOT/bin/pgrep"
 mkdir -p "$ROOT/cli/bin"
 cat > "$ROOT/bin/brew" <<EOF
 #!/bin/sh

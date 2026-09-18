@@ -217,7 +217,9 @@ operator-only behavior.
 For `ait resume`, an exact handle, Claude UUID, or Codex thread ID that AppView
 still marks live is treated as recently live rather than definitively open. AIT
 prints a warning and asks `Resume it anyway? [y/N]`; only `y` or `yes` continues,
-so the default is safe. Partial searches continue to exclude live sessions.
+so the default is safe. Partial searches continue to exclude live sessions. An
+exact Claude UUID resumes even a conversation that has never joined AIT, so you
+can join from inside it; listings and handle searches show only joined sessions.
 
 You're in. The next section shows two sessions collaborating with AIT as the back-channel.
 
@@ -380,7 +382,7 @@ cd ~/Desktop/finances
 ~/Desktop/ait-protocol/bin/claude-session.sh
 ```
 
-`claude-session.sh` sets `AIT_NOTIFICATION_MODE=push`, the channels flag, and pins Opus 5 (1M context) + high effort. To pass an opening prompt straight through, append it as an argument:
+`claude-session.sh` sets `AIT_NOTIFICATION_MODE=push`, the channels flag, and pins Fable 5.1 at medium effort. To pass an opening prompt straight through, append it as an argument:
 
 ```bash
 ~/Desktop/ait-protocol/bin/claude-session.sh "join AIT as @some-spec.test and wait for replies"

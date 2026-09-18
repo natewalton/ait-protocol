@@ -17,7 +17,10 @@ const APPVIEW_URL = process.env.APPVIEW_URL ?? 'http://localhost:2585'
 export type Harness = 'claude' | 'codex'
 
 export interface ResumableSession {
-  handle: string
+  // null: a Claude conversation that exists on disk but has never joined AIT.
+  // It resumes by exact UUID so the operator can join from inside it, and is
+  // otherwise invisible: no handle to list, search, or check for liveness.
+  handle: string | null
   harness: Harness
   project: string
   identifier: string
@@ -105,8 +108,8 @@ async function claudeSessions(): Promise<ResumableSession[]> {
       if (!identifier) continue
       const transcript = path.join(projectDir, fileEntry.name)
       const project = await firstClaudeCwd(transcript)
+      if (!project || !existingDirectory(project)) continue
       const identity = readPublicIdentity(identifier)
-      if (!project || !existingDirectory(project) || !identity) continue
       let modifiedAt: number
       try {
         modifiedAt = fs.statSync(transcript).mtimeMs
@@ -114,7 +117,7 @@ async function claudeSessions(): Promise<ResumableSession[]> {
         continue
       }
       result.push({
-        handle: identity.handle,
+        handle: identity?.handle ?? null,
         harness: 'claude',
         project,
         identifier,
@@ -228,7 +231,10 @@ async function codexSessions(): Promise<ResumableSession[]> {
 export async function discoverSessions(): Promise<SessionDiscovery> {
   const sessions = [ ...(await claudeSessions()), ...(await codexSessions()) ]
   const liveHandles = new Set<string>()
-  for (const handle of new Set(sessions.map((session) => session.handle.toLocaleLowerCase()))) {
+  const joinedHandles = sessions.flatMap((session) =>
+    session.handle === null ? [] : [session.handle.toLocaleLowerCase()],
+  )
+  for (const handle of new Set(joinedHandles)) {
     const url = new URL('/xrpc/ait.actor.searchActors', APPVIEW_URL)
     url.searchParams.set('q', handle)
     url.searchParams.set('limit', '100')
@@ -247,19 +253,20 @@ export async function discoverSessions(): Promise<SessionDiscovery> {
     )) liveHandles.add(handle)
   }
   const sorted = sessions.sort(
-    (a, b) => b.modifiedAt - a.modifiedAt || a.handle.localeCompare(b.handle),
+    (a, b) => b.modifiedAt - a.modifiedAt || (a.handle ?? '').localeCompare(b.handle ?? ''),
   )
   return {
     offline: sorted.filter(
-      (session) => !liveHandles.has(session.handle.toLocaleLowerCase()),
+      (session) => session.handle === null || !liveHandles.has(session.handle.toLocaleLowerCase()),
     ),
     live: sorted.filter(
-      (session) => liveHandles.has(session.handle.toLocaleLowerCase()),
+      (session) => session.handle !== null && liveHandles.has(session.handle.toLocaleLowerCase()),
     ),
   }
 }
 
 function matches(session: ResumableSession, query: string): boolean {
+  if (session.handle === null) return false
   const value = query.trim().replace(/^@/, '').toLocaleLowerCase()
   return [session.handle, session.harness, session.project].some((field) =>
     field.toLocaleLowerCase().includes(value),
@@ -270,7 +277,7 @@ function exactMatches(sessions: ResumableSession[], query: string): ResumableSes
   const value = query.trim().replace(/^@/, '').toLocaleLowerCase()
   return sessions.filter(
     (session) =>
-      session.handle.toLocaleLowerCase() === value ||
+      session.handle?.toLocaleLowerCase() === value ||
       session.identifier.toLocaleLowerCase() === value,
   )
 }
@@ -290,7 +297,7 @@ function render(
   })
   const rows = sessions.map((session, index) => ({
     number: `${index + 1}.`,
-    handle: `@${session.handle}`,
+    handle: session.handle === null ? '(not joined)' : `@${session.handle}`,
     harness: session.harness,
     project: session.project,
     modified: dateFormat.format(new Date(session.modifiedAt)),
@@ -418,7 +425,10 @@ export async function chooseSession(
   }
   if (liveExact.length === 1) return confirmLiveResume(liveExact[0], input, output)
   if (exact.length === 1) return exact[0]
-  const narrowed = query ? sessions.filter((session) => matches(session, query)) : sessions
+  // Listings and searches show joined sessions only; a never-joined conversation
+  // is reachable by its exact UUID above and nowhere else.
+  const listable = sessions.filter((session) => session.handle !== null)
+  const narrowed = query ? listable.filter((session) => matches(session, query)) : listable
   const hiddenLive = query ? live.filter((session) => matches(session, query)).length : live.length
   if (narrowed.length === 0) {
     output.write('no resumable AIT session matched\n')

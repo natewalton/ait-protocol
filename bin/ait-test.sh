@@ -496,6 +496,8 @@ AIT_CODEX_SHARED_SOCKET="$TMP_ROOT/codex-launch.sock" \
 CODEX_BIN="$status_fixture/shim/codex" NODE_BIN=/usr/bin/true \
   "$status_fixture/bin/run-codex-appserver.sh"
 assert_contains "$(cat "$codex_launch_capture")" "thread_unload_delay_secs=0"
+assert_contains "$(cat "$codex_launch_capture")" 'model="gpt-5.6-sol"'
+assert_contains "$(cat "$codex_launch_capture")" 'model_reasoning_effort="medium"'
 pass "Codex protocol health and cleanup compatibility status"
 
 mkdir -p "$status_fixture/mcp/dist" "$status_fixture/project dir"

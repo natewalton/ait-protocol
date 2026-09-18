@@ -394,6 +394,15 @@ fs.unlinkSync(identityPath(claudeId))
 result = run(claudeHandle)
 assert.equal(result.status, 1)
 assert.match(result.stderr, /no resumable AIT session matched/)
+// ...but its exact UUID still resumes it, so the operator can join from inside
+// the conversation instead of having to leave AIT's flags behind.
+result = run(claudeId)
+assert.equal(result.status, 0, result.stderr)
+assert.match(result.stdout, new RegExp(`^claude\t.*\t${claudeId}\n$`))
+assert.equal(result.stderr.includes('(not joined)'), false)
+// The listing does not show it: nothing joined, nothing to name.
+result = run('', '\n')
+assert.equal(result.stderr.includes('(not joined)'), false)
 writeIdentity(claudeId, claudeHandle)
 fs.rmSync(missingProject, { recursive: true, force: true })
 

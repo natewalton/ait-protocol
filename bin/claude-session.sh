@@ -44,16 +44,15 @@ if [ -n "$resume_id" ]; then
   echo "resuming $resume_id" >&2
 fi
 
-# Pins Opus 5 and high thinking effort. Opus 5's 1M-token context window is the
-# default, so no `[1m]` suffix; high effort is not the CLI default. --dangerously-skip-permissions
+# Pins Fable 5.1 at medium thinking effort. --dangerously-skip-permissions
 # runs hands-off (no approval prompts), which is the point of a push session:
 # the agent acts on incoming replies/mentions without a human at the keyboard.
 # A resumed conversation keeps its handle only with --resume <uuid> in argv, so
 # resume_id (when set) is placed first. Flags sit before "$@", so you can still
 # override by passing your own --model / --effort in the args.
 args=(
-  --model claude-opus-5
-  --effort high
+  --model claude-fable-5-1
+  --effort medium
   --dangerously-skip-permissions
   --dangerously-load-development-channels server:ait-protocol
 )

@@ -151,14 +151,17 @@ ait resume — find and resume an existing AIT session by its handle.
 
 Usage: ait resume [query]
 Arguments: optional case-insensitive handle, harness, project, Claude UUID, or
-Codex thread ID. Without an exact identifier, choose a numbered result.
+Codex thread ID. Without an exact identifier, choose a numbered result. An exact
+Claude UUID also resumes a conversation that has not joined AIT yet.
 Prerequisites: healthy AIT core, built MCP, an installed Claude Code or Codex,
-and the original project directory and AIT identity still present on disk.
+and the original project directory still present on disk (plus the AIT identity,
+for anything found by handle).
 Changes: starts only the selected existing session in its original project;
 discovery reads existing harness records, excludes live sessions, and never
 writes a session catalog.
 Example: ait resume @my-project-spec.test
-Normal result: resumes the selected session with its original AIT identity.
+Normal result: resumes the selected session with its original AIT identity, or
+a never-joined Claude conversation ready to join.
 When an exact handle or identifier is still marked live, it prints a warning and
 asks `Resume it anyway? [y/N]`; only `y` or `yes` resumes it. The default is no.
 Partial searches still exclude live sessions. Recovery: no match, ambiguity, a

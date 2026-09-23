@@ -14,16 +14,24 @@ TMP_ROOT="${TMPDIR:-/tmp}"
 TEST_DIR="$(mktemp -d "$TMP_ROOT/ait-codex-limit-test.XXXXXX")"
 
 cleanup() {
-  rmdir "$TEST_DIR" 2>/dev/null || true
+  rm -rf "$TEST_DIR"
 }
 trap cleanup EXIT
+
+# Run a fixture-local copy of the launcher. Its real stop helper can inspect
+# the host-wide /tmp/ait-codex-appserver.pid even with a temporary socket.
+mkdir -p "$TEST_DIR/bin" "$TEST_DIR/mcp/dist"
+cp "$REPO/bin/run-codex-appserver.sh" "$TEST_DIR/bin/run-codex-appserver.sh"
+ln -s /usr/bin/true "$TEST_DIR/bin/stop-codex-appserver.sh"
+touch "$TEST_DIR/mcp/dist/server.js"
+launcher="$TEST_DIR/bin/run-codex-appserver.sh"
 
 output="$({
   ulimit -Sn 256
   AIT_CODEX_SHARED_SOCKET="$TEST_DIR/codex.sock" \
     CODEX_BIN="$REPO/bin/run-codex-appserver-test.sh" \
     NODE_BIN=/usr/bin/true \
-    "$REPO/bin/run-codex-appserver.sh"
+    "$launcher"
 })"
 
 actual="$(printf '%s\n' "$output" | sed -n 's/^fake-codex-soft-limit=//p')"
@@ -41,7 +49,7 @@ low_hard_output="$(
     AIT_CODEX_SHARED_SOCKET="$TEST_DIR/low-hard-codex.sock" \
       CODEX_BIN="$REPO/bin/run-codex-appserver-test.sh" \
       NODE_BIN=/usr/bin/true \
-      "$REPO/bin/run-codex-appserver.sh"
+      "$launcher"
   } 2>&1
 )" || low_hard_status=$?
 

@@ -55,6 +55,8 @@ const IDENTITY_POLL_INTERVAL_MS = 1000
 // server, and an always-present backoff keeps a fast-failing lifecycle from
 // spinning hot.
 const RECONNECT_BACKOFF_MS = 2000
+const AIT_CODEX_MODEL = 'gpt-6-sol'
+const AIT_CODEX_REASONING_EFFORT = 'medium'
 
 // "This thread does not exist" from thread/resume. The app-server answers a
 // missing rollout with InvalidRequest (-32600) and a message naming the id;
@@ -105,6 +107,10 @@ export async function runCodexSession(): Promise<void> {
   let socketAnnounced = false
   const threadParams = {
     cwd: process.cwd(),
+    // Set these on the thread itself as well as on the shared server. That makes
+    // a new or resumed AIT session deterministic even when the long-lived
+    // app-server predates the installed launcher.
+    model: AIT_CODEX_MODEL,
     // Hands-off and unrestricted: AIT sessions are autonomous collaborators,
     // so let Codex write Git metadata, bind loopback listeners, and use the
     // network without pausing for operator approval. Only launch this wrapper
@@ -189,6 +195,12 @@ export async function runCodexSession(): Promise<void> {
         // context.
         started = await client.threadStart({ ...threadParams, historyMode: 'legacy' })
       }
+      try {
+        assertAitThreadContract(started)
+      } catch (err) {
+        console.error(`ait codex session: ${errMessage(err)}`)
+        process.exit(1)
+      }
       threadId = started.thread.id
       // New session: create the on-disk rollout the TUI attaches to (a bare
       // thread/start writes none) — BEFORE announcing, so the wrapper's `codex
@@ -261,6 +273,7 @@ export async function runCodexSession(): Promise<void> {
 function threadConfig(sessionId: string): Record<string, string> {
   const config: Record<string, string> = {
     'mcp_servers.ait.env.AIT_SESSION_ID': sessionId,
+    model_reasoning_effort: AIT_CODEX_REASONING_EFFORT,
   }
   if (process.env.PDS_URL) {
     config['mcp_servers.ait.env.PDS_URL'] = process.env.PDS_URL
@@ -269,6 +282,33 @@ function threadConfig(sessionId: string): Record<string, string> {
     config['mcp_servers.ait.env.APPVIEW_DID'] = process.env.APPVIEW_DID
   }
   return config
+}
+
+function assertAitThreadContract(response: {
+  model?: string
+  approvalPolicy?: string
+  sandbox?: { type?: string }
+  reasoningEffort?: string | null
+}): void {
+  const actual = [
+    response.model ?? 'unknown model',
+    response.reasoningEffort ?? 'unknown reasoning effort',
+    response.approvalPolicy ?? 'unknown approval policy',
+    response.sandbox?.type ?? 'unknown sandbox',
+  ].join(', ')
+  if (
+    response.model !== AIT_CODEX_MODEL ||
+    response.reasoningEffort !== AIT_CODEX_REASONING_EFFORT ||
+    response.approvalPolicy !== 'never' ||
+    response.sandbox?.type !== 'dangerFullAccess'
+  ) {
+    throw new Error(
+      `Codex did not apply the AIT launch contract (${actual}); refusing to attach. ` +
+      `AIT requires gpt-6-sol, medium, never approval, and danger-full-access. ` +
+      `Check Codex model availability and any enforced requirements.toml; ` +
+      `AIT cannot override an administrator's permission restrictions.`,
+    )
+  }
 }
 
 // The resume target — a codex threadId from `--resume <threadId>`. Absent means

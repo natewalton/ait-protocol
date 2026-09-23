@@ -48,10 +48,10 @@ done
 # MCPs); each thread's ait tool-MCP gets AIT_SESSION_ID via thread/start config.
 unset AIT_SESSION_ID AIT_NOTIFICATION_MODE
 
-# Every thread on this server runs gpt-5.6-sol at medium reasoning, whatever the
+# Every thread on this server defaults to gpt-6-sol at medium reasoning, whatever the
 # operator's own ~/.codex/config.toml says, so ait codex sessions are uniform.
 exec "$CODEX_BIN" app-server --listen "unix://$sock" \
-  -c 'model="gpt-5.6-sol"' \
+  -c 'model="gpt-6-sol"' \
   -c 'model_reasoning_effort="medium"' \
   -c "thread_unload_delay_secs=0" \
   -c "mcp_servers.ait.command=$NODE_BIN" \

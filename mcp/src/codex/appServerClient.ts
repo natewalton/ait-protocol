@@ -431,11 +431,9 @@ export class AppServerClient {
   //   - ACCEPT MCP elicitations — codex gates each MCP tool call through one, and
   //     a pushed session's whole job is to act through its AIT tools (join, reply,
   //     post). Declining rejects the tool call (verified: a declined elicitation
-  //     surfaced as "the AIT join call was rejected"). Server→client requests
-  //     route to the client that STARTED the turn (verified — a 2nd attached
-  //     client sees none), so we only ever answer requests for turns WE injected;
-  //     an operator TUI's own turns are answered by the TUI. Blanket-accept is
-  //     therefore multi-client-safe.
+  //     surfaced as "the AIT join call was rejected"). Requests for the
+  //     launcher's injected turns reach this control client;
+  //     an operator TUI answers requests for its own turns.
   //   - DENY command / file / patch execution — no unattended shell in the
   //     operator's tree; the model acts through tools, not the sandbox.
   // Anything unmodeled gets a JSON-RPC error, which still unblocks the turn.
@@ -451,6 +449,15 @@ export class AppServerClient {
       case 'applyPatchApproval':
         console.error(`app-server ${method} → auto-denied (autonomous launcher)`)
         this.respond(id, { decision: 'denied' })
+        return
+      case 'item/commandExecution/requestApproval':
+      case 'item/fileChange/requestApproval':
+        console.error(`app-server ${method} → auto-declined (autonomous launcher)`)
+        this.respond(id, { decision: 'decline' })
+        return
+      case 'item/permissions/requestApproval':
+        console.error(`app-server ${method} → refused (autonomous launcher)`)
+        this.respondError(id, -32602, 'AIT does not grant additional permissions')
         return
       default:
         console.error(`app-server request '${method}' unmodeled — replying error`)

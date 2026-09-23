@@ -87,10 +87,24 @@ try {
   client = new AppServerClient(socketPath)
   await client.connect()
 
+  const expectedThread = {
+    model: 'gpt-6-sol',
+    approvalPolicy: 'never',
+    sandbox: 'danger-full-access',
+    config: { model_reasoning_effort: 'medium' },
+  }
+  const assertThreadContract = (thread) => {
+    assert.equal(thread.model, 'gpt-6-sol')
+    assert.equal(thread.reasoningEffort, 'medium')
+    assert.equal(thread.approvalPolicy, 'never')
+    assert.equal(thread.sandbox?.type, 'dangerFullAccess')
+  }
   const legacy = await client.threadStart({
     cwd: process.cwd(),
     historyMode: 'legacy',
+    ...expectedThread,
   })
+  assertThreadContract(legacy)
   const readiness = client.waitForMcpStartup(legacy.thread.id)
   let readinessSettled = false
   void readiness.then(
@@ -130,8 +144,9 @@ try {
   assert.equal(legacyRows[0]?.type, 'session_meta')
   assert.equal(legacyRows[0]?.payload?.history_mode, 'legacy')
   assert.equal(hasDanglingSeed(legacyRows), false)
-  const resumed = await client.threadResume({ threadId: legacy.thread.id })
+  const resumed = await client.threadResume({ threadId: legacy.thread.id, ...expectedThread })
   assert.equal(resumed.thread.id, legacy.thread.id)
+  assertThreadContract(resumed)
 
   // Reproduce c767a5e's bad seed. The affected rollout cohort is deliberately
   // not rewritten or migrated; it is small and two hours old, so operators
@@ -153,8 +168,8 @@ try {
   assert.equal(hasDanglingSeed(contaminatedRows), true)
 
   console.log(
-    'PASS codex rollout: event-gated MCP readiness + legacy attach seed + ' +
-      'prior paginated-seed reproduction',
+    'PASS codex rollout: model/permissions + event-gated MCP readiness + ' +
+      'legacy attach seed + prior paginated-seed reproduction',
   )
 } finally {
   client?.close()

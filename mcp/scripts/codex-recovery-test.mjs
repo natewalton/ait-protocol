@@ -227,6 +227,25 @@ assert.equal(stalledClient.pending.size, 0, 'closed transport retained pending r
 await stalled.close()
 console.log('ok - a stalled active connection closes and rejects pending work')
 
+const approvals = await fakeAppServer(path.join(root, 'approvals.sock'))
+const approvalClient = new AppServerClient(approvals.socketPath)
+await approvalClient.connect(200)
+assert.deepEqual(
+  await approvals.requestClient('item/commandExecution/requestApproval'),
+  { result: { decision: 'decline' } },
+)
+assert.deepEqual(
+  await approvals.requestClient('item/fileChange/requestApproval'),
+  { result: { decision: 'decline' } },
+)
+assert.deepEqual(
+  await approvals.requestClient('item/permissions/requestApproval'),
+  { error: { code: -32602, message: 'AIT does not grant additional permissions' } },
+)
+approvalClient.close()
+await approvals.close()
+console.log('ok - current v2 approval requests fail closed')
+
 fs.rmSync(root, { recursive: true, force: true })
 console.log('PASS codex recovery')
 
@@ -245,9 +264,19 @@ function notification(uri, cursor) {
 async function fakeAppServer(socketPath, options = {}) {
   const server = http.createServer()
   const wss = new WebSocketServer({ server })
+  const serverRequests = new Map()
+  let nextServerRequestId = 10_000
   wss.on('connection', (socket) => {
     socket.on('message', async (bytes) => {
       const message = JSON.parse(bytes.toString())
+      const pendingServerRequest = serverRequests.get(message.id)
+      if (message.method == null && pendingServerRequest) {
+        serverRequests.delete(message.id)
+        pendingServerRequest.resolve(
+          message.error ? { error: message.error } : { result: message.result },
+        )
+        return
+      }
       if (message.method === 'initialize') {
         if (options.ignoreInitialize) return
         if (options.initializeDelayMs) await delay(options.initializeDelayMs)
@@ -264,6 +293,16 @@ async function fakeAppServer(socketPath, options = {}) {
   })
   return {
     socketPath,
+    requestClient(method) {
+      const socket = [...wss.clients][0]
+      assert.ok(socket, 'app-server client is not connected')
+      const id = nextServerRequestId++
+      const response = new Promise((resolve, reject) => {
+        serverRequests.set(id, { resolve, reject })
+      })
+      socket.send(JSON.stringify({ id, method, params: {} }))
+      return response
+    },
     async close() {
       for (const socket of wss.clients) socket.terminate()
       await new Promise((resolve) => server.close(resolve))

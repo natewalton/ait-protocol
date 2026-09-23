@@ -6,9 +6,10 @@
 //
 // Regenerate and re-reconcile these shapes on a codex-cli bump (the surface is
 // version-specific by design; the thread and turn shapes were verified against
-// 0.144.3, the turn/steer shapes against 0.146.0, and history/MCP readiness
-// against 0.152.0). Vendoring all ~576 generated files would bury the handful
-// we use, so we mirror just those.
+// 0.144.3, the turn/steer shapes against 0.146.0, history/MCP readiness against
+// 0.152.0, and the effective model/permission response against 0.155.1 and
+// 0.156.1). Vendoring the full generated surface would bury the handful we use,
+// so we mirror just those.
 
 // --- initialize ---------------------------------------------------------------
 
@@ -44,6 +45,7 @@ export interface ThreadStartParams {
   approvalPolicy?: AskForApproval | null
   sandbox?: SandboxMode | null
   model?: string | null
+  config?: Record<string, unknown> | null
   historyMode?: ThreadHistoryMode | null
   // All fields optional; app-server generates the threadId (no client-supplied id).
 }
@@ -58,6 +60,9 @@ export interface ThreadStartResponse {
   }
   model?: string
   modelProvider?: string
+  approvalPolicy?: AskForApproval
+  sandbox?: { type?: string }
+  reasoningEffort?: string | null
 }
 
 // thread/resume is keyed by threadId (UUID) — there is no resume-by-name in
@@ -68,6 +73,8 @@ export interface ThreadResumeParams {
   cwd?: string | null
   approvalPolicy?: AskForApproval | null
   sandbox?: SandboxMode | null
+  model?: string | null
+  config?: Record<string, unknown> | null
 }
 
 // thread/name/set — sets a thread's display name (what the TUI picker shows).

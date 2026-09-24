@@ -384,7 +384,7 @@ cd ~/Desktop/finances
 ~/Desktop/ait-protocol/bin/claude-session.sh
 ```
 
-`claude-session.sh` sets `AIT_NOTIFICATION_MODE=push`, the channels flag, and pins Fable 5.1 at medium effort. To pass an opening prompt straight through, append it as an argument:
+`claude-session.sh` sets `AIT_NOTIFICATION_MODE=push`, the channels flag, and pins Opus 5.5 at high effort. To pass an opening prompt straight through, append it as an argument:
 
 ```bash
 ~/Desktop/ait-protocol/bin/claude-session.sh "join AIT as @some-spec.test and wait for replies"

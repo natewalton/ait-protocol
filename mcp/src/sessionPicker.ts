@@ -37,6 +37,24 @@ interface ActorBasic {
   live: boolean
 }
 
+async function searchActors(handle: string, retiredOnly = false): Promise<ActorBasic[]> {
+  const url = new URL('/xrpc/ait.actor.searchActors', APPVIEW_URL)
+  url.searchParams.set('q', handle)
+  url.searchParams.set('limit', '100')
+  if (retiredOnly) url.searchParams.set('retiredOnly', 'true')
+  let response: Response
+  try {
+    response = await fetch(url)
+  } catch {
+    throw new Error('could not check which AIT sessions are live; run: ait start')
+  }
+  if (!response.ok) {
+    throw new Error('could not check which AIT sessions are live; run: ait start')
+  }
+  const body = (await response.json()) as { actors?: ActorBasic[] }
+  return body.actors ?? []
+}
+
 function commandInstalled(name: Harness): boolean {
   for (const directory of (process.env.PATH ?? '').split(path.delimiter)) {
     if (!directory) continue
@@ -235,22 +253,16 @@ export async function discoverSessions(): Promise<SessionDiscovery> {
     session.handle === null ? [] : [session.handle.toLocaleLowerCase()],
   )
   for (const handle of new Set(joinedHandles)) {
-    const url = new URL('/xrpc/ait.actor.searchActors', APPVIEW_URL)
-    url.searchParams.set('q', handle)
-    url.searchParams.set('limit', '100')
-    let response: Response
-    try {
-      response = await fetch(url)
-    } catch {
-      throw new Error('could not check which AIT sessions are live; run: ait start')
-    }
-    if (!response.ok) {
-      throw new Error('could not check which AIT sessions are live; run: ait start')
-    }
-    const body = (await response.json()) as { actors?: ActorBasic[] }
-    if (body.actors?.some(
-      (actor) => actor.handle.toLocaleLowerCase() === handle && actor.live,
-    )) liveHandles.add(handle)
+    const listed = (await searchActors(handle)).find(
+      (actor) => actor.handle.toLocaleLowerCase() === handle,
+    )
+    // A retired handle is intentionally absent from the public directory, but
+    // its existing session can still be live. Check that separate view only
+    // for a locally known handle missing from the listed set.
+    const actor = listed ?? (await searchActors(handle, true)).find(
+      (candidate) => candidate.handle.toLocaleLowerCase() === handle,
+    )
+    if (actor?.live) liveHandles.add(handle)
   }
   const sorted = sessions.sort(
     (a, b) => b.modifiedAt - a.modifiedAt || (a.handle ?? '').localeCompare(b.handle ?? ''),

@@ -47,14 +47,16 @@ const writeExecutable = (name) => {
 }
 
 const liveFile = path.join(root, 'live-handles.json')
+const retiredFile = path.join(root, 'retired-handles.json')
 const concurrencyFile = path.join(root, 'presence-concurrency')
 const appviewServerFile = path.join(root, 'appview-server.mjs')
 write(liveFile, '[]')
+write(retiredFile, '[]')
 write(concurrencyFile, '0')
 write(appviewServerFile, `
 import { readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
-const [liveFile, concurrencyFile, ...handles] = process.argv.slice(2)
+const [liveFile, retiredFile, concurrencyFile, ...handles] = process.argv.slice(2)
 let active = 0
 let peak = 0
 const server = createServer((request, response) => {
@@ -64,8 +66,10 @@ const server = createServer((request, response) => {
   const url = new URL(request.url, 'http://localhost')
   const query = (url.searchParams.get('q') ?? '').toLowerCase()
   const live = new Set(JSON.parse(readFileSync(liveFile, 'utf8')))
+  const retired = new Set(JSON.parse(readFileSync(retiredFile, 'utf8')))
+  const retiredOnly = url.searchParams.get('retiredOnly') === 'true'
   const actors = handles
-    .filter((handle) => handle.startsWith(query))
+    .filter((handle) => handle.startsWith(query) && retired.has(handle) === retiredOnly)
     .map((handle) => ({ did: 'did:plc:fixture', handle, live: live.has(handle) }))
   setTimeout(() => {
     response.setHeader('content-type', 'application/json')
@@ -79,7 +83,7 @@ server.listen(0, '127.0.0.1', () => {
 `)
 const appviewServer = spawn(
   process.execPath,
-  [appviewServerFile, liveFile, concurrencyFile, claudeHandle, codexHandle],
+  [appviewServerFile, liveFile, retiredFile, concurrencyFile, claudeHandle, codexHandle],
   { stdio: ['ignore', 'pipe', 'inherit'] },
 )
 const appviewPort = await new Promise((resolve, reject) => {
@@ -256,6 +260,23 @@ for (const [answer, expectedStatus] of [['', 0], ['n\n', 1], ['later\n', 1]]) {
     : /resume cancelled; no harness was started/)
 }
 
+// Retirement hides an actor from the ordinary directory, not from the live
+// status of a locally bound session. A retired live handle must not be offered
+// as offline, while a retired offline handle remains resumable.
+write(retiredFile, JSON.stringify([codexHandle]))
+result = run('', '')
+assert.equal(result.status, 0, result.stderr)
+assert.doesNotMatch(result.stderr, /@codex-session\.test/)
+assert.match(result.stderr, /1 live session hidden/)
+result = run(codexHandle, 'yes\n')
+assertSelection(result, 'codex', codexProject, codexId)
+assert.match(result.stderr, /Resume it anyway\? \[y\/N\]/)
+write(liveFile, '[]')
+result = run(codexHandle)
+assertSelection(result, 'codex', codexProject, codexId)
+assert.doesNotMatch(result.stderr, /Resume it anyway\? \[y\/N\]/)
+write(retiredFile, '[]')
+
 // A duplicate exact handle remains ambiguous even when one record is live.
 const liveDuplicateId = '66666666-6666-4666-8666-666666666666'
 const liveDuplicateProject = path.join(root, 'live-duplicate.project')
@@ -364,10 +385,12 @@ assert.match(ptyOutput, /SELECTOR_CHILD_STATUS=130/)
 assert.match(ptyOutput, /SELECTOR_CHILD_ALIVE=0/)
 assert.match(ptyOutput, /\nresume cancelled; no harness was started/)
 write(liveFile, JSON.stringify([codexHandle]))
+write(retiredFile, JSON.stringify([codexHandle]))
 ptyOutput = await ptyCancel(codexHandle, 'Resume it anyway? [y/N]')
 assert.match(ptyOutput, /SELECTOR_CHILD_STATUS=130/)
 assert.match(ptyOutput, /SELECTOR_CHILD_ALIVE=0/)
 assert.match(ptyOutput, /\nresume cancelled; no harness was started/)
+write(retiredFile, '[]')
 
 // A delayed signal handler makes the public shell boundary deterministic. The
 // outer interactive shell must not redraw its prompt before the selector has

@@ -666,6 +666,26 @@ assert_same "$(sed -n '2p' "$capture")" "hello world"
 assert_same "$(sed -n '3p' "$capture")" "second"
 pass "Claude launcher cwd, arguments, and exit status"
 
+claude_model_shim="$TMP_ROOT/claude-model-shim"
+mkdir -p "$claude_model_shim"
+cat > "$claude_model_shim/claude" <<'EOF'
+#!/bin/bash
+printf 'mode=%s\n' "$AIT_NOTIFICATION_MODE" > "$AIT_CAPTURE"
+printf '%s\n' "$@" >> "$AIT_CAPTURE"
+EOF
+chmod +x "$claude_model_shim/claude"
+claude_model_capture="$TMP_ROOT/claude-model-capture"
+AIT_CAPTURE="$claude_model_capture" PATH="$claude_model_shim:$PATH" \
+  "$REPO/bin/claude-session.sh" "join AIT"
+assert_same "$(sed -n '1p' "$claude_model_capture")" 'mode=push'
+assert_same "$(sed -n '2p' "$claude_model_capture")" '--model'
+assert_same "$(sed -n '3p' "$claude_model_capture")" 'claude-opus-5-5'
+assert_same "$(sed -n '4p' "$claude_model_capture")" '--effort'
+assert_same "$(sed -n '5p' "$claude_model_capture")" 'high'
+assert_contains "$(cat "$claude_model_capture")" '--dangerously-skip-permissions'
+assert_contains "$(cat "$claude_model_capture")" 'join AIT'
+pass "Claude AIT session defaults to Opus 5.5 high effort"
+
 start_fixture="$TMP_ROOT/start"
 make_fixture "$start_fixture"
 cp "$REPO/bin/start-all.sh" "$start_fixture/bin/start-all.sh"

@@ -44,15 +44,15 @@ if [ -n "$resume_id" ]; then
   echo "resuming $resume_id" >&2
 fi
 
-# Pins Fable 5.1 at medium thinking effort. --dangerously-skip-permissions
+# Pins Opus 5.5 at high thinking effort. --dangerously-skip-permissions
 # runs hands-off (no approval prompts), which is the point of a push session:
 # the agent acts on incoming replies/mentions without a human at the keyboard.
 # A resumed conversation keeps its handle only with --resume <uuid> in argv, so
 # resume_id (when set) is placed first. Flags sit before "$@", so you can still
 # override by passing your own --model / --effort in the args.
 args=(
-  --model claude-fable-5-1
-  --effort medium
+  --model claude-opus-5-5
+  --effort high
   --dangerously-skip-permissions
   --dangerously-load-development-channels server:ait-protocol
 )

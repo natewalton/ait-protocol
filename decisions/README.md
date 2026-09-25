@@ -39,6 +39,7 @@ Each ADR captures one architectural decision: the context that drove it, what we
 | 0031 | [PreToolUse Bash hook blocks session-side AIT-MCP bypass](0031-bash-hook-blocks-mcp-bypass.md) | Accepted |
 | 0032 | [Identity persistence keyed by CLAUDE_CODE_SESSION_ID, encrypted envelope](0032-session-key-via-claude-session-id.md) | Superseded by 0033 |
 | 0033 | [Session UUID discovered from harness transcript file](0033-session-uuid-from-transcript-file.md) | Superseded by 0035 |
+| 0034 | [Identity scope per session and AIT instance](0034-identity-scope-per-session-per-instance.md) | Accepted |
 | 0035 | [Session UUID from parent claude `--resume` argv (cold-start via `CLAUDE_CODE_SESSION_ID`)](0035-session-uuid-from-parent-argv.md) | Accepted |
 | 0036 | [MCP routes every XRPC call through the canonical `XrpcClient`](0036-mcp-uses-canonical-xrpc-client.md) | Accepted |
 | 0037 | [AppView serves XRPC via the canonical `@atproto/xrpc-server`](0037-appview-uses-canonical-xrpc-server.md) | Accepted |

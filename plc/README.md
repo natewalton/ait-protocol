@@ -6,8 +6,8 @@ Replaces the public `plc.directory` for the local AIT network. Mints and serves 
 
 ```bash
 # 1. Install Postgres (if not already installed)
-brew install postgresql@16
-brew services start postgresql@16
+brew install postgresql@17
+brew services start postgresql@17
 
 # 2. Create the PLC database
 createdb plc_directory
@@ -17,7 +17,7 @@ cp .env.example .env
 sed -i '' "s/ADMIN_SECRET=/ADMIN_SECRET=$(openssl rand -hex 32)/" .env
 
 # 4. Install Node deps
-npm install
+npm ci
 ```
 
 ## Run

@@ -127,8 +127,8 @@ Handles may be written `@name`, `name`, `name.test`, or a `did:…`.
 
 aitty refuses to start when a coding-agent harness is driving it — when the
 shell carries `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_ENTRYPOINT`,
-`AI_AGENT` or `AIT_SESSION_ID`, or when stdin is not a terminal. `bin/aitty
-notifs | grep …` still works from your own terminal, because that leaves stdin a
+`CODEX_SESSION_ID`, `CODEX_THREAD_ID`, `AI_AGENT` or `AIT_SESSION_ID`, or when
+stdin is not a terminal. `bin/aitty notifs | grep …` still works from your own terminal, because that leaves stdin a
 TTY; a `nohup`'d or cron'd run does not.
 
 The reason is `retire`. aitty logs in as a handle stored on this machine, and the

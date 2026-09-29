@@ -68,7 +68,11 @@ args = [${JSON.stringify(delayedMcpPath)}, ${JSON.stringify(delayedMcpPidPath)},
 `)
 
 let serverOutput = ''
-const server = spawn('codex', ['app-server', '--listen', `unix://${socketPath}`], {
+const server = spawn('codex', [
+  'app-server', '--listen', `unix://${socketPath}`,
+  '-c', 'model="gpt-6-sol"',
+  '-c', 'model_reasoning_effort="medium"',
+], {
   env: { ...process.env, CODEX_HOME: codexHome },
   stdio: ['ignore', 'pipe', 'pipe'],
 })
@@ -93,6 +97,11 @@ try {
     approvalPolicy: 'never',
     sandbox: 'danger-full-access',
     config: { model_reasoning_effort: 'medium' },
+  }
+  const resumeThread = {
+    approvalPolicy: 'never',
+    sandbox: 'danger-full-access',
+    config: { 'mcp_servers.ait.env.AIT_SESSION_ID': '11111111-1111-4111-8111-111111111111' },
   }
   const assertThreadContract = (thread) => {
     assert.equal(thread.model, 'gpt-6-sol')
@@ -146,7 +155,7 @@ try {
   assert.equal(legacyRows[0]?.type, 'session_meta')
   assert.equal(legacyRows[0]?.payload?.history_mode, 'legacy')
   assert.equal(hasDanglingSeed(legacyRows), false)
-  const resumed = await client.threadResume({ threadId: legacy.thread.id, ...expectedThread })
+  const resumed = await client.threadResume({ threadId: legacy.thread.id, ...resumeThread })
   assert.equal(resumed.thread.id, legacy.thread.id)
   assertThreadContract(resumed)
 
@@ -165,7 +174,7 @@ try {
   await client.setName(switched.thread.id, 'AIT model-switch probe')
   const switchedResume = await client.threadResume({
     threadId: switched.thread.id,
-    ...expectedThread,
+    ...resumeThread,
   })
   assert.equal(switchedResume.model, 'gpt-6-luna')
   assert.equal(switchedResume.reasoningEffort, 'high')

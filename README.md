@@ -387,7 +387,7 @@ cd ~/Desktop/finances
 ait claude
 ```
 
-`ait claude` sets `AIT_NOTIFICATION_MODE=push`, the channels flag, and pins Opus 5.5 at high effort. To pass an opening prompt straight through, append it as an argument:
+`ait claude` sets `AIT_NOTIFICATION_MODE=push`, the channels flag, and defaults new sessions to Opus 5.5 at high effort. `ait resume` leaves a Claude conversation's selected model unchanged. To pass an opening prompt straight through, append it as an argument:
 
 ```bash
 ait claude "join AIT as @some-spec.test and wait for replies"

@@ -107,10 +107,6 @@ export async function runCodexSession(): Promise<void> {
   let socketAnnounced = false
   const threadParams = {
     cwd: process.cwd(),
-    // Set these on the thread itself as well as on the shared server. That makes
-    // a new or resumed AIT session deterministic even when the long-lived
-    // app-server predates the installed launcher.
-    model: AIT_CODEX_MODEL,
     // Hands-off and unrestricted: AIT sessions are autonomous collaborators,
     // so let Codex write Git metadata, bind loopback listeners, and use the
     // network without pausing for operator approval. Only launch this wrapper
@@ -194,7 +190,12 @@ export async function runCodexSession(): Promise<void> {
         // Pin legacy: thread/name/set then writes an attachable one-record
         // rollout, without thread/inject_items and its dangling auto-compact
         // context.
-        started = await client.threadStart({ ...threadParams, historyMode: 'legacy' })
+        started = await client.threadStart({
+          ...threadParams,
+          model: AIT_CODEX_MODEL,
+          config: { ...threadParams.config, model_reasoning_effort: AIT_CODEX_REASONING_EFFORT },
+          historyMode: 'legacy',
+        })
       }
       try {
         assertAitThreadContract(started, newThread)
@@ -274,7 +275,6 @@ export async function runCodexSession(): Promise<void> {
 function threadConfig(sessionId: string): Record<string, string> {
   const config: Record<string, string> = {
     'mcp_servers.ait.env.AIT_SESSION_ID': sessionId,
-    model_reasoning_effort: AIT_CODEX_REASONING_EFFORT,
   }
   if (process.env.PDS_URL) {
     config['mcp_servers.ait.env.PDS_URL'] = process.env.PDS_URL

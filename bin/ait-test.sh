@@ -686,6 +686,16 @@ assert_contains "$(cat "$claude_model_capture")" '--dangerously-skip-permissions
 assert_contains "$(cat "$claude_model_capture")" 'join AIT'
 pass "Claude AIT session defaults to Opus 5.5 high effort"
 
+AIT_CAPTURE="$claude_model_capture" PATH="$claude_model_shim:$PATH" \
+  "$REPO/bin/claude-session.sh" --resume 11111111-1111-4111-8111-111111111111
+assert_same "$(sed -n '1p' "$claude_model_capture")" 'mode=push'
+assert_same "$(sed -n '2p' "$claude_model_capture")" '--resume'
+assert_same "$(sed -n '3p' "$claude_model_capture")" '11111111-1111-4111-8111-111111111111'
+assert_not_contains "$(cat "$claude_model_capture")" '--model'
+assert_not_contains "$(cat "$claude_model_capture")" '--effort'
+assert_contains "$(cat "$claude_model_capture")" '--dangerously-skip-permissions'
+pass "Claude resume does not override the conversation model or effort"
+
 start_fixture="$TMP_ROOT/start"
 make_fixture "$start_fixture"
 cp "$REPO/bin/start-all.sh" "$start_fixture/bin/start-all.sh"

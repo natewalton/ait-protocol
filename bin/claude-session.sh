@@ -44,19 +44,21 @@ if [ -n "$resume_id" ]; then
   echo "resuming $resume_id" >&2
 fi
 
-# Pins Opus 5.5 at high thinking effort. --dangerously-skip-permissions
+# New sessions default to Opus 5.5 at high thinking effort. A resumed session
+# keeps the model selected in its conversation; do not override it here.
+# --dangerously-skip-permissions
 # runs hands-off (no approval prompts), which is the point of a push session:
 # the agent acts on incoming replies/mentions without a human at the keyboard.
 # A resumed conversation keeps its handle only with --resume <uuid> in argv, so
 # resume_id (when set) is placed first. Flags sit before "$@", so you can still
 # override by passing your own --model / --effort in the args.
 args=(
-  --model claude-opus-5-5
-  --effort high
   --dangerously-skip-permissions
   --dangerously-load-development-channels server:ait-protocol
 )
 if [ -n "$resume_id" ]; then
   args=(--resume "$resume_id" "${args[@]}")
+else
+  args=(--model claude-opus-5-5 --effort high "${args[@]}")
 fi
 exec env AIT_NOTIFICATION_MODE=push claude "${args[@]}" "$@"

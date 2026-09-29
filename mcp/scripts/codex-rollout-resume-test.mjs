@@ -84,6 +84,7 @@ try {
   assert.equal(fs.existsSync(socketPath), true, `codex app-server socket missing:\n${serverOutput}`)
 
   const { AppServerClient } = await import('../dist/codex/appServerClient.js')
+  const { assertAitThreadContract } = await import('../dist/codex/host.js')
   client = new AppServerClient(socketPath)
   await client.connect()
 
@@ -105,6 +106,7 @@ try {
     ...expectedThread,
   })
   assertThreadContract(legacy)
+  assert.doesNotThrow(() => assertAitThreadContract(legacy, true))
   const readiness = client.waitForMcpStartup(legacy.thread.id)
   let readinessSettled = false
   void readiness.then(
@@ -148,6 +150,36 @@ try {
   assert.equal(resumed.thread.id, legacy.thread.id)
   assertThreadContract(resumed)
 
+  // A user may switch model/effort in the TUI. Reconnecting the notification
+  // driver must accept that persisted thread choice without relaxing AIT's
+  // approval and sandbox checks. Start with different settings to reproduce
+  // the effective response without making a model turn.
+  const switched = await client.threadStart({
+    cwd: process.cwd(),
+    historyMode: 'legacy',
+    model: 'gpt-6-luna',
+    approvalPolicy: 'never',
+    sandbox: 'danger-full-access',
+    config: { model_reasoning_effort: 'high' },
+  })
+  await client.setName(switched.thread.id, 'AIT model-switch probe')
+  const switchedResume = await client.threadResume({
+    threadId: switched.thread.id,
+    ...expectedThread,
+  })
+  assert.equal(switchedResume.model, 'gpt-6-luna')
+  assert.equal(switchedResume.reasoningEffort, 'high')
+  assert.doesNotThrow(() => assertAitThreadContract(switchedResume, false))
+  assert.throws(() => assertAitThreadContract(switchedResume, true), /launch contract/)
+  assert.throws(() => assertAitThreadContract({
+    ...switchedResume,
+    approvalPolicy: 'on-request',
+  }, false), /launch contract/)
+  assert.throws(() => assertAitThreadContract({
+    ...switchedResume,
+    sandbox: { type: 'workspaceWrite' },
+  }, false), /launch contract/)
+
   // Reproduce c767a5e's bad seed. The affected rollout cohort is deliberately
   // not rewritten or migrated; it is small and two hours old, so operators
   // start those test sessions fresh after this fix.
@@ -168,7 +200,7 @@ try {
   assert.equal(hasDanglingSeed(contaminatedRows), true)
 
   console.log(
-    'PASS codex rollout: model/permissions + event-gated MCP readiness + ' +
+    'PASS codex rollout: model switch/permissions + event-gated MCP readiness + ' +
       'legacy attach seed + prior paginated-seed reproduction',
   )
 } finally {

@@ -174,6 +174,7 @@ export async function runCodexSession(): Promise<void> {
       // once we have run a lifecycle, the same error means the rollout vanished
       // under a live session, which reconnecting can still recover from.
       const firstAttempt = !openingTurnDone && threadId === resumeThreadId
+      const newThread = threadId === null
       let started
       if (threadId) {
         try {
@@ -196,7 +197,7 @@ export async function runCodexSession(): Promise<void> {
         started = await client.threadStart({ ...threadParams, historyMode: 'legacy' })
       }
       try {
-        assertAitThreadContract(started)
+        assertAitThreadContract(started, newThread)
       } catch (err) {
         console.error(`ait codex session: ${errMessage(err)}`)
         process.exit(1)
@@ -284,27 +285,33 @@ function threadConfig(sessionId: string): Record<string, string> {
   return config
 }
 
-function assertAitThreadContract(response: {
+export function assertAitThreadContract(response: {
   model?: string
   approvalPolicy?: string
   sandbox?: { type?: string }
   reasoningEffort?: string | null
-}): void {
+}, newThread: boolean): void {
   const actual = [
     response.model ?? 'unknown model',
     response.reasoningEffort ?? 'unknown reasoning effort',
     response.approvalPolicy ?? 'unknown approval policy',
     response.sandbox?.type ?? 'unknown sandbox',
   ].join(', ')
+  // A resumed thread may have a model/effort selected in the TUI. Keep that
+  // choice; it must not kill the driver that renews presence and delivers push.
+  // Approval and sandbox remain AIT's safety contract on every attach.
   if (
-    response.model !== AIT_CODEX_MODEL ||
-    response.reasoningEffort !== AIT_CODEX_REASONING_EFFORT ||
     response.approvalPolicy !== 'never' ||
-    response.sandbox?.type !== 'dangerFullAccess'
+    response.sandbox?.type !== 'dangerFullAccess' ||
+    (newThread && (
+      response.model !== AIT_CODEX_MODEL ||
+      response.reasoningEffort !== AIT_CODEX_REASONING_EFFORT
+    ))
   ) {
     throw new Error(
       `Codex did not apply the AIT launch contract (${actual}); refusing to attach. ` +
-      `AIT requires gpt-6-sol, medium, never approval, and danger-full-access. ` +
+      `AIT requires gpt-6-sol and medium on new threads, and never approval ` +
+      `with danger-full-access on every thread. ` +
       `Check Codex model availability and any enforced requirements.toml; ` +
       `AIT cannot override an administrator's permission restrictions.`,
     )

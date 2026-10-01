@@ -496,7 +496,7 @@ AIT_CODEX_SHARED_SOCKET="$TMP_ROOT/codex-launch.sock" \
 CODEX_BIN="$status_fixture/shim/codex" NODE_BIN=/usr/bin/true \
   "$status_fixture/bin/run-codex-appserver.sh"
 assert_contains "$(cat "$codex_launch_capture")" "thread_unload_delay_secs=0"
-assert_contains "$(cat "$codex_launch_capture")" 'model="gpt-6-sol"'
+assert_contains "$(cat "$codex_launch_capture")" 'model="gpt-6.1-sol"'
 assert_contains "$(cat "$codex_launch_capture")" 'model_reasoning_effort="medium"'
 pass "Codex protocol health and cleanup compatibility status"
 
@@ -1125,16 +1125,27 @@ chmod +x "$lifecycle/bin/codex-session.sh"
 cat > "$lifecycle/shim/node" <<'EOF'
 #!/bin/bash
 printf '%s' "$$" > "$AIT_DRIVER_PID_FILE"
+if [ "${AIT_DRIVER_WAIT_FOR_MCP:-}" = 1 ]; then
+  echo 'ait codex session: checking MCP server readiness' >&2
+  /bin/sleep 3
+fi
 printf '%s\n%s\n' "$AIT_FAKE_SHARED_SOCKET" '11111111-1111-4111-8111-111111111111' > "$AIT_CODEX_SOCKET_FILE"
 trap 'exit 0' INT TERM
 while :; do sleep 1; done
+EOF
+cat > "$lifecycle/shim/sleep" <<'EOF'
+#!/bin/bash
+if [ "${AIT_FAST_SLEEP:-}" = 1 ] && [ "$1" = 0.5 ]; then
+  exec /bin/sleep 0.01
+fi
+exec /bin/sleep "$@"
 EOF
 cat > "$lifecycle/shim/codex" <<'EOF'
 #!/bin/bash
 printf '%s\n' "$*" > "$AIT_TUI_CAPTURE"
 exit 0
 EOF
-chmod +x "$lifecycle/shim/node" "$lifecycle/shim/codex"
+chmod +x "$lifecycle/shim/node" "$lifecycle/shim/codex" "$lifecycle/shim/sleep"
 for artifact in rollout transcript thread-map identity; do
   printf '%s preserved\n' "$artifact" > "$lifecycle/artifacts/$artifact"
 done
@@ -1151,6 +1162,11 @@ export AIT_DRIVER_PID_FILE="$lifecycle/driver.pid"
 export AIT_FAKE_SHARED_SOCKET="$lifecycle/shared.sock"
 export AIT_TUI_CAPTURE="$lifecycle/tui.args"
 PATH="$lifecycle/shim:/usr/bin:/bin" "$lifecycle/bin/codex-session.sh" --resume 11111111-1111-4111-8111-111111111111 >/dev/null 2>&1
+AIT_DRIVER_WAIT_FOR_MCP=1 AIT_FAST_SLEEP=1 PATH="$lifecycle/shim:/usr/bin:/bin" \
+  "$lifecycle/bin/codex-session.sh" --resume 11111111-1111-4111-8111-111111111111 \
+  >"$lifecycle/mcp-wait.output" 2>&1
+assert_contains "$(cat "$lifecycle/mcp-wait.output")" 'codex-session: checking MCP server readiness'
+assert_not_contains "$(cat "$lifecycle/mcp-wait.output")" 'still waiting for thread to become ready'
 driver_fixture_pid="$(cat "$lifecycle/driver.pid")"
 process_alive "$driver_fixture_pid" && fail "exited Codex session left its driver running"
 process_alive "$shared_fixture_pid" || fail "exited Codex session stopped the shared app-server"
@@ -1161,6 +1177,7 @@ kill "$shared_fixture_pid" "$second_session_pid" 2>/dev/null || true
 wait "$shared_fixture_pid" "$second_session_pid" 2>/dev/null || true
 unset AIT_LOG_DIR AIT_DRIVER_PID_FILE AIT_FAKE_SHARED_SOCKET AIT_TUI_CAPTURE
 pass "Codex TUI exit reaps its driver and preserves shared state and session artifacts"
+pass "Codex startup progress names MCP server readiness when it causes the wait"
 
 public_asset="$TMP_ROOT/public-install.sh"
 sed -e 's/__AIT_RELEASE_TAG__/v0.1.2/g' \

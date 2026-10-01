@@ -70,7 +70,7 @@ args = [${JSON.stringify(delayedMcpPath)}, ${JSON.stringify(delayedMcpPidPath)},
 let serverOutput = ''
 const server = spawn('codex', [
   'app-server', '--listen', `unix://${socketPath}`,
-  '-c', 'model="gpt-6-sol"',
+  '-c', 'model="gpt-6.1-sol"',
   '-c', 'model_reasoning_effort="medium"',
 ], {
   env: { ...process.env, CODEX_HOME: codexHome },
@@ -93,7 +93,7 @@ try {
   await client.connect()
 
   const expectedThread = {
-    model: 'gpt-6-sol',
+    model: 'gpt-6.1-sol',
     approvalPolicy: 'never',
     sandbox: 'danger-full-access',
     config: { model_reasoning_effort: 'medium' },
@@ -104,7 +104,7 @@ try {
     config: { 'mcp_servers.ait.env.AIT_SESSION_ID': '11111111-1111-4111-8111-111111111111' },
   }
   const assertThreadContract = (thread) => {
-    assert.equal(thread.model, 'gpt-6-sol')
+    assert.equal(thread.model, 'gpt-6.1-sol')
     assert.equal(thread.reasoningEffort, 'medium')
     assert.equal(thread.approvalPolicy, 'never')
     assert.equal(thread.sandbox?.type, 'dangerFullAccess')

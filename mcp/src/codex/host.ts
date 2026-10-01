@@ -55,7 +55,7 @@ const IDENTITY_POLL_INTERVAL_MS = 1000
 // server, and an always-present backoff keeps a fast-failing lifecycle from
 // spinning hot.
 const RECONNECT_BACKOFF_MS = 2000
-const AIT_CODEX_MODEL = 'gpt-6-sol'
+const AIT_CODEX_MODEL = 'gpt-6.1-sol'
 const AIT_CODEX_REASONING_EFFORT = 'medium'
 
 // "This thread does not exist" from thread/resume. The app-server answers a
@@ -228,6 +228,7 @@ export async function runCodexSession(): Promise<void> {
         // the TUI join partway through the notification round and retain a
         // phantom Working indicator. Gate publication on the app-server's own
         // status snapshot + terminal events; no timeout decides readiness.
+        console.error('ait codex session: checking MCP server readiness')
         const pendingMcpServers = await client.waitForMcpStartup(threadId)
         if (pendingMcpServers.length > 0) {
           console.error(
@@ -310,7 +311,7 @@ export function assertAitThreadContract(response: {
   ) {
     throw new Error(
       `Codex did not apply the AIT launch contract (${actual}); refusing to attach. ` +
-      `AIT requires gpt-6-sol and medium on new threads, and never approval ` +
+      `AIT requires gpt-6.1-sol and medium on new threads, and never approval ` +
       `with danger-full-access on every thread. ` +
       `Check Codex model availability and any enforced requirements.toml; ` +
       `AIT cannot override an administrator's permission restrictions.`,

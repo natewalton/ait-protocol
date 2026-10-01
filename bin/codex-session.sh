@@ -136,7 +136,11 @@ while [ -z "$sock" ] || [ -z "$tid" ]; do
   sleep 0.5
   wait_ticks=$((wait_ticks + 1))
   if [ $((wait_ticks % 60)) -eq 0 ]; then
-    echo "codex-session: still waiting for thread to become ready ($((wait_ticks / 2))s); driver log: $log_file" >&2
+    if [ "$(tail -n 1 "$log_file")" = 'ait codex session: checking MCP server readiness' ]; then
+      echo "codex-session: checking MCP server readiness ($((wait_ticks / 2))s); driver log: $log_file" >&2
+    else
+      echo "codex-session: still waiting for thread to become ready ($((wait_ticks / 2))s); driver log: $log_file" >&2
+    fi
   fi
 done
 

@@ -112,7 +112,7 @@ export async function runCodexSession(): Promise<void> {
     // network without pausing for operator approval. Only launch this wrapper
     // in a repository/environment the operator trusts.
     approvalPolicy: 'never' as const,
-    sandbox: 'danger-full-access' as const,
+    permissions: ':danger-full-access',
     // Per-thread identity: this thread's ait tool-MCP is spawned with our id.
     config: threadConfig(sessionId),
   }
@@ -289,21 +289,21 @@ function threadConfig(sessionId: string): Record<string, string> {
 export function assertAitThreadContract(response: {
   model?: string
   approvalPolicy?: string
-  sandbox?: { type?: string }
+  activePermissionProfile?: { id: string } | null
   reasoningEffort?: string | null
 }, newThread: boolean): void {
   const actual = [
     response.model ?? 'unknown model',
     response.reasoningEffort ?? 'unknown reasoning effort',
     response.approvalPolicy ?? 'unknown approval policy',
-    response.sandbox?.type ?? 'unknown sandbox',
+    response.activePermissionProfile?.id ?? 'unknown permission profile',
   ].join(', ')
   // A resumed thread may have a model/effort selected in the TUI. Keep that
   // choice; it must not kill the driver that renews presence and delivers push.
-  // Approval and sandbox remain AIT's safety contract on every attach.
+  // Approval and permission profile remain AIT's contract on every attach.
   if (
     response.approvalPolicy !== 'never' ||
-    response.sandbox?.type !== 'dangerFullAccess' ||
+    response.activePermissionProfile?.id !== ':danger-full-access' ||
     (newThread && (
       response.model !== AIT_CODEX_MODEL ||
       response.reasoningEffort !== AIT_CODEX_REASONING_EFFORT
@@ -312,8 +312,9 @@ export function assertAitThreadContract(response: {
     throw new Error(
       `Codex did not apply the AIT launch contract (${actual}); refusing to attach. ` +
       `AIT requires gpt-6.1-sol and medium on new threads, and never approval ` +
-      `with danger-full-access on every thread. ` +
-      `Check Codex model availability and any enforced requirements.toml; ` +
+      `with the :danger-full-access permission profile on every thread. ` +
+      `Use Codex 0.162.1 or newer and check model availability and any ` +
+      `enforced requirements.toml; ` +
       `AIT cannot override an administrator's permission restrictions.`,
     )
   }

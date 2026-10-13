@@ -10,6 +10,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 
 const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ait-codex-rollout-test-'))
@@ -65,6 +66,13 @@ fs.writeFileSync(path.join(codexHome, 'config.toml'), `
 [mcp_servers.readiness_probe]
 command = ${JSON.stringify(process.execPath)}
 args = [${JSON.stringify(delayedMcpPath)}, ${JSON.stringify(delayedMcpPidPath)}, ${JSON.stringify(delayedMcpReleasePath)}]
+
+[mcp_servers.ait]
+command = ${JSON.stringify(process.execPath)}
+args = [${JSON.stringify(fileURLToPath(new URL('../dist/server.js', import.meta.url)))}]
+[mcp_servers.ait.env]
+AIT_NOTIFICATION_MODE = "poll"
+PDS_URL = "http://127.0.0.1:1"
 `)
 
 let serverOutput = ''
@@ -80,6 +88,7 @@ server.stdout.on('data', (chunk) => { serverOutput += chunk })
 server.stderr.on('data', (chunk) => { serverOutput += chunk })
 
 let client
+let driver
 try {
   for (let attempt = 0; attempt < 100 && !fs.existsSync(socketPath); attempt++) {
     assert.equal(server.exitCode, null, `codex app-server exited early:\n${serverOutput}`)
@@ -92,47 +101,50 @@ try {
   client = new AppServerClient(socketPath)
   await client.connect()
 
+  const profiles = await client.request('permissionProfile/list', { cwd: process.cwd() })
+  assert.ok(profiles.data.some((profile) =>
+    profile.id === ':danger-full-access' && profile.allowed),
+  'Codex must allow the built-in unrestricted permission profile')
+
   const expectedThread = {
     model: 'gpt-6.1-sol',
     approvalPolicy: 'never',
-    sandbox: 'danger-full-access',
+    permissions: ':danger-full-access',
     config: { model_reasoning_effort: 'medium' },
   }
   const resumeThread = {
     approvalPolicy: 'never',
-    sandbox: 'danger-full-access',
+    permissions: ':danger-full-access',
     config: { 'mcp_servers.ait.env.AIT_SESSION_ID': '11111111-1111-4111-8111-111111111111' },
   }
   const assertThreadContract = (thread) => {
     assert.equal(thread.model, 'gpt-6.1-sol')
     assert.equal(thread.reasoningEffort, 'medium')
     assert.equal(thread.approvalPolicy, 'never')
-    assert.equal(thread.sandbox?.type, 'dangerFullAccess')
+    assert.equal(thread.activePermissionProfile?.id, ':danger-full-access')
   }
-  const legacy = await client.threadStart({
+  const starting = client.threadStart({
     cwd: process.cwd(),
     historyMode: 'legacy',
     ...expectedThread,
   })
-  assertThreadContract(legacy)
-  assert.doesNotThrow(() => assertAitThreadContract(legacy, true))
-  const readiness = client.waitForMcpStartup(legacy.thread.id)
+  const readiness = starting.then((thread) => client.waitForMcpStartup(thread.thread.id))
   let readinessSettled = false
-  void readiness.then(
-    () => { readinessSettled = true },
-    () => { readinessSettled = true },
-  )
+  void readiness.then(() => { readinessSettled = true }, () => { readinessSettled = true })
   for (let attempt = 0; attempt < 100 && !fs.existsSync(delayedMcpPidPath); attempt++) {
     await delay(25)
   }
   assert.equal(fs.existsSync(delayedMcpPidPath), true,
     `delayed MCP never entered initialize:\n${serverOutput}`)
+  // Current Codex can await required MCP initialization inside thread/start.
+  // Release the fixture from its initialize event, before awaiting that call.
   await new Promise((resolve) => setImmediate(resolve))
-  if (supportsMcpReadiness) {
-    assert.equal(readinessSettled, false,
-      'MCP readiness must not settle before the app-server terminal event')
-  }
+  assert.equal(readinessSettled, false,
+    'MCP readiness must wait for the blocked initialize event')
   process.kill(Number(fs.readFileSync(delayedMcpPidPath, 'utf8')), 'SIGUSR1')
+  const legacy = await starting
+  assertThreadContract(legacy)
+  assert.doesNotThrow(() => assertAitThreadContract(legacy, true))
   const initiallyPending = await readiness
   if (supportsMcpReadiness) {
     // Codex 0.152 waits for the terminal event but reports an empty pending
@@ -141,7 +153,7 @@ try {
     // snapshot shape while rejecting any unexpected entry.
     assert.ok(
       initiallyPending.length === 0 ||
-        initiallyPending.every((name) => name === 'readiness_probe'),
+        initiallyPending.every((name) => ['readiness_probe', 'ait'].includes(name)),
       `unexpected MCP readiness snapshot: ${JSON.stringify(initiallyPending)}`,
     )
   } else {
@@ -161,14 +173,14 @@ try {
 
   // A user may switch model/effort in the TUI. Reconnecting the notification
   // driver must accept that persisted thread choice without relaxing AIT's
-  // approval and sandbox checks. Start with different settings to reproduce
+  // approval and permission checks. Start with different settings to reproduce
   // the effective response without making a model turn.
   const switched = await client.threadStart({
     cwd: process.cwd(),
     historyMode: 'legacy',
     model: 'gpt-6-luna',
     approvalPolicy: 'never',
-    sandbox: 'danger-full-access',
+    permissions: ':danger-full-access',
     config: { model_reasoning_effort: 'high' },
   })
   await client.setName(switched.thread.id, 'AIT model-switch probe')
@@ -186,8 +198,51 @@ try {
   }, false), /launch contract/)
   assert.throws(() => assertAitThreadContract({
     ...switchedResume,
-    sandbox: { type: 'workspaceWrite' },
+    activePermissionProfile: { id: ':workspace', extends: null },
   }, false), /launch contract/)
+  assert.throws(() => assertAitThreadContract({
+    ...switchedResume,
+    activePermissionProfile: null,
+  }, false), /launch contract/)
+
+  // Exercise the production driver, including the exact start/resume request
+  // it sends and the attach contract. No identity is joined or model turn made.
+  let driverThreadId
+  for (const resume of [false, true]) {
+    const socketFile = path.join(testRoot, 'driver-ready')
+    const args = resume ? ['--resume', driverThreadId] : []
+    driver = spawn(process.execPath, [
+      fileURLToPath(new URL('../dist/server.js', import.meta.url)), ...args,
+    ], {
+      cwd: testRoot,
+      env: {
+        ...process.env,
+        CODEX_HOME: codexHome,
+        AIT_NOTIFICATION_MODE: 'codex',
+        AIT_CODEX_SHARED_SOCKET: socketPath,
+        AIT_CODEX_SOCKET_FILE: socketFile,
+        PDS_URL: 'http://127.0.0.1:1',
+        APPVIEW_URL: 'http://127.0.0.1:1',
+      },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    })
+    await new Promise((resolve, reject) => {
+      let output = ''
+      driver.stderr.on('data', (chunk) => {
+        output += chunk
+        if (/ait codex session: session .* → thread /.test(output)) resolve()
+        if (output.includes('not connected to shared app-server')) reject(new Error(output))
+      })
+      driver.once('exit', (code) => reject(new Error(`driver exited ${code}: ${output}`)))
+    })
+    const [publishedSocket, id] = fs.readFileSync(socketFile, 'utf8').trim().split('\n')
+    assert.equal(publishedSocket, socketPath)
+    if (driverThreadId) assert.equal(id, driverThreadId, 'resume must keep the original thread')
+    driverThreadId = id
+    driver.kill('SIGTERM')
+    await onceExit(driver)
+    fs.unlinkSync(socketFile)
+  }
 
   // Reproduce c767a5e's bad seed. The affected rollout cohort is deliberately
   // not rewritten or migrated; it is small and two hours old, so operators
@@ -209,10 +264,15 @@ try {
   assert.equal(hasDanglingSeed(contaminatedRows), true)
 
   console.log(
-    'PASS codex rollout: model switch/permissions + event-gated MCP readiness + ' +
+    'PASS codex rollout: production driver start/resume + named permissions + ' +
+      'model switch + event-gated MCP readiness + ' +
       'legacy attach seed + prior paginated-seed reproduction',
   )
 } finally {
+  if (driver?.exitCode === null && driver.signalCode === null) {
+    driver.kill('SIGTERM')
+    await onceExit(driver)
+  }
   client?.close()
   if (server.exitCode === null) {
     server.kill('SIGTERM')
@@ -238,6 +298,6 @@ function hasDanglingSeed(rows) {
 }
 
 function onceExit(child) {
-  if (child.exitCode !== null) return Promise.resolve()
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
   return new Promise((resolve) => child.once('exit', resolve))
 }

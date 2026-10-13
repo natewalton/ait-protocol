@@ -8,8 +8,8 @@
 // version-specific by design; the thread and turn shapes were verified against
 // 0.144.3, the turn/steer shapes against 0.146.0, history/MCP readiness against
 // 0.152.0, and the effective model/permission response against 0.155.1 and
-// 0.156.1). Vendoring the full generated surface would bury the handful we use,
-// so we mirror just those.
+// 0.156.1, and permission profiles against 0.162.1). Vendoring the full generated
+// surface would bury the handful we use, so we mirror just those.
 
 // --- initialize ---------------------------------------------------------------
 
@@ -37,13 +37,12 @@ export interface InitializeParams {
 // codex-cli 0.144.3: "untrusted" | "on-request" | { granular: {...} } | "never".
 // The launcher only uses the string variants.
 export type AskForApproval = 'untrusted' | 'on-request' | 'never'
-export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
 export type ThreadHistoryMode = 'legacy' | 'paginated'
 
 export interface ThreadStartParams {
   cwd?: string | null
   approvalPolicy?: AskForApproval | null
-  sandbox?: SandboxMode | null
+  permissions?: string | null
   model?: string | null
   config?: Record<string, unknown> | null
   historyMode?: ThreadHistoryMode | null
@@ -61,7 +60,7 @@ export interface ThreadStartResponse {
   model?: string
   modelProvider?: string
   approvalPolicy?: AskForApproval
-  sandbox?: { type?: string }
+  activePermissionProfile?: { id: string; extends: string | null } | null
   reasoningEffort?: string | null
 }
 
@@ -72,7 +71,7 @@ export interface ThreadResumeParams {
   threadId: string
   cwd?: string | null
   approvalPolicy?: AskForApproval | null
-  sandbox?: SandboxMode | null
+  permissions?: string | null
   model?: string | null
   config?: Record<string, unknown> | null
 }

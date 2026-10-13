@@ -313,8 +313,8 @@ export function assertAitThreadContract(response: {
       `Codex did not apply the AIT launch contract (${actual}); refusing to attach. ` +
       `AIT requires gpt-6.1-sol and medium on new threads, and never approval ` +
       `with the :danger-full-access permission profile on every thread. ` +
-      `Use Codex 0.162.1 or newer and check model availability and any ` +
-      `enforced requirements.toml; ` +
+      `This integration is verified with Codex 0.162.1. Check model availability ` +
+      `and any enforced requirements.toml; ` +
       `AIT cannot override an administrator's permission restrictions.`,
     )
   }

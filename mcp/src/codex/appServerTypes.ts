@@ -83,6 +83,17 @@ export interface ThreadNameSetParams {
   name: string
 }
 
+// thread/read without includeTurns — metadata only. `ait resume` lists AIT's
+// Codex threads from this, because Codex 0.163 moved history into its own
+// database and deletes the rollout files once migrated. Times are Unix seconds.
+export interface ThreadReadResponse {
+  thread: {
+    id: string
+    cwd: string
+    updatedAt: number
+  }
+}
+
 // --- MCP runtime readiness ----------------------------------------------------
 
 // mcpServerStatus/list plus mcpServer/startupStatus/updated. The launcher uses

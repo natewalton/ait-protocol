@@ -111,6 +111,8 @@ const picker = path.resolve(new URL('../dist/sessionPicker.js', import.meta.url)
 const repo = path.resolve(new URL('../..', import.meta.url).pathname)
 process.on('exit', () => {
   appviewServer.kill()
+  codexServer.kill()
+  fs.rmSync(path.dirname(codexSocket), { recursive: true, force: true })
   fs.rmSync(root, { recursive: true, force: true })
 })
 
@@ -141,18 +143,70 @@ write(path.join(claudeDir, `${missingId}.jsonl`),
   `${JSON.stringify({ cwd: missingProject })}\n${JSON.stringify({ cwd: claudeProject })}\n`)
 writeIdentity(missingId, 'missing-project.test')
 
-const rollout = path.join(home, '.codex', 'sessions', '2026', '09', '04',
-  `rollout-2026-09-04T00-00-00-${codexId}.jsonl`)
-write(rollout, `${JSON.stringify({
-  type: 'session_meta',
-  payload: { id: codexId, cwd: codexProject },
-})}\n${JSON.stringify({ type: 'event_msg', payload: { text: fakeSecret } })}\n`)
+// Codex 0.163 keeps threads in its own database and deletes the rollout
+// files, so the picker asks the shared app-server. This fixture answers
+// thread/read for exactly the threads it is given; there is no rollout file.
+const unknownCodexId = '66666666-6666-4666-8666-666666666666'
+const corruptCodexId = '88888888-8888-4888-8888-888888888888'
+const codexServerFile = path.join(root, 'codex-server.mjs')
+const codexSocket = path.join(fs.mkdtempSync('/tmp/aitp-'), 's.sock')
+write(codexServerFile, `
+import { createServer } from 'node:http'
+import { WebSocketServer } from ${JSON.stringify(new URL('../node_modules/ws/wrapper.mjs', import.meta.url).href)}
+import { readFileSync } from 'node:fs'
+const [socket, threadsJson, dropFile] = process.argv.slice(2)
+const threads = JSON.parse(threadsJson)
+const http = createServer()
+const server = new WebSocketServer({ server: http })
+http.listen(socket, () => process.stdout.write('ready\\n'))
+server.on('connection', (ws) => ws.on('message', (data) => {
+  const message = JSON.parse(String(data))
+  if (message.id === undefined) return
+  if (message.method === 'initialize') return ws.send(JSON.stringify({ id: message.id, result: {} }))
+  if (JSON.parse(readFileSync(dropFile, 'utf8')).includes(message.params?.threadId)) return ws.terminate()
+  const thread = message.method === 'thread/read' ? threads[message.params.threadId] : undefined
+  if (thread) return ws.send(JSON.stringify({ id: message.id, result: { thread } }))
+  if (message.params?.threadId === ${JSON.stringify(corruptCodexId)}) {
+    return ws.send(JSON.stringify({ id: message.id, error: { code: -32603, message: 'failed to read thread' } }))
+  }
+  ws.send(JSON.stringify({ id: message.id, error: { code: -32600, message: 'thread not loaded' } }))
+}))
+`)
+const deletedCwdCodexId = '77777777-7777-4777-8777-777777777777'
+const codexDropFile = path.join(root, 'codex-drop.json')
+write(codexDropFile, '[]')
+const codexServer = spawn(process.execPath, [codexServerFile, codexSocket, JSON.stringify({
+  [codexId]: { id: codexId, cwd: codexProject, updatedAt: Math.floor(Date.now() / 1000) + 1000 },
+  [deletedCwdCodexId]: { id: deletedCwdCodexId, cwd: missingProject, updatedAt: 1 },
+}), codexDropFile], { stdio: ['ignore', 'pipe', 'inherit'] })
+await new Promise((resolve, reject) => {
+  codexServer.stdout.once('data', resolve)
+  codexServer.once('exit', (status) => reject(new Error(`fixture Codex server exited ${status}`)))
+})
+env.AIT_CODEX_SHARED_SOCKET = codexSocket
 write(path.join(xdg, 'ait-mcp', `codex-thread-${codexId}.json`), JSON.stringify({
   threadId: codexId,
   sessionId: codexId,
 }))
 writeIdentity(codexId, codexHandle)
-fs.utimesSync(rollout, new Date(Date.now() + 1000), new Date(Date.now() + 1000))
+// AIT still maps this thread, but Codex no longer has it.
+write(path.join(xdg, 'ait-mcp', `codex-thread-${unknownCodexId}.json`), JSON.stringify({
+  threadId: unknownCodexId,
+  sessionId: unknownCodexId,
+}))
+writeIdentity(unknownCodexId, 'gone-codex.test')
+// Codex has this thread but cannot read it; only this row is lost.
+write(path.join(xdg, 'ait-mcp', `codex-thread-${corruptCodexId}.json`), JSON.stringify({
+  threadId: corruptCodexId,
+  sessionId: corruptCodexId,
+}))
+writeIdentity(corruptCodexId, 'corrupt-codex.test')
+// Codex has this thread, but its project folder is gone (deleted below).
+write(path.join(xdg, 'ait-mcp', `codex-thread-${deletedCwdCodexId}.json`), JSON.stringify({
+  threadId: deletedCwdCodexId,
+  sessionId: deletedCwdCodexId,
+}))
+writeIdentity(deletedCwdCodexId, 'deleted-codex-project.test')
 
 const run = (query = '', input = '', envOverrides = {}) => spawnSync(
   process.execPath,
@@ -200,7 +254,7 @@ result = run('spaces_under', '1\n')
 assertSelection(result, 'claude', claudeProject, claudeId)
 assert.match(result.stderr, /claude-session\.test/)
 
-// No query orders the newer Codex rollout first; EOF cancels without launch.
+// No query orders the more recently updated Codex thread first; EOF cancels without launch.
 result = run('', '')
 assert.equal(result.status, 0, result.stderr)
 assert.match(result.stderr, /1\.\s+@codex-session\.test/)
@@ -221,6 +275,11 @@ assert.match(codexLine.slice(lastUsedColumn), /^[A-Z][a-z]{2} \d{1,2}, \d{4}, .*
 assert.match(claudeLine.slice(lastUsedColumn), /^[A-Z][a-z]{2} \d{1,2}, \d{4}, .* UTC$/)
 assert.match(result.stderr, /\nresume cancelled; no harness was started/)
 assert.equal(result.stdout, '')
+// A thread AIT still maps but Codex no longer has is left out, not an error.
+assert.doesNotMatch(result.stderr, /gone-codex\.test|corrupt-codex\.test|not answering/)
+result = run('gone-codex')
+assert.equal(result.status, 1)
+assert.match(result.stderr, /no resumable AIT session matched/)
 
 // Repeated narrowing keeps one readline interface, so piped lines are not lost.
 result = run('', 'session\n1\n')
@@ -299,6 +358,21 @@ result = run(claudeHandle, '', { APPVIEW_URL: 'http://127.0.0.1:1' })
 assert.equal(result.status, 1)
 assert.match(result.stderr, /could not check which AIT sessions are live; run: ait start/)
 
+// With the shared Codex server down, Claude sessions still resume and the
+// missing Codex sessions are named in one line.
+result = run(claudeHandle, '', { AIT_CODEX_SHARED_SOCKET: path.join(root, 'no-server.sock') })
+assertSelection(result, 'claude', claudeProject, claudeId)
+assert.match(result.stderr, /Codex sessions not listed: the shared Codex server is not answering; run: ait start/)
+result = run(codexHandle, '', { AIT_CODEX_SHARED_SOCKET: path.join(root, 'no-server.sock') })
+assert.equal(result.status, 1)
+assert.match(result.stderr, /Codex sessions not listed: the shared Codex server is not answering; run: ait start/)
+// A server that drops the connection mid-listing is handled the same way.
+write(codexDropFile, JSON.stringify([codexId]))
+result = run(claudeHandle)
+assertSelection(result, 'claude', claudeProject, claudeId)
+assert.match(result.stderr, /Codex sessions not listed: the shared Codex server is not answering; run: ait start/)
+write(codexDropFile, '[]')
+
 // The installed-harness gate and record/project validity are fail-closed.
 fs.unlinkSync(path.join(bin, 'codex'))
 result = run(codexHandle)
@@ -306,7 +380,9 @@ assert.equal(result.status, 1)
 assert.match(result.stderr, /no resumable AIT session matched/)
 writeExecutable('codex')
 fs.rmSync(missingProject, { recursive: true, force: true })
-for (const query of ['nested-session.test', 'malformed-session.test', 'missing-project.test']) {
+for (const query of [
+  'nested-session.test', 'malformed-session.test', 'missing-project.test', 'deleted-codex-project.test',
+]) {
   result = run(query)
   assert.equal(result.status, 1, `${query} unexpectedly discovered`)
   assert.match(result.stderr, /no resumable AIT session matched/)
@@ -358,6 +434,8 @@ fs.chmodSync(path.join(cancelPublicRoot, 'ait'), 0o755)
 fs.cpSync(path.join(repo, 'mcp', 'dist'), path.join(cancelPublicRoot, 'mcp', 'dist'), {
   recursive: true,
 })
+// The selector lists Codex threads through the app-server client, which needs ws.
+fs.symlinkSync(path.join(repo, 'mcp', 'node_modules'), path.join(cancelPublicRoot, 'mcp', 'node_modules'))
 const cancelPicker = path.join(cancelPublicRoot, 'mcp', 'dist', 'sessionPicker.js')
 const ptyCancel = (query, promptText) => {
   const command = [path.join(cancelPublicRoot, 'ait'), 'resume', query].filter(Boolean)
@@ -443,6 +521,7 @@ mkdir(path.join(publicRoot, 'mcp', 'dist'))
 fs.copyFileSync(path.join(repo, 'ait'), path.join(publicRoot, 'ait'))
 fs.chmodSync(path.join(publicRoot, 'ait'), 0o755)
 fs.cpSync(path.join(repo, 'mcp', 'dist'), path.join(publicRoot, 'mcp', 'dist'), { recursive: true })
+fs.symlinkSync(path.join(repo, 'mcp', 'node_modules'), path.join(publicRoot, 'mcp', 'node_modules'))
 write(path.join(publicRoot, 'bin', 'install.sh'),
   '#!/bin/sh\nprintf "PUBLIC %s %s %s\\n" "$PWD" "$2" "$4"\n')
 fs.chmodSync(path.join(publicRoot, 'bin', 'install.sh'), 0o755)
@@ -460,4 +539,6 @@ assert.equal(result.stderr.includes(fakeSecret), false)
 
 appviewServer.kill()
 await new Promise((resolve) => appviewServer.once('close', resolve))
+codexServer.kill()
+await new Promise((resolve) => codexServer.once('close', resolve))
 console.log('session picker tests passed')

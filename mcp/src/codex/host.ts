@@ -36,7 +36,8 @@
 
 import * as fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { AppServerClient } from './appServerClient.js'
+import { AppServerClient, RpcError } from './appServerClient.js'
+import { SERVER_OVERLOADED } from './appServerTypes.js'
 import { sharedAppServerSocketPath } from './paths.js'
 import { createCodexSink } from './sink.js'
 import {
@@ -181,6 +182,13 @@ export async function runCodexSession(): Promise<void> {
               `ait codex session: no codex thread ${threadId}. Check the id, or ` +
                 `launch without --resume to start a new session.`,
             )
+            process.exit(1)
+          }
+          // Any other answer except overload is Codex's final word on this
+          // thread (archived, corrupt history), and retrying cannot change it.
+          // Its message says what to do, e.g. "Run `codex unarchive <id>`".
+          if (firstAttempt && err instanceof RpcError && err.code !== SERVER_OVERLOADED) {
+            console.error(`ait codex session: could not resume codex thread ${threadId}: ${err.message}`)
             process.exit(1)
           }
           throw err

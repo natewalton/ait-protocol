@@ -21,6 +21,7 @@ import {
   type ThreadStartResponse,
   type ThreadResumeParams,
   type ThreadNameSetParams,
+  type ThreadReadResponse,
   type ListMcpServerStatusParams,
   type ListMcpServerStatusResponse,
   type McpServerStatusUpdatedEvent,
@@ -151,6 +152,16 @@ export class AppServerClient {
   // ThreadStartResponse shape (thread object + model/provider).
   async threadResume(params: ThreadResumeParams): Promise<ThreadStartResponse> {
     return (await this.request('thread/resume', params)) as ThreadStartResponse
+  }
+
+  // A stored thread's metadata, without loading it or its turns. Rejects with
+  // an RpcError when Codex no longer has the thread.
+  async threadRead(threadId: string, timeoutMs = CODEX_PROTOCOL_TIMEOUT_MS): Promise<ThreadReadResponse> {
+    return (await this.withDeadline(
+      this.request('thread/read', { threadId }),
+      timeoutMs,
+      'app-server thread/read',
+    )) as ThreadReadResponse
   }
 
   // Inject a plain-text user turn. Returns once the app-server accepts the turn

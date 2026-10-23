@@ -3,13 +3,16 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import * as readline from 'node:readline'
 import { pathToFileURL } from 'node:url'
+import { AppServerClient, CODEX_PROTOCOL_TIMEOUT_MS, RpcError } from './codex/appServerClient.js'
+import { SERVER_OVERLOADED, type ThreadReadResponse } from './codex/appServerTypes.js'
+import { sharedAppServerSocketPath } from './codex/paths.js'
 import { readThreadSessionId } from './codex/threadMap.js'
 import { canonicalUuid, readPublicIdentity, STORAGE_DIR } from './storage.js'
 
 // A Codex thread id is a filename component, read back verbatim from
-// codex-thread-<id>.json and from rollout metadata, so it is shape-checked
-// without being re-cased. A Claude session id is the opposite: it becomes an
-// identity key, so it goes through canonicalUuid instead of this pattern.
+// codex-thread-<id>.json, so it is shape-checked without being re-cased. A
+// Claude session id is the opposite: it becomes an identity key, so it goes
+// through canonicalUuid instead of this pattern.
 const THREAD_ID_SHAPE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const APPVIEW_URL = process.env.APPVIEW_URL ?? 'http://localhost:2585'
@@ -146,102 +149,62 @@ async function claudeSessions(): Promise<ResumableSession[]> {
   return result
 }
 
-function firstJsonLine(file: string): unknown | null {
-  let fd: number
-  try {
-    fd = fs.openSync(file, 'r')
-  } catch {
-    return null
-  }
-  try {
-    const chunks: Buffer[] = []
-    let total = 0
-    const buffer = Buffer.alloc(8192)
-    while (total < 1024 * 1024) {
-      const count = fs.readSync(fd, buffer, 0, buffer.length, null)
-      if (count === 0) break
-      const part = buffer.subarray(0, count)
-      const newline = part.indexOf(10)
-      if (newline >= 0) {
-        chunks.push(part.subarray(0, newline))
-        break
-      }
-      chunks.push(Buffer.from(part))
-      total += count
-    }
-    const line = Buffer.concat(chunks).toString('utf8').replace(/\r$/, '')
-    return JSON.parse(line)
-  } catch {
-    return null
-  } finally {
-    fs.closeSync(fd)
-  }
-}
-
-function rolloutFiles(root: string): string[] {
-  const result: string[] = []
-  const visit = (directory: string): void => {
-    let entries: fs.Dirent[]
-    try {
-      entries = fs.readdirSync(directory, { withFileTypes: true })
-    } catch {
-      return
-    }
-    for (const entry of entries) {
-      const full = path.join(directory, entry.name)
-      if (entry.isDirectory()) visit(full)
-      else if (entry.isFile() && /^rollout-.*\.jsonl$/i.test(entry.name)) result.push(full)
-    }
-  }
-  visit(root)
-  return result
-}
-
 async function codexSessions(): Promise<ResumableSession[]> {
   if (!commandInstalled('codex')) return []
-  const root = process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex')
-  const rollouts = rolloutFiles(path.join(root, 'sessions'))
   let maps: fs.Dirent[]
   try {
     maps = fs.readdirSync(STORAGE_DIR, { withFileTypes: true })
   } catch {
     return []
   }
-  const mappedThreads = maps
-    .filter((entry) => entry.isFile() && /^codex-thread-[A-Za-z0-9-]+\.json$/.test(entry.name))
-    .map((entry) => entry.name.slice('codex-thread-'.length, -'.json'.length))
-    .filter((threadId) => THREAD_ID_SHAPE.test(threadId) && readThreadSessionId(threadId))
-  const result: ResumableSession[] = []
-  for (const rollout of rollouts) {
-    const metadata = firstJsonLine(rollout) as {
-      type?: unknown
-      payload?: { id?: unknown; session_id?: unknown; cwd?: unknown }
-    } | null
-    if (metadata?.type !== 'session_meta' || !metadata.payload) continue
-    const threadId =
-      typeof metadata.payload.id === 'string'
-        ? metadata.payload.id
-        : typeof metadata.payload.session_id === 'string'
-          ? metadata.payload.session_id
-          : ''
-    if (!THREAD_ID_SHAPE.test(threadId) || !mappedThreads.includes(threadId)) continue
-    const project = metadata.payload.cwd
+  const mappedThreads: Array<{ threadId: string; handle: string }> = []
+  for (const entry of maps) {
+    if (!entry.isFile() || !/^codex-thread-[A-Za-z0-9-]+\.json$/.test(entry.name)) continue
+    const threadId = entry.name.slice('codex-thread-'.length, -'.json'.length)
+    if (!THREAD_ID_SHAPE.test(threadId)) continue
     const sessionId = readThreadSessionId(threadId)
     const identity = sessionId ? readPublicIdentity(sessionId) : null
-    if (!existingDirectory(project) || !identity) continue
-    let modifiedAt: number
+    if (identity) mappedThreads.push({ threadId, handle: identity.handle })
+  }
+  if (mappedThreads.length === 0) return []
+
+  // Codex keeps its own thread store (since 0.163 a database, with the old
+  // rollout files deleted after migration), so the shared app-server is asked
+  // rather than the disk read directly. A server that cannot answer leaves
+  // Codex out of the list in one line, and Claude sessions still resume.
+  const unavailable = 'Codex sessions not listed: the shared Codex server is not answering; run: ait start\n'
+  const client = new AppServerClient(sharedAppServerSocketPath())
+  const result: ResumableSession[] = []
+  try {
     try {
-      modifiedAt = fs.statSync(rollout).mtimeMs
+      await client.connect(CODEX_PROTOCOL_TIMEOUT_MS)
     } catch {
-      continue
+      process.stderr.write(unavailable)
+      return []
     }
-    result.push({
-      handle: identity.handle,
-      harness: 'codex',
-      project,
-      identifier: threadId,
-      modifiedAt,
-    })
+    for (const { threadId, handle } of mappedThreads) {
+      let thread: ThreadReadResponse['thread']
+      try {
+        thread = (await client.threadRead(threadId)).thread
+      } catch (err) {
+        // An RPC error is the server answering for this one thread (gone,
+        // unreadable); skip it. Overload, or a dropped or silent connection,
+        // means the server is not answering.
+        if (err instanceof RpcError && err.code !== SERVER_OVERLOADED) continue
+        process.stderr.write(unavailable)
+        return []
+      }
+      if (!existingDirectory(thread.cwd)) continue
+      result.push({
+        handle,
+        harness: 'codex',
+        project: thread.cwd,
+        identifier: threadId,
+        modifiedAt: thread.updatedAt * 1000,
+      })
+    }
+  } finally {
+    client.close()
   }
   return result
 }

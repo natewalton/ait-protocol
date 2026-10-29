@@ -60,7 +60,8 @@ not proof assigning the earlier timeout exclusively to one of those changes.
   after receiving the request's EOF; echo alone cannot prove that behavior.
 - The published AT resolver request hook, upstream PLC signed-history checks,
   canonical document formatting and the signed endpoint's peer-hosting binding.
-  No global fetch/dispatcher or identity-resolver method patching.
+  No global fetch/dispatcher or DID-resolver method patching. The private
+  handle resolver deliberately returns the standard unverified outcome.
 - Real signed repository CARs and official authenticated Firehose projection.
   The AT producer uses synthetic log/XRPC fixtures, not full PDS/PLC services.
 - Existing AIT indexer/thread/notification query functions, unchanged actor
@@ -75,6 +76,23 @@ The fixture explicitly chooses known source context for query hydration. It
 does not implement a production source directory, persisted registry or actor
 name discovery. Linking approval is injected fixture consent, not a complete
 invitation UI or security-reviewed production consent implementation.
+
+The peer client owns the subscriptions it starts. The fixture models unlink
+by revoking approval and closing that client, which stops its Firehoses,
+destroys HTTP/WSS transports and clears the source DID cache. Relink creates a
+new client. Already indexed posts remain readable; they are not revoked data.
+getRepo alone has a 100 MiB prototype response budget; other HTTP routes retain
+the upstream 512 KiB limit. The suite verifies a signed repo above that smaller
+limit and rejects an oversized PLC log. Production export sizing remains to be
+decided with actual installation data.
+
+Abrupt disappearance after a completed request FIN is not promised to be
+detected while the response is idle. A direct Node TCP control also observed
+no close event in that sequence. No timer, probe or reconnect mechanism is
+added for it; the lifecycle owner must explicitly close/unlink the peer.
+Per-stream byte records are fixture diagnostics, not retained production
+history. QUIC errors without a Node error code are reported as errors rather
+than classified as TCP resets.
 
 ## Still required before shipping
 

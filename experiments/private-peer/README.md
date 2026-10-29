@@ -1,0 +1,89 @@
+# Isolated private-peer integration build
+
+This is a runnable integration prototype, not an installed AIT feature or a
+release candidate. Its first consumer is the existing AIT indexer and thread/
+notification queries reading real verified AT repository records over Iroh.
+
+No live AIT service/account, project configuration, credential store or system
+trust setting is changed. Newly generated keys, certificates and SQLite state
+belong to the fixture. Network access is OS-confined to loopback during tests.
+Only recorded child processes are cleaned up.
+
+## Run
+
+Requires macOS sandbox-exec, OpenSSL and Node >=22 (tested here on 25.7.0 only),
+and the read-only reference modules at
+`/Users/nwalton/.local/share/ait-protocol/appview/dist`. Those imports are pure
+indexer/query/database functions, never server startup or .env loading. The
+reference consumer dependency makes this a local development fixture, not yet
+a portable distribution/test gate.
+
+```sh
+cd experiments/private-peer
+npm ci --ignore-scripts --no-audit --no-fund
+npm run test:half-close
+npm run test:transport
+npm test
+npm run test:repeat
+```
+
+Run files/results are in fresh temporary directories, not in the installation.
+The lockfile pins the tested tree. Do not replace the pinned sync transport
+chain with latest packages without checking agent/lookup option support.
+
+The repeat command runs exactly 20 consecutive integrations, stopping at the
+first failure rather than retrying. Each run checks native endpoint/worker
+cleanup, drained stream hashes, and `process.getActiveResourcesInfo()` against
+its starting baseline at `beforeExit`. Its 30-second watchdog detects a hang;
+it does not order the setup or teardown.
+
+The negative control below must exit 1. It uses a temporary worker copy with
+only the old destructive socket iterator restored. Both late-response cases
+must fail; the tracked worker is not edited.
+
+```sh
+sandbox-exec -f loopback.sb node half-close-test.mjs --old-iterator
+```
+
+An earlier integration passed its eight functional checks but timed out in
+cleanup. The current code waits for the failed TLS client's close, observes
+writer completion with `finished()`, and drains before endpoint shutdown.
+The final files passed 20/20 repetitions; that is reproducibility evidence,
+not proof assigning the earlier timeout exclusively to one of those changes.
+
+## What it exercises
+
+- Official Iroh endpoints, private loopback addressing, authenticated native
+  connections, unchanged HTTP/HTTPS/WebSocket bytes and scoped peer TLS trust.
+- Directional TCP/QUIC drain and FIN, one final connection-close owner, and
+  owned-worker/endpoint cleanup. Half-close testing requires a response sent
+  after receiving the request's EOF; echo alone cannot prove that behavior.
+- The published AT resolver request hook, upstream PLC signed-history checks,
+  canonical document formatting and the signed endpoint's peer-hosting binding.
+  No global fetch/dispatcher or identity-resolver method patching.
+- Real signed repository CARs and official authenticated Firehose projection.
+  The AT producer uses synthetic log/XRPC fixtures, not full PDS/PLC services.
+- Existing AIT indexer/thread/notification query functions, unchanged actor
+  DIDs/record CIDs/reply references, scoped refusal and replay idempotence.
+
+The two independently generated actor repos begin with the old localhost
+service endpoint. A standard signed endpoint-only operation prepares each for
+its logical Iroh-key address. Repo bytes remain unchanged. This demonstrates
+the metadata operation, not an execution of `ait update` or session JWT reuse.
+
+The fixture explicitly chooses known source context for query hydration. It
+does not implement a production source directory, persisted registry or actor
+name discovery. Linking approval is injected fixture consent, not a complete
+invitation UI or security-reviewed production consent implementation.
+
+## Still required before shipping
+
+Full existing-install update/session continuity; user-facing Link/Unlink;
+friendly-name ambiguity and local AppView getRecord integration; real Claude/
+Codex session delivery; VM/two-host reachability; production packaging and
+independent security review. The run must not be described as those outcomes.
+
+An approved recipient can copy data already received. Unlink denies further
+network access; it cannot erase those copies. PLC history checks establish an
+authorized history, not an independently operated authority's newest global
+state. These are protocol limits, not guarantees added by this prototype.

@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto'
 import { Secp256k1Keypair } from '@atproto/crypto'
 import { createOp, updatePdsOp, validateOperationLog } from '@did-plc/lib'
 import { Repo, MemoryBlockstore, WriteOpAction, getFullRepo, concatBytesAsync, verifyRepoCar } from '@atproto/repo'
-import { Firehose, MemoryRunner } from '@atproto/sync'
+import { MemoryRunner } from '@atproto/sync'
 import { MessageFrame } from '@atproto/xrpc-server'
 import { WebSocketServer, WebSocket } from 'ws'
 import { EndpointId } from '@number0/iroh'
@@ -73,7 +73,7 @@ async function source(label) {
     const did = decodeURIComponent(url.pathname.slice(1, -4))
     if (url.pathname.endsWith('/log') && s.actors.has(did)) {
       res.setHeader('content-type', 'application/json')
-      return res.end(JSON.stringify(s.actors.get(did).log))
+      return res.end(JSON.stringify(s.actors.get(did).log) + (s.oversizeLog ? ' '.repeat(600 * 1024) : ''))
     }
     if (url.pathname === '/xrpc/com.atproto.sync.getRepo') {
       const actor = s.actors.get(url.searchParams.get('did'))
@@ -133,15 +133,13 @@ async function consume(source, peer, db, count) {
   let complete, reject
   const completed = new Promise((resolve, fail) => { complete = resolve; reject = fail })
   const runner = new MemoryRunner({ startCursor: 0 })
-  const feed = new Firehose({ service: peer.origin.replace('https:', 'wss:'),
-    agent: peer.wsAgent, idResolver: peer.resolver, runner,
+  const record = peer.subscribe({ runner,
     handleEvent: async event => {
       await handleEvent(db, event, peer.resolver)
       events.push(event)
       if (events.filter(e => e.event === 'create').length === count) complete()
     }, onError: error => { errors.push(String(error)); reject(error) } })
-  const running = feed.start()
-  const record = { feed, running }; feeds.push(record)
+  feeds.push(record)
   await within(completed, `verified ${source.label} records`)
   await runner.processAll()
   assert.deepEqual(errors, [])
@@ -152,7 +150,7 @@ let failure
 try {
   const [a, b] = await Promise.all([source('A'), source('B')])
   const link = { approved: true }
-  const readA = client(a, link), readB = client(b, link)
+  let readA = client(a, link), readB = client(b, link)
   const alice = await actor(a, 'alice', [{ action: WriteOpAction.Create,
     collection: 'ait.feed.post', rkey: 'root', record: { $type: 'ait.feed.post', text: 'private root', createdAt: time } }])
   const rootRecord = alice.event.ops[0]
@@ -170,6 +168,21 @@ try {
       assert.equal(digest(received), digest(actor.car))
       await verifyRepoCar(received, actor.did, data.signingKey)
     }
+    const large = await actor(a, 'large', Array.from({ length: 300 }, (_, index) => ({
+      action: WriteOpAction.Create, collection: 'ait.feed.post', rkey: `large${index}`,
+      record: { $type: 'ait.feed.post', text: `${index}:` + 'x'.repeat(2400), createdAt: time },
+    })))
+    assert.ok(large.car.length > 512 * 1024)
+    const data = await readA.resolver.did.resolveAtprotoData(large.did)
+    const response = await readA.get(`/xrpc/com.atproto.sync.getRepo?did=${large.did}`)
+    const received = Buffer.from(await response.arrayBuffer())
+    assert.equal(digest(received), digest(large.car))
+    await verifyRepoCar(received, large.did, data.signingKey)
+    a.actors.delete(large.did)
+    a.oversizeLog = true
+    try { await assert.rejects(() => readA.resolver.did.resolve(alice.did, true), /size|large|limit/i) }
+    finally { a.oversizeLog = false }
+    return { largeRepoBytes: large.car.length, nonRepoLimitBytes: 512 * 1024 }
   })
   const db = openDb(path.join(root, 'projection.sqlite')); databases.push(db)
   await check('Official authenticated Firehose consumes both independent sources over private WSS/Iroh', async () => {
@@ -195,6 +208,9 @@ try {
   await check('Unapproved routes and destination overrides fail before access', async () => {
     await assert.rejects(() => readA.get('/xrpc/com.atproto.server.createSession'), /not allowed/)
     await assert.rejects(() => readA.get('https://unapproved.invalid/'), /unapproved destination/)
+    const before = requests.length
+    await assert.rejects(() => readA.get('/xrpc%2Fcom.atproto.sync.getRepo'), /not allowed/)
+    assert.equal(requests.length, before, 'encoded route must be refused before network access')
   })
   await check('Wrong peer CA refuses HTTPS and WSS without disabling TLS verification', async () => {
     const wrong = client(a, link, b.ca)
@@ -218,11 +234,16 @@ try {
   })
   await check('Unlink ends active subscriptions and refuses fresh access; relink replay is idempotent', async () => {
     const before = db.prepare('SELECT COUNT(*) n FROM notifications').get().n
-    for (const record of feeds.splice(0)) { await record.feed.destroy(); await record.running }
+    assert.equal(a.ws.clients.size + b.ws.clients.size, 2, 'both feeds are active before unlink')
     link.approved = false
-    await assert.rejects(() => readA.resolver.did.resolve(alice.did, true), /not approved/)
+    const closed = [...a.ws.clients, ...b.ws.clients].map(ws => new Promise(resolve => ws.once('close', resolve)))
+    await within(Promise.all([readA.close(), readB.close(), ...closed]), 'unlink closes feeds and transports')
+    await Promise.all(feeds.splice(0).map(record => record.running))
+    assert.equal(a.ws.clients.size + b.ws.clients.size, 0)
+    await assert.rejects(() => readA.resolver.did.resolve(alice.did), /not approved/)
     await assert.rejects(() => readA.get(`/xrpc/com.atproto.sync.getRepo?did=${alice.did}`), /not approved/)
     link.approved = true
+    readA = client(a, link); readB = client(b, link)
     await consume(a, readA, db, 1); await consume(b, readB, db, 1)
     assert.equal(db.prepare('SELECT COUNT(*) n FROM posts').get().n, 2)
     assert.equal(db.prepare('SELECT COUNT(*) n FROM notifications').get().n, before)

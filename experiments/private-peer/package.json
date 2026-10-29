@@ -1,0 +1,27 @@
+{
+  "name": "ait-private-peer-integration-prototype",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "sandbox-exec -f loopback.sb node integration-test.mjs",
+    "test:transport": "sandbox-exec -f loopback.sb node transport-test.mjs",
+    "test:half-close": "sandbox-exec -f loopback.sb node half-close-test.mjs",
+    "test:repeat": "node repeat-test.mjs"
+  },
+  "dependencies": {
+    "@atproto/crypto": "0.5.7",
+    "@atproto/identity": "0.5.20",
+    "@atproto-labs/fetch-node": "0.4.3",
+    "@atproto/repo": "0.10.0",
+    "@atproto/sync": "0.3.1",
+    "@atproto/xrpc-server": "0.11.1",
+    "@did-plc/lib": "0.0.4",
+    "@number0/iroh": "1.2.0",
+    "multiformats": "13.4.2",
+    "undici": "8.12.3",
+    "ws": "8.22.0"
+  },
+  "overrides": {
+    "@atproto/ws-client": "0.1.0"
+  }
+}

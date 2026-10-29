@@ -2,12 +2,13 @@
 import assert from 'node:assert/strict'
 import https from 'node:https'
 import { IdResolver, MemoryCache } from '@atproto/identity'
+import { Firehose } from '@atproto/sync'
 import { safeFetchWrap } from '@atproto-labs/fetch-node'
 import { formatDidDoc, validateOperationLog } from '@did-plc/lib'
 import { Agent, buildConnector, fetch as transportFetch } from 'undici'
 
 // One approved source, one resolver/cache and one private TLS trust anchor.
-// No global fetch, DNS, trust-store or resolver-method modification.
+// No global fetch, DNS, trust-store or DID resolver-method modification.
 export function createPeerClient({ hostname, entryPort, ca, isApproved }) {
   assert.match(hostname, /^[a-z2-7]{52}\.localhost$/)
   assert.ok(Number.isInteger(entryPort) && entryPort > 0)
@@ -37,13 +38,13 @@ export function createPeerClient({ hostname, entryPort, ca, isApproved }) {
     return https.Agent.prototype.createConnection.call(wsAgent,
       { ...opts, port: entryPort, lookup }, done)
   }
-  const raw = safeFetchWrap({ fetch: (input, init) => {
+  const transport = (input, init) => {
     const request = new Request(input, init)
     const url = new URL(request.url)
     permitted(url)
     assert.equal(request.method, 'GET', 'peer route is read-only')
     assert.equal(request.redirect, 'error', 'peer redirects are refused')
-    const path = decodeURIComponent(url.pathname)
+    const path = url.pathname
     assert.ok(/^\/did:plc:[a-z2-7]{24}\/log$/.test(path) ||
       ['/xrpc/com.atproto.sync.getRepo', '/xrpc/com.atproto.sync.getBlob'].includes(path),
     'peer route is not allowed')
@@ -52,8 +53,16 @@ export function createPeerClient({ hostname, entryPort, ca, isApproved }) {
     return transportFetch(request.url, { method: request.method,
       headers: request.headers, signal: request.signal, redirect: request.redirect,
       dispatcher })
-  } })
-  const resolver = new IdResolver({ plcUrl: origin, didCache: new MemoryCache(),
+  }
+  const smallFetch = safeFetchWrap({ fetch: transport })
+  // Repository exports are not DID documents. Keep a finite prototype budget,
+  // while leaving the upstream 512 KiB cap unchanged on every other route.
+  const repoFetch = safeFetchWrap({ fetch: transport, responseMaxSize: 100 * 1024 * 1024 })
+  const raw = (input, init) => (new URL(input).pathname === '/xrpc/com.atproto.sync.getRepo'
+    ? repoFetch : smallFetch)(input, init)
+  const cache = new MemoryCache()
+  const subscriptions = []
+  const resolver = new IdResolver({ plcUrl: origin, didCache: cache,
     fetch: async (input, init) => {
       const url = new URL(input)
       permitted(url)
@@ -70,5 +79,20 @@ export function createPeerClient({ hostname, entryPort, ca, isApproved }) {
   resolver.handle.resolve = async () => undefined
   return { origin, resolver, wsAgent,
     get: path => raw(new URL(path, origin), { redirect: 'error' }),
-    async close() { wsAgent.destroy(); await dispatcher.close() } }
+    subscribe(opts) {
+      const feed = new Firehose({ ...opts, service: origin.replace('https:', 'wss:'),
+        agent: wsAgent, idResolver: resolver })
+      const running = feed.start()
+      const record = { feed, running }
+      subscriptions.push(record)
+      return record
+    },
+    async close() {
+      for (const { feed, running } of subscriptions.splice(0)) {
+        await feed.destroy(); await running
+      }
+      wsAgent.destroy()
+      await dispatcher.destroy()
+      await cache.clear()
+    } }
 }

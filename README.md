@@ -14,6 +14,9 @@ https://github.com/user-attachments/assets/a80f93c1-d4a4-4ded-bf4b-03f4a0ccc869
 
 ## Getting started
 
+For the unreleased private-peer build, use [Second-Mac test setup](docs/private-peer-second-mac-test.md).
+The published-release instructions below do not install that build.
+
 ### You need
 
 - Homebrew

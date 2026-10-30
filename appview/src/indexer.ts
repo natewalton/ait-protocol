@@ -1,8 +1,10 @@
 import type { Db } from './db.js'
 import type { Event, Create, Update } from '@atproto/sync'
 import type { DidCache, IdResolver } from '@atproto/identity'
-import { AtUri } from '@atproto/syntax'
+import { AtUri, isValidHandle } from '@atproto/syntax'
+import { lexToJson } from '@atproto/lexicon'
 import { notifyInsert } from './pushRegistry.js'
+import { friendlyHandle } from './queries/hydrateActor.js'
 
 // Mention facet feature shape — the post may carry either ait.richtext.facet#mention
 // (forward-looking) or app.bsky.richtext.facet#mention (the type we currently
@@ -38,7 +40,14 @@ export async function handleEvent(
   evt: Event,
   idResolver?: IdResolver,
   idCache?: DidCache,
+  source = 'local',
 ): Promise<void> {
+  if (evt.event === 'identity') {
+    await idCache?.clearEntry(evt.did)
+  }
+  if (evt.event === 'create' || evt.event === 'update' || evt.event === 'identity') {
+    await projectActor(db, evt, idResolver, source)
+  }
   if (evt.event === 'create' || evt.event === 'update') {
     if (evt.collection === 'ait.feed.post') {
       indexPost(db, evt, idResolver)
@@ -66,27 +75,44 @@ export async function handleEvent(
   }
   if (evt.event === 'account') {
     db.prepare(
-      `INSERT INTO actors (did, active, status, indexedAt) VALUES (?, ?, ?, ?)
+      `INSERT INTO actors (did, active, status, source, indexedAt) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(did) DO UPDATE SET
          active    = excluded.active,
          status    = excluded.status,
+         source    = excluded.source,
          indexedAt = excluded.indexedAt`,
     ).run(
       evt.did,
       evt.active ? 1 : 0,
       evt.status ?? null,
+      source,
       new Date().toISOString(),
     )
     return
   }
-  if (evt.event === 'identity') {
-    // ADR-0038: identity state is not maintained in SQLite — it's resolved
-    // lazily via IdResolver. An #identity event is a *signal* that the
-    // upstream identity layer's view of this DID has changed, so we drop
-    // the cached PLC doc; the next query for this DID resolves fresh.
-    await idCache?.clearEntry(evt.did)
-    return
-  }
+}
+
+// The caller supplies authenticated sync events and their source resolver.
+// Never trust evt.handle or attribute a followed subject to its author.
+async function projectActor(db: Db, evt: Event, idResolver: IdResolver | undefined, source: string) {
+  const doc = evt.event === 'identity' && evt.didDocument
+    ? evt.didDocument
+    : await idResolver?.did.resolve(evt.did)
+  if (idResolver && !doc) throw new Error(`DID document not found: ${evt.did}`)
+  if (doc && doc.id !== evt.did) throw new Error(`DID document mismatch: ${evt.did}`)
+  const alias = doc?.alsoKnownAs?.find((value) =>
+    value.startsWith('at://') && isValidHandle(value.slice(5)),
+  )
+  const claimedHandle = alias?.slice(5) ?? null
+  const label = claimedHandle ? friendlyHandle(claimedHandle) : null
+  db.prepare(
+    `INSERT INTO actors (did, source, label, claimedHandle, indexedAt) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(did) DO UPDATE SET
+       source = excluded.source,
+       label = CASE WHEN ? THEN excluded.label ELSE actors.label END,
+       claimedHandle = CASE WHEN ? THEN excluded.claimedHandle ELSE actors.claimedHandle END,
+       indexedAt = excluded.indexedAt`,
+  ).run(evt.did, source, label, claimedHandle, new Date().toISOString(), doc ? 1 : 0, doc ? 1 : 0)
 }
 
 // Parse the repo-DID out of an at-uri (e.g. at://did:plc:abc/ait.feed.post/tid → did:plc:abc).
@@ -116,12 +142,13 @@ function indexPost(db: Db, evt: Create | Update, idResolver?: IdResolver) {
 
   db.prepare(
     `INSERT INTO posts
-       (uri, cid, did, text, facets,
+       (uri, cid, recordJson, did, text, facets,
         replyRootUri, replyParentUri, replyRootCid, replyParentCid,
         createdAt, indexedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(uri) DO UPDATE SET
        cid            = excluded.cid,
+       recordJson     = excluded.recordJson,
        text           = excluded.text,
        facets         = excluded.facets,
        replyRootUri   = excluded.replyRootUri,
@@ -132,6 +159,7 @@ function indexPost(db: Db, evt: Create | Update, idResolver?: IdResolver) {
   ).run(
     uri,
     cid,
+    JSON.stringify(lexToJson(evt.record)),
     evt.did,
     record.text ?? '',
     record.facets ? JSON.stringify(record.facets) : null,

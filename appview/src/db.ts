@@ -39,11 +39,15 @@ export function openDb(dbPath: string) {
       active    INTEGER NOT NULL DEFAULT 1,
       status    TEXT,
       retiredAt TEXT,                      -- ADR-0043; see addMissingColumns below
+      source    TEXT,
+      label     TEXT,
+      claimedHandle TEXT,
       indexedAt TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS posts (
       uri             TEXT PRIMARY KEY,
       cid             TEXT NOT NULL,
+      recordJson      TEXT,
       did             TEXT NOT NULL,
       text            TEXT NOT NULL,
       facets          TEXT,
@@ -96,6 +100,8 @@ export function openDb(dbPath: string) {
   addMissingColumns(db, 'posts', {
     replyRootCid: 'TEXT',
     replyParentCid: 'TEXT',
+    // NULL means a legacy partial projection, never a reconstructed record.
+    recordJson: 'TEXT',
   })
   addMissingColumns(db, 'actors', {
     active: 'INTEGER NOT NULL DEFAULT 1',
@@ -107,6 +113,11 @@ export function openDb(dbPath: string) {
     // would take the actor's posts down with it. Retirement hides the handle
     // from pickers and leaves every post readable.
     retiredAt: 'TEXT',
+    // Attribution of the verified event, not a routing/owner registry.
+    source: 'TEXT',
+    label: 'TEXT',
+    // Exact handle claimed by the verified DID document; not an alias cache.
+    claimedHandle: 'TEXT',
   })
   dropHandleColumn(db)
   return db

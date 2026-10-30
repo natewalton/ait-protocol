@@ -28,7 +28,7 @@ finish() {
     echo "  target: $TARGET_VERSION $TARGET_COMMIT" >&2
     if [ "$RECOVERY" = forward ]; then
       echo '  Do not reset; persisted data may have advanced.' >&2
-      echo '  recovery: preserve the logs and fix forward with a higher patch release.' >&2
+      echo '  recovery: preserve the logs and rerun ait update; do not reset identity data.' >&2
     else
       echo '  recovery: restore the old release and rebuild:' >&2
       echo "    git -C '$MANAGED' checkout --detach '$OLD_COMMIT'" >&2
@@ -139,7 +139,18 @@ update() {
   curl -fsSL "$url" > "$asset" || fail "could not download the release installer asset; see $RELEASE_PAGE"
   [ "$(sha256 "$asset")" = "$digest" ] || fail 'release installer digest mismatch'
   verify_asset "$asset"
-  if [ "$TARGET_COMMIT" = "$OLD_COMMIT" ]; then echo "AIT is already up to date at $TARGET_TAG ($TARGET_COMMIT)"; return; fi
+  if [ "$TARGET_COMMIT" = "$OLD_COMMIT" ]; then
+    if [ -f "$MANAGED/appview/src/peerPrepare.mjs" ] &&
+       { [ ! -f "$MANAGED/appview/dist/peerPrepare.mjs" ] || ! node "$MANAGED/appview/dist/peerPrepare.mjs" check "$MANAGED"; }; then
+      acquire_lock; check_sessions; service_state
+      [ "$WAS_READY" -eq 0 ] || "$STOP_SCRIPT" || fail 'could not stop services for local preparation'
+      RECOVERY=forward
+      [ -f "$MANAGED/appview/dist/peerPrepare.mjs" ] || "$MANAGED/bin/install.sh" --rebuild-only || fail 'preparation rebuild failed'
+      node "$MANAGED/appview/dist/peerPrepare.mjs" prepare "$MANAGED" || fail 'local preparation incomplete; rerun ait update'
+      [ "$WAS_READY" -eq 0 ] || "$START_SCRIPT" || fail 'prepared services did not become ready'
+    fi
+    echo "AIT is already up to date at $TARGET_TAG ($TARGET_COMMIT)"; return
+  fi
   git -C "$MANAGED" fetch -q --no-tags origin "refs/tags/$TARGET_TAG" || fail "release tag $TARGET_TAG could not be fetched"
   verify_release
   acquire_lock
@@ -150,6 +161,10 @@ update() {
   git -C "$MANAGED" checkout -q --detach "$TARGET_COMMIT" || fail "could not check out verified release $TARGET_TAG"
   git -C "$MANAGED" update-ref "refs/ait-release/$TARGET_TAG" "$TARGET_COMMIT" || fail 'could not record the verified release identity'
   "$MANAGED/bin/install.sh" --rebuild-only || fail 'target rebuild failed'
+  if [ -f "$MANAGED/appview/dist/peerPrepare.mjs" ] && ! node "$MANAGED/appview/dist/peerPrepare.mjs" check "$MANAGED"; then
+    RECOVERY=forward
+    node "$MANAGED/appview/dist/peerPrepare.mjs" prepare "$MANAGED" || fail 'local preparation incomplete; rerun ait update'
+  fi
   if [ "$WAS_READY" -eq 1 ]; then
     RECOVERY=forward
     "$START_SCRIPT" || fail 'updated services did not become ready'

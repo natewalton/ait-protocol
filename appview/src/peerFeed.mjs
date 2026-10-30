@@ -1,0 +1,157 @@
+import assert from 'node:assert/strict'
+import { schemas } from '@atproto/api'
+import { Lexicons } from '@atproto/lexicon'
+import { cborToLexRecord, parseDataKey, verifyRepoCar } from '@atproto/repo'
+import { parseAccount, parseCommitAuthenticated, parseIdentity } from '@atproto/sync'
+import { AtUri } from '@atproto/syntax'
+import { Subscription } from '@atproto/xrpc-server'
+import { handleEvent } from './indexer.js'
+
+const METHOD = 'com.atproto.sync.subscribeRepos'
+const LIST = 'com.atproto.sync.listRepos'
+const lexicons = new Lexicons(schemas)
+const collections = new Set(['ait.feed.post', 'ait.graph.follow', 'ait.actor.profile'])
+
+// idResolver and both readers must be bound to this approved source. The
+// source resolver verifies its DID genesis and PDS endpoint before returning.
+export function createVerifiedFeed({ db, idResolver, service, agent, getJson, getRepo,
+  source = 'local', isApprovedSource = () => true,
+  onError = error => console.error(`feed ${source}:`, error) }) {
+  let cursor = 0
+  let running
+  const controller = new AbortController()
+  const subscription = new Subscription({ service, agent, signal: controller.signal,
+    method: METHOD, getParams: () => ({ cursor }),
+    validate: value => lexicons.assertValidXrpcMessage(METHOD, value) })
+
+  async function boundDocument(did, refresh = false) {
+    controller.signal.throwIfAborted()
+    const doc = await idResolver.did.resolve(did, refresh)
+    assert(doc && doc.id === did, `Unresolved source DID: ${did}`)
+    const previous = db.prepare('SELECT source FROM actors WHERE did = ?').get(did)?.source
+    // A replacement machine key needs fresh approval and a signed endpoint
+    // update. Old attribution may change only after the old peer is unlinked;
+    // never let a peer overwrite a local or still-approved source.
+    assert(previous == null || previous === source ||
+      (previous !== 'local' && !isApprovedSource(previous)),
+    `Source ${source} cannot overwrite ${did} from ${previous}`)
+    controller.signal.throwIfAborted()
+    return doc
+  }
+
+  async function project(event) {
+    controller.signal.throwIfAborted()
+    await handleEvent(db, event, idResolver, undefined, source)
+  }
+
+  async function account(did, doc, active, status, meta) {
+    const event = parseAccount({ ...meta, did, active, status })
+    assert(event, `Unsupported account status for ${did}: ${status}`)
+    await project({ ...meta, event: 'identity', did, didDocument: doc })
+    await project(event)
+  }
+
+  async function reconcile(did, meta, doc) {
+    doc ??= await boundDocument(did)
+    const key = await idResolver.did.resolveAtprotoKey(did)
+    const { creates, commit } = await verifyRepoCar(await getRepo(did), did, key)
+    const base = { ...meta, did, commit: commit.cid, blocks: commit.newBlocks, rev: commit.rev }
+    const present = new Set()
+    // Verify the whole snapshot before making any projection changes.
+    await account(did, doc, true, undefined, meta)
+    for (const entry of creates) {
+      if (!collections.has(entry.collection)) continue
+      const uri = AtUri.make(did, entry.collection, entry.rkey)
+      present.add(uri.toString())
+      const bytes = commit.newBlocks.get(entry.cid)
+      assert(bytes, `Verified snapshot is missing ${uri}`)
+      await project({ ...base, ...entry, uri, event: 'create', record: cborToLexRecord(bytes) })
+    }
+    const previous = db.prepare(
+      'SELECT uri FROM posts WHERE did = ? UNION SELECT uri FROM follows WHERE did = ?',
+    ).all(did, did)
+    if (db.prepare('SELECT did FROM profiles WHERE did = ?').get(did)) {
+      previous.push({ uri: AtUri.make(did, 'ait.actor.profile', 'self').toString() })
+    }
+    for (const row of previous) {
+      if (present.has(row.uri)) continue
+      const uri = new AtUri(row.uri)
+      await project({ ...base, event: 'delete', uri, collection: uri.collection, rkey: uri.rkey })
+    }
+  }
+
+  async function backfill() {
+    let pageCursor
+    do {
+      controller.signal.throwIfAborted()
+      const query = new URLSearchParams({ limit: '1000' })
+      if (pageCursor) query.set('cursor', pageCursor)
+      const page = await getJson(`/xrpc/${LIST}?${query}`)
+      lexicons.assertValidXrpcOutput(LIST, page)
+      for (const repo of page.repos) {
+        const doc = await boundDocument(repo.did)
+        const meta = { seq: cursor, time: new Date().toISOString() }
+        if (repo.active === false) await account(repo.did, doc, false, repo.status, meta)
+        else await reconcile(repo.did, meta, doc)
+      }
+      assert(!page.cursor || page.cursor !== pageCursor, 'listRepos pagination did not advance')
+      pageCursor = page.cursor
+    } while (pageCursor)
+  }
+
+  async function processMessage(message) {
+    if (message.$type === `${METHOD}#info`) {
+      if (message.name === 'OutdatedCursor') await backfill()
+      return
+    }
+    const did = message.repo ?? message.did
+    const doc = await boundDocument(did, message.$type === `${METHOD}#identity`)
+    if (message.$type === `${METHOD}#sync` || message.tooBig === true) {
+      await reconcile(did, message, doc)
+    } else if (message.$type === `${METHOD}#commit`) {
+      const events = await parseCommitAuthenticated(idResolver, message, col => collections.has(col))
+      const expected = message.ops.filter(op => collections.has(parseDataKey(op.path).collection))
+      assert.equal(events.length, expected.length, `Incomplete authenticated commit for ${did}`)
+      for (const event of events) await project(event)
+    } else if (message.$type === `${METHOD}#identity`) {
+      const event = await parseIdentity(idResolver, message)
+      assert(event, `Identity parsing failed for ${did}`)
+      await project({ ...event, didDocument: doc })
+    } else if (message.$type === `${METHOD}#account`) {
+      await account(did, doc, message.active, message.status, message)
+    } else {
+      throw new Error(`Unsupported subscription message: ${message.$type}`)
+    }
+    // A partial message may have idempotent writes, but is never acknowledged.
+    cursor = Math.max(cursor, message.seq)
+  }
+
+  async function consume() {
+    const iterator = subscription[Symbol.asyncIterator]()
+    const first = iterator.next() // Open the official stream before taking snapshots.
+    void first.catch(error => controller.abort(error))
+    try {
+      await backfill()
+      let next = await first
+      while (!next.done) {
+        await processMessage(next.value)
+        next = await iterator.next()
+      }
+    } catch (error) {
+      if (error?.name !== 'AbortError' || !controller.signal.aborted) {
+        onError(error)
+        throw error
+      }
+    } finally {
+      controller.abort()
+      await first.catch(() => {}) // Settle the one pending read before iterator cleanup.
+      await iterator.return()
+    }
+  }
+
+  return {
+    start() { return running ??= consume() },
+    async destroy() { controller.abort(); await running },
+    getCursor() { return cursor },
+  }
+}

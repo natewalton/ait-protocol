@@ -59,10 +59,20 @@ PATH="$ROOT/bin:/usr/bin:/bin"; export PATH
 source_repo="$ROOT/source"
 origin="$ROOT/origin.git"
 managed="$ROOT/managed"
-mkdir -p "$source_repo/bin" "$source_repo/appview/dist" "$source_repo/mcp/dist"
+mkdir -p "$source_repo/bin" "$source_repo/appview/dist" "$source_repo/appview/src" "$source_repo/mcp/dist"
 cp "$REPO/ait" "$source_repo/ait"
 cp "$REPO/bin/update.sh" "$source_repo/bin/update.sh"
 cp "$REPO/bin/lib-mcp-holders.sh" "$source_repo/bin/lib-mcp-holders.sh"
+cat > "$source_repo/appview/src/peerPrepare.mjs" <<'EOF'
+// Fixture-only preparation: the real PLC/PDS path is in peer-link-test.mjs.
+import fs from 'node:fs'; import path from 'node:path';
+const [op, repo] = process.argv.slice(2), marker = path.join(repo, 'appview/data/prepared');
+if (op === 'check') process.exit(fs.existsSync(marker) ? 0 : 1);
+if (op !== 'prepare') process.exit(2);
+if (!fs.existsSync(path.join(process.env.XDG_STATE_HOME, 'ait-protocol/update.lock/pid'))) throw Error('preparation ran without lifecycle lock');
+if (process.env.AIT_TEST_FAIL_PREPARE === '1') throw Error('fixture preparation failed');
+fs.writeFileSync(marker, 'prepared');
+EOF
 cat > "$source_repo/bin/install.sh" <<'EOF'
 #!/bin/sh
 [ "$1" = --rebuild-only ] || exit 2
@@ -71,6 +81,7 @@ repo="$(cd "$(dirname "$0")/.." && pwd -P)"
 mkdir -p "$repo/appview/dist" "$repo/mcp/dist"
 printf built > "$repo/appview/dist/server.js"
 printf built > "$repo/mcp/dist/server.js"
+cp "$repo/appview/src/peerPrepare.mjs" "$repo/appview/dist/peerPrepare.mjs"
 echo 'Rebuild: complete'
 EOF
 chmod +x "$source_repo/ait" "$source_repo/bin/"*
@@ -217,6 +228,27 @@ noop="$(run_update AIT_TEST_STATE=partial \
 contains "$noop" 'already up to date'
 [ ! -s "$ROOT/calls" ] || fail 'no-op called services'
 pass 'no-op performs no lifecycle or session checks'
+
+rm "$managed/appview/data/prepared"
+: > "$ROOT/calls"
+run_update AIT_TEST_STATE=ready >/dev/null || fail 'same-release preparation did not run'
+[ "$(cat "$ROOT/calls")" = $'stop\nstart' ] || fail 'same-release preparation did not restore ready state'
+[ -f "$managed/appview/data/prepared" ] || fail 'same-release preparation not completed'
+[ ! -d "$ROOT/state/ait-protocol/update.lock" ] || fail 'same-release preparation leaked lock'
+pass 'same-release preparation owns lifecycle lock and restores ready state'
+
+rm "$managed/appview/data/prepared"
+: > "$ROOT/calls"
+refuses 'same-release repair excludes active sessions' 'active AIT session' run_update AIT_TEST_STATE=ready \
+  "AIT_TEST_PS_OUTPUT=4242 1 node --enable-source-maps $managed_real/mcp/dist/server.js"
+[ ! -s "$ROOT/calls" ] && [ ! -e "$managed/appview/data/prepared" ] || fail 'active-session repair mutated state'
+set +e; recovery="$(run_update AIT_TEST_STATE=stopped AIT_TEST_FAIL_PREPARE=1 2>&1)"; rc=$?; set -e
+[ "$rc" -eq 1 ] || fail 'failed same-release preparation succeeded'
+contains "$recovery" 'Do not reset'
+case "$recovery" in *'checkout --detach'*) fail 'preparation failure offered code reset' ;; esac
+[ ! -d "$ROOT/state/ait-protocol/update.lock" ] || fail 'preparation failure leaked lock'
+run_update AIT_TEST_STATE=stopped >/dev/null || fail 'same-release preparation could not be retried'
+pass 'preparation failure reports fix-forward and same-release rerun completes'
 
 reset_managed
 write_api v0.1.2 false

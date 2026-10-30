@@ -2,7 +2,9 @@
 
 Status: Approved by Nate for isolated no-relay implementation, not live deployment.
 Date: 2026-10-30
-Production baseline: 98390e9, v0.1.39. Reviewed component proofs: cd8fa48.
+Original source baseline for the citations below: 98390e9, v0.1.39.
+Branch rebased onto d7a8652, v0.1.40, including its security fixes and advisory gate.
+Original reviewed component proofs: cd8fa48.
 
 ## Why
 

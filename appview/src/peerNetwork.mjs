@@ -9,7 +9,7 @@ import { once } from 'node:events'
 import { finished } from 'node:stream/promises'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import Database from 'better-sqlite3'
-import { Endpoint, EndpointAddr, EndpointTicket, RelayMode, presetMinimal } from '@number0/iroh'
+import { Endpoint, EndpointTicket, RelayMode, presetMinimal } from '@number0/iroh'
 import { IdResolver } from '@atproto/identity'
 import { base32 } from 'multiformats/bases/base32'
 import { loadState } from './peerState.mjs'
@@ -31,7 +31,9 @@ export function parseInvitation(text) {
 }
 function checkDirect(connection, expected) {
   assert.equal(connection.remoteId().toString(), expected, 'wrong machine key')
-  assert(connection.paths().some(p => p.isSelected && p.isIp && !p.isRelay), 'no direct connection')
+  // RelayMode.disabled is the transport policy. A just-accepted connection may
+  // not have emitted a Selected path snapshot yet; that is not a relay path.
+  assert(connection.paths().every(p => !p.isRelay), 'relay path is forbidden')
 }
 async function readJson(stream) {
   const chunks = []; let size = 0
@@ -66,9 +68,22 @@ async function bridge(socket, stream) {
 }
 
 // AppView owns one machine endpoint and its private local command socket.
-export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, accountFile,
+export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localResolver, accountFile,
   bindAddress = '0.0.0.0:0', name = os.hostname() }) {
   const machine = loadState(directory), sources = new Map(), connections = new Set(), sockets = new Set(), tasks = new Set()
+  const controlPath = path.join(directory, 'control.sock')
+  if (fs.existsSync(controlPath)) {
+    const old = fs.lstatSync(controlPath)
+    assert(old.isSocket() && old.uid === process.getuid(), 'peer command path is not an owned socket')
+    const probe = net.connect(controlPath)
+    try { await once(probe, 'connect'); throw Error('peer command socket is already serving another instance') }
+    catch (error) {
+      assert.equal(error.code, 'ECONNREFUSED', 'refusing to replace an active or uninspectable command socket')
+      const current = fs.lstatSync(controlPath)
+      assert.equal(current.ino, old.ino, 'peer command socket changed during startup')
+      fs.unlinkSync(controlPath)
+    } finally { probe.destroy() }
+  }
   let stopping = false
   const builder = Endpoint.builder(); presetMinimal(builder)
   builder.secretKey([...Buffer.from(machine.state.secret, 'hex')]); builder.alpns([CONTROL, DATA])
@@ -83,39 +98,60 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, accountF
     try { return !!accounts.prepare('SELECT did FROM actor WHERE did = ?').get(did) }
     finally { accounts.close() }
   }
+  const requestTarget = req => {
+    assert(req.method === 'GET' && req.headers.host === machine.hostname, 'peer request refused')
+    // Accept only origin-form targets. Never let an absolute URL, // authority,
+    // or backslash change the fixed local upstream selected below.
+    assert(/^\/(?!\/)/.test(req.url) && !req.url.includes('\\'), 'invalid peer request target')
+    return new URL(req.url, `https://${machine.hostname}`)
+  }
+  const upstreamTarget = (url, base) => {
+    const target = new URL(base); target.pathname = url.pathname; target.search = url.search
+    return target
+  }
   const front = https.createServer({ key: machine.key, cert: machine.cert }, (req, res) => {
-    if (req.method !== 'GET' || req.headers.host !== machine.hostname) { res.writeHead(403); return res.end() }
-    const url = new URL(req.url, `https://${machine.hostname}`), log = /^\/(did:plc:[a-z2-7]{24})\/log$/.exec(url.pathname)
-    const repo = ['/xrpc/com.atproto.sync.getRepo', '/xrpc/com.atproto.sync.getBlob'].includes(url.pathname)
-    const list = url.pathname === '/xrpc/com.atproto.sync.listRepos'
-    if (!(log && hosted(log[1])) && !(repo && hosted(url.searchParams.get('did'))) && !list) { res.writeHead(403); return res.end() }
-    const target = new URL(req.url, log ? plcUrl : pdsUrl)
-    const upstream = http.get(target, { headers: { host: machine.hostname } }, response => {
-      res.writeHead(response.statusCode, response.headers); response.pipe(res)
-    })
-    req.once('aborted', () => upstream.destroy()); res.once('close', () => upstream.destroy())
-    upstream.on('error', error => res.destroy(error))
+    try {
+      const url = requestTarget(req), log = /^\/(did:plc:[a-z2-7]{24})\/log$/.exec(url.pathname)
+      const repo = ['/xrpc/com.atproto.sync.getRepo', '/xrpc/com.atproto.sync.getBlob'].includes(url.pathname)
+      const list = url.pathname === '/xrpc/com.atproto.sync.listRepos'
+      if (!(log && hosted(log[1])) && !(repo && hosted(url.searchParams.get('did'))) && !list) { res.writeHead(403); return res.end() }
+      const target = upstreamTarget(url, log ? plcUrl : pdsUrl)
+      const upstream = http.get(target, { headers: { host: machine.hostname } }, response => {
+        res.writeHead(response.statusCode, response.headers); response.pipe(res)
+      })
+      req.once('aborted', () => upstream.destroy()); res.once('close', () => upstream.destroy())
+      upstream.on('error', error => res.destroy(error))
+    } catch { res.writeHead(400); res.end() }
   })
   front.on('connection', socket)
   front.on('upgrade', (req, downstream, head) => {
     socket(downstream)
-    if (req.headers.host !== machine.hostname || new URL(req.url, 'https://localhost').pathname !== '/xrpc/com.atproto.sync.subscribeRepos') return downstream.destroy()
-    const upstreamRequest = http.request(new URL(req.url, pdsUrl), { headers: req.headers })
-    upstreamRequest.on('upgrade', (response, upstream, rest) => {
-      socket(upstream)
-      downstream.write(`HTTP/1.1 101 Switching Protocols\r\n${response.rawHeaders.reduce((out, value, i) => out + (i % 2 ? `${value}\r\n` : `${value}: `), '')}\r\n`)
-      if (rest.length) downstream.write(rest)
-      if (head.length) upstream.write(head)
-      downstream.pipe(upstream).pipe(downstream)
-      downstream.once('close', () => upstream.destroy()); upstream.once('close', () => downstream.destroy())
-      upstream.on('error', () => downstream.destroy())
-    })
-    upstreamRequest.on('error', () => downstream.destroy()); upstreamRequest.end()
+    try {
+      const url = requestTarget(req)
+      assert.equal(url.pathname, '/xrpc/com.atproto.sync.subscribeRepos')
+      assert.equal(req.headers['sec-websocket-version'], '13')
+      assert.equal(typeof req.headers['sec-websocket-key'], 'string')
+      const upstreamRequest = http.request(upstreamTarget(url, pdsUrl), { headers: {
+        host: machine.hostname, connection: 'Upgrade', upgrade: 'websocket',
+        'sec-websocket-key': req.headers['sec-websocket-key'], 'sec-websocket-version': '13',
+      } })
+      upstreamRequest.on('upgrade', (response, upstream, rest) => {
+        socket(upstream)
+        downstream.write(`HTTP/1.1 101 Switching Protocols\r\n${response.rawHeaders.reduce((out, value, i) => out + (i % 2 ? `${value}\r\n` : `${value}: `), '')}\r\n`)
+        if (rest.length) downstream.write(rest)
+        if (head.length) upstream.write(head)
+        downstream.pipe(upstream).pipe(downstream)
+        downstream.once('close', () => upstream.destroy()); upstream.once('close', () => downstream.destroy())
+        upstream.on('error', () => downstream.destroy())
+      })
+      upstreamRequest.on('response', response => { response.resume(); downstream.destroy() })
+      upstreamRequest.on('error', () => downstream.destroy()); upstreamRequest.end()
+    } catch { downstream.destroy() }
   })
   front.listen(0, '127.0.0.1'); await once(front, 'listening')
   // Source resolvers already own their caches and refresh them on #identity.
   // Do not add a second cache that could hide those updates or survive Unlink.
-  const resolver = new IdResolver({ plcUrl, fetch: async (input, init) => {
+  const resolver = new IdResolver({ plcUrl, fetch: async input => {
     const url = new URL(input), base = new URL(plcUrl)
     assert.equal(url.origin, base.origin, 'only local PLC or approved sources may resolve identities')
     const did = decodeURIComponent(url.pathname.slice(1))
@@ -125,8 +161,8 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, accountF
       const peer = sources.get(source); assert(peer, 'source is Unlinked or Unavailable')
       return Response.json(await peer.client.resolver.did.resolve(did))
     }
-    const local = await fetch(url, { ...init, redirect: 'error' })
-    if (local.status !== 404) return local
+    const local = await localResolver.did.resolve(did)
+    if (local) return Response.json(local)
     const answers = await Promise.all([...sources.values()].map(async peer => {
       try { return await peer.client.resolver.did.resolve(did) } catch (error) {
         if (error?.name === 'DidNotFoundError') return undefined
@@ -180,8 +216,8 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, accountF
             assert(request.op === 'pair' && invite && invite.expires > Date.now(), 'no valid invitation')
             const secret = Buffer.from(request.secret || '', 'hex'), expected = Buffer.from(invite.secret, 'hex')
             assert(secret.length === expected.length && timingSafeEqual(secret, expected), 'invalid invitation')
-            assert(!machine.state.peers[id], 'already approved')
             validatePeer(request.peer, id)
+            if (machine.state.peers[id]) await forget(id, connection)
             delete machine.state.invitation; machine.state.peers[id] = request.peer; machine.save()
             await writeJson(stream, { peer: ownInfo() })
             // The recipient closes control after saving its reciprocal approval.
@@ -232,10 +268,6 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, accountF
       return { state: 'Linked', id, name: response.peer.name }
     } finally { connection?.close(0n, []); if (connection) connections.delete(connection) }
   }
-  const controlPath = path.join(directory, 'control.sock')
-  // A pre-existing command socket belongs to another instance or needs explicit
-  // inspection. Never unlink a possibly live service's socket at startup.
-  assert(!fs.existsSync(controlPath), `peer command socket already exists: ${controlPath}`)
   const control = http.createServer(async (req, res) => {
     try {
       assert.equal(req.method, 'POST')

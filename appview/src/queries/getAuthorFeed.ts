@@ -70,7 +70,7 @@ export async function getAuthorFeed(
 
   // Single author — one hydrate is enough; the MemoryCache makes the
   // second-and-later calls trivial.
-  const handle = await hydrateHandle(idResolver, did)
+  const handle = await hydrateHandle(idResolver, did, db)
 
   const feed = rows.map((r) => ({
     post: {

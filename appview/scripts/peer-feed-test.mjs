@@ -2,6 +2,8 @@
 // Only temporary in-memory repos/SQLite and an ephemeral loopback WebSocket.
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
+import { Agent } from 'node:http'
+import { createServer } from 'node:net'
 import test from 'node:test'
 import { WebSocketServer } from 'ws'
 import { Secp256k1Keypair } from '@atproto/crypto'
@@ -244,4 +246,80 @@ test('destroy cancels the official iterator and settles start without reporting 
   await running
   assert.equal(f.feed.getCursor(), 1)
   assert.deepEqual(f.errors, [])
+})
+
+test('an initially sleeping peer resumes signed backfill and live delivery using native reconnect', { timeout: 10000 }, async t => {
+  // Reserve then close an ephemeral port so the first real connection fails.
+  const reservation = createServer()
+  reservation.listen(0, '127.0.0.1')
+  await once(reservation, 'listening')
+  const port = reservation.address().port
+  await new Promise(resolve => reservation.close(resolve))
+  const refused = Promise.withResolvers()
+  class ObservedAgent extends Agent {
+    createConnection(options, callback) {
+      const socket = super.createConnection(options, callback)
+      socket.once('error', refused.resolve)
+      return socket
+    }
+  }
+  const agent = new ObservedAgent()
+  const db = openDb(':memory:')
+  const history = await signed(A, [post('history', 'signed history')])
+  const live = await signed(A, [post('history', 'signed history'), post('live', 'signed live')], history.signer)
+  const historyWritten = Promise.withResolvers(), liveWritten = Promise.withResolvers()
+  db.function('observe_post', rkey => {
+    if (rkey.endsWith('/history')) historyWritten.resolve()
+    if (rkey.endsWith('/live')) liveWritten.resolve()
+    return 0
+  })
+  db.exec('CREATE TRIGGER observe_posts AFTER INSERT ON posts BEGIN SELECT observe_post(NEW.uri); END')
+  const errors = [], requests = []
+  let reads = 0, server
+  const feed = createVerifiedFeed({ db, source: SOURCE, agent, service: `ws://127.0.0.1:${port}`,
+    idResolver: { did: {
+      resolve: async did => ({ id: did, alsoKnownAs: [`at://actor.${'a'.repeat(52)}.aitproto.com`] }),
+      resolveAtprotoKey: async () => history.signer.did(),
+    } },
+    async getJson() { reads++; return { repos: [listing(history)] } },
+    getRepo: async () => history.car,
+    onError: error => errors.push(error),
+  })
+  t.after(async () => {
+    await feed.destroy().catch(() => {})
+    agent.destroy()
+    if (server) {
+      for (const socket of server.clients) socket.terminate()
+      await new Promise(resolve => server.close(resolve))
+    }
+    db.close()
+  })
+  const running = feed.start()
+  void running.catch(() => {})
+  assert.equal((await refused.promise).code, 'ECONNREFUSED')
+  assert.equal(reads, 0, 'sleeping peer must not trigger a failing eager HTTP backfill')
+  assert.equal(feed.getCursor(), 0)
+  assert.deepEqual(errors, [])
+
+  server = new WebSocketServer({ port, host: '127.0.0.1' })
+  const connected = once(server, 'connection')
+  server.on('connection', (_socket, request) => requests.push(new URL(request.url, 'http://fixture')))
+  await once(server, 'listening')
+  const [socket] = await connected // Upstream performs its own reconnect/backoff.
+  await historyWritten.promise // No frames were sent: open alone must allow backfill.
+  assert.equal((await getRecord(db, { repo: A, collection: POST, rkey: 'history' })).value.text, 'signed history')
+  assert.equal(requests[0].searchParams.get('cursor'), '0')
+  assert.equal(feed.getCursor(), 0, 'snapshot completion cannot acknowledge a stream sequence')
+  socket.send(MessageFrame.fromLexValue(await commit(live, 1), METHOD).toBytes())
+  await liveWritten.promise
+  const closed = once(socket, 'close')
+  socket.send(MessageFrame.fromLexValue(invalid(), METHOD).toBytes())
+  const error = await running.then(() => undefined, error => error)
+  await closed
+  assert.match(error.message, /active|boolean/)
+  assert.equal(errors[0], error, 'validation failure stays terminal after recovery')
+  assert.equal(errors.length, 1)
+  assert.equal(feed.getCursor(), 1)
+  assert.equal((await getRecord(db, { repo: A, collection: POST, rkey: 'live' })).value.text, 'signed live')
+  assert.equal(reads, 1)
 })

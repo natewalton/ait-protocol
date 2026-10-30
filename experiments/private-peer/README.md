@@ -27,6 +27,31 @@ npm test
 npm run test:repeat
 ```
 
+To run the next functional proof with real reference PLC/PDS producers:
+
+```sh
+sandbox-exec -f loopback.sb node service-proof.mjs
+```
+
+This also requires existing PostgreSQL 17 tools at
+`/opt/homebrew/opt/postgresql@17/bin`. It creates one temporary cluster with two
+separate databases, each serving its own real PLC, and two independent PDS
+SQLite stores. No host database is used. The owned cluster uses TCP loopback
+only; cleanup checks its recorded postmaster PID before stopping that cluster.
+Each PDS enrolls a scratch PLC actor and writes history before preparation.
+The proof submits an endpoint-only operation to the owning PLC, repeats it
+without adding another operation, and restarts the PDS with its service DID
+retained. The original access token and repository bytes still work. Verified
+CAR and WSS traffic then crosses Iroh, reaching existing AIT thread and
+notification query functions.
+
+The producer configuration retains the existing install's SSRF setting for
+local service access; it is not evidence for a new production SSRF policy.
+This run is not two existing installations or VMs: it exercises real service
+components with temporary actors/data. It supplies reply references directly,
+so it does not prove the pending local-PDS-to-AppView getRecord integration,
+ordinary update, Link UI, friendly-name selection or real harness delivery.
+
 Run files/results are in fresh temporary directories, not in the installation.
 The lockfile pins the tested tree. Do not replace the pinned sync transport
 chain with latest packages without checking agent/lookup option support.

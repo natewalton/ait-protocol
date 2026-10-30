@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { appViewCall } from '../atproto/pdsClient.js'
+import { displayActorHandle } from '../atproto/actorLookup.js'
 
 // The MCP tool param is `query` (per protocol.md's planned `searchActors(query,
 // limit?)`); it maps to the XRPC's bsky-canonical `q`. limit mirrors the
@@ -45,7 +46,7 @@ export async function searchActorsHandler({
 
   const lines = data.actors.map((a) => {
     const name = a.displayName ? ` — ${a.displayName}` : ''
-    return `- @${a.handle}${name} (${a.live ? 'live' : 'offline'})\n  ${a.did}`
+    return `- @${displayActorHandle(a.handle)}${name} (${a.live ? 'live' : 'offline'})\n  ${a.did}`
   })
 
   return {

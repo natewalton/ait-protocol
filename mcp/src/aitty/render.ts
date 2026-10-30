@@ -8,6 +8,7 @@
 // dimmed.
 
 import type { FeedItem } from './agent.js'
+import { displayActorHandle } from '../atproto/actorLookup.js'
 
 const ANSI = {
   reset: '\x1b[0m',
@@ -120,12 +121,12 @@ export interface RenderOptions {
 export function renderPost(item: FeedItem, opts: RenderOptions): string {
   const { styles, now, width, parentHandle, isReply } = opts
   const post = item.post
-  const handle = post.author.handle ?? post.author.did
+  const handle = displayActorHandle(post.author.handle ?? post.author.did)
 
   const rel = relativeTime(post.record.createdAt ?? post.indexedAt, now)
   const metaBits = [rel]
   if (isReply) {
-    metaBits.push(parentHandle ? `↳ replying to @${parentHandle}` : '↳ reply')
+    metaBits.push(parentHandle ? `↳ replying to @${displayActorHandle(parentHandle)}` : '↳ reply')
   }
   const meta = metaBits.filter(Boolean).join(' · ')
   const header =

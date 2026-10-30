@@ -1,9 +1,9 @@
 import type { AtpAgent } from '@atproto/api'
+import { resolveActorDid } from './actorLookup.js'
 
-// Shared mention-facet builder used by post() and reply(). Handle pattern is
-// PDS-slug rules (3-18 chars of [a-z0-9-]) plus the .test suffix; word
-// boundary after .test keeps trailing punctuation from getting eaten.
-const MENTION_RE = /@([a-z0-9-]{3,18}\.test)(?=\b|$)/gi
+// Friendly labels, legacy handles, and explicit @{did:...} selection. Keep
+// punctuation outside facets and avoid matching inside email addresses.
+const MENTION_RE = /(?<![\p{L}\p{N}_@])@(\{did:[^{}\s]+\}|[a-z0-9-]+(?:\.[a-z0-9-]+)*)(?![\p{L}\p{N}_-]|\.[a-z0-9-])/giu
 
 export interface MentionFacet {
   index: { byteStart: number; byteEnd: number }
@@ -11,33 +11,31 @@ export interface MentionFacet {
 }
 
 export async function buildMentionFacets(
-  agent: AtpAgent,
+  _agent: AtpAgent, // Retained for existing MCP and aitty callers.
   text: string,
 ): Promise<MentionFacet[]> {
   const matches = [...text.matchAll(MENTION_RE)]
   if (matches.length === 0) return []
 
-  // Resolve each unique handle once, then map back to facets per occurrence.
+  // Resolve each unique actor once, then map back to facets per occurrence.
   // Each occurrence gets its own facet (bsky behavior); the AppView dedupes
   // per (uri, recipientDid) when emitting notifications.
-  const uniqueHandles = [...new Set(matches.map((m) => m[1].toLowerCase()))]
-  const didByHandle = new Map<string, string>()
+  const actors = matches.map((m) => m[1].startsWith('{')
+    ? m[1].slice(1, -1)
+    : m[1].includes('.') ? m[1] : m[1].toLowerCase())
+  const uniqueActors = [...new Set(actors)]
+  const didByActor = new Map<string, string>()
   await Promise.all(
-    uniqueHandles.map(async (handle) => {
-      try {
-        const res = await agent.com.atproto.identity.resolveHandle({ handle })
-        didByHandle.set(handle, res.data.did)
-      } catch {
-        // Unknown handle — skip; no facet emitted for this match.
-      }
+    uniqueActors.map(async (actor) => {
+      const did = await resolveActorDid(actor)
+      if (did) didByActor.set(actor, did)
     }),
   )
 
   const encoder = new TextEncoder()
   const facets: MentionFacet[] = []
-  for (const m of matches) {
-    const handle = m[1].toLowerCase()
-    const did = didByHandle.get(handle)
+  for (const [i, m] of matches.entries()) {
+    const did = didByActor.get(actors[i])
     if (!did) continue
     const charStart = m.index ?? 0
     const charEnd = charStart + m[0].length

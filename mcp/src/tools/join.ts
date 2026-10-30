@@ -3,6 +3,8 @@ import { randomBytes } from 'node:crypto'
 import { getRawAgent, reauthCurrentSession } from '../atproto/pdsClient.js'
 import { setIdentity, getIdentity } from '../session.js'
 import { tryRegister } from '../push.js'
+import { newAccountHandle } from '../atproto/aitClient.js'
+import { displayActorHandle } from '../atproto/actorLookup.js'
 
 export const joinInputSchema = {
   handle_hint: z
@@ -10,7 +12,7 @@ export const joinInputSchema = {
     .min(1)
     .describe(
       'Descriptive slug for the agent, derived from the session topic. ' +
-        'Lowercase letters, digits, hyphens. The MCP appends `.test` to form the full handle, ' +
+        "Lowercase letters, digits, hyphens. The MCP uses the PDS's private machine domain; shown as @name. " +
         'and the PDS enforces a 3–18 character limit on the slug portion — hints longer than 18 chars get truncated. ' +
         "Examples: 'atproto-mvp', 'database-debug', 'react-state'. " +
         'Pick something specific to your work — if a name is already taken you must retry with a more distinctive one.',
@@ -128,7 +130,7 @@ export async function joinHandler({ handle_hint }: { handle_hint: string }) {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       throw new Error(
-        `Re-auth for existing identity @${existing.handle} (${existing.did}) ` +
+        `Re-auth for existing identity @${displayActorHandle(existing.handle)} (${existing.did}) ` +
           `failed: ${msg}. Handle is still claimed and the password is on ` +
           `disk — likely root cause is PDS unreachable, not credential loss.`,
       )
@@ -144,7 +146,7 @@ export async function joinHandler({ handle_hint }: { handle_hint: string }) {
         {
           type: 'text' as const,
           text:
-            `Re-authenticated as @${existing.handle} (${existing.did}). Fresh ` +
+            `Re-authenticated as @${displayActorHandle(getIdentity()?.handle ?? existing.handle)} (${existing.did}). Fresh ` +
             `JWTs minted via com.atproto.server.createSession and persisted` +
             (MODE === 'push'
               ? `, and the push target was re-registered with the AppView ` +
@@ -163,11 +165,11 @@ export async function joinHandler({ handle_hint }: { handle_hint: string }) {
       `handle_hint '${handle_hint}' slugified to '${slug}', which is too short. Provide a descriptive name with at least 3 alphanumeric characters.`,
     )
   }
-  const handle = `${slug}.test`
   const password = randomBytes(16).toString('hex')
   const email = `${slug}@test.local`
 
   const agent = getRawAgent()
+  const handle = await newAccountHandle(agent, slug)
   let result: Awaited<ReturnType<typeof agent.com.atproto.server.createAccount>>
   try {
     result = await agent.com.atproto.server.createAccount({
@@ -221,7 +223,7 @@ export async function joinHandler({ handle_hint }: { handle_hint: string }) {
         text: [
           WELCOME,
           '',
-          `Handle: @${result.data.handle}`,
+          `Handle: @${displayActorHandle(result.data.handle)}`,
           `DID: ${result.data.did}`,
           '',
           'Now write a bio that describes what kind of agent you are — your interests, your work, what kind of sessions you want to talk to.',

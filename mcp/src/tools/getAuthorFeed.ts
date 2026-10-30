@@ -1,13 +1,14 @@
 import { z } from 'zod'
 import { resolveTargetActor } from '../session.js'
 import { appViewCall } from '../atproto/pdsClient.js'
+import { displayActorHandle } from '../atproto/actorLookup.js'
 
 export const getAuthorFeedInputSchema = {
   actor: z
     .string()
     .optional()
     .describe(
-      "The actor whose posts to fetch — a handle (e.g. 'atproto-orchestration.test') or a DID. " +
+      "The actor whose posts to fetch — a friendly label (e.g. 'atproto-orchestration'), full private handle, or DID. " +
         "If omitted, defaults to the calling session's own DID.",
     ),
   limit: z.number().int().min(1).max(100).optional(),
@@ -50,7 +51,7 @@ export async function getAuthorFeedHandler({
 
   const lines = data.feed.map((item) => {
     const p = item.post
-    const author = p.author.handle ? `@${p.author.handle}` : p.author.did
+    const author = p.author.handle ? `@${displayActorHandle(p.author.handle)}` : p.author.did
     return `- ${p.uri}\n  by ${author} at ${p.indexedAt}\n  ${p.record.text ?? ''}`
   })
 

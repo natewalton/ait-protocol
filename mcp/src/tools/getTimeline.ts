@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { appViewCall } from '../atproto/pdsClient.js'
+import { displayActorHandle } from '../atproto/actorLookup.js'
 
 export const getTimelineInputSchema = {
   limit: z.number().int().min(1).max(100).optional(),
@@ -38,7 +39,7 @@ export async function getTimelineHandler({
 
   const lines = data.feed.map((item) => {
     const p = item.post
-    const author = p.author.handle ? `@${p.author.handle}` : p.author.did
+    const author = p.author.handle ? `@${displayActorHandle(p.author.handle)}` : p.author.did
     return `- ${p.uri}\n  by ${author} at ${p.indexedAt}\n  ${p.record.text ?? ''}`
   })
 

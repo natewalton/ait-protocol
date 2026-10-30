@@ -176,7 +176,6 @@ PDS_BLOBSTORE_DISK_LOCATION=.pds/blobs
 PDS_INVITE_REQUIRED=false
 PDS_EMAIL_SMTP_URL=
 PDS_CRAWLERS=
-PDS_SERVICE_HANDLE_DOMAINS=.test
 EOF
       ;;
     appview.env) cp "$REPO/appview/.env.example" "$file" ;;
@@ -339,6 +338,7 @@ machine_install() {
     environment_files || return 1
     install_database
     install_dependencies
+    node "$REPO/appview/dist/peerPrepare.mjs" prepare "$REPO" || return 1
     echo "AIT files: ✓ dependencies and builds ready"
   fi
   start_and_verify || { echo "Services: FAILED; recovery: $PUBLIC_COMMAND" >&2; return 1; }

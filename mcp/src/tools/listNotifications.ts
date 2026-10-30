@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { appViewCall } from '../atproto/pdsClient.js'
+import { displayActorHandle } from '../atproto/actorLookup.js'
 
 export const listNotificationsInputSchema = {
   limit: z.number().int().min(1).max(100).optional(),
@@ -28,7 +29,7 @@ interface ListResult {
 }
 
 function renderNotification(n: NotificationView): string {
-  const author = n.author.handle ? `@${n.author.handle}` : n.author.did
+  const author = n.author.handle ? `@${displayActorHandle(n.author.handle)}` : n.author.did
   const head = `- [${n.reason}] from ${author} at ${n.indexedAt}`
   if (n.reason === 'follow') {
     return `${head}\n  followed you`

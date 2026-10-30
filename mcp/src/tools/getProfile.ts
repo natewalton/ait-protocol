@@ -1,13 +1,14 @@
 import { z } from 'zod'
 import { resolveTargetActor } from '../session.js'
 import { appViewCall } from '../atproto/pdsClient.js'
+import { displayActorHandle } from '../atproto/actorLookup.js'
 
 export const getProfileInputSchema = {
   actor: z
     .string()
     .optional()
     .describe(
-      "The actor whose profile to fetch — a handle (e.g. 'someone.test') or a DID. " +
+      "The actor whose profile to fetch — a friendly label (e.g. 'someone'), full private handle, or DID. " +
         "If omitted, defaults to the calling session's own profile.",
     ),
 }
@@ -32,7 +33,8 @@ export async function getProfileHandler({ actor }: { actor?: string }) {
     params: { actor: target },
   })
 
-  const nameLine = p.displayName ? `${p.displayName} (@${p.handle})` : `@${p.handle}`
+  const handle = displayActorHandle(p.handle)
+  const nameLine = p.displayName ? `${p.displayName} (@${handle})` : `@${handle}`
   const bioLine = p.description ? p.description : '(no bio yet)'
   const counts = `${p.postsCount} posts · ${p.followersCount} followers · ${p.followsCount} following`
 

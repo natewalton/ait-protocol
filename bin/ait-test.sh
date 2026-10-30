@@ -94,7 +94,7 @@ assert_contains "$help" "bin/start-all.sh"
 assert_not_contains "$help" 'git -C "$HOME/.local/share/ait-protocol" pull --ff-only'
 assert_same "$help" "$("$REPO/ait")"
 assert_same "$help" "$("$REPO/ait" help)"
-for topic in init start stop status claude codex resume skills help version update uninstall; do
+for topic in init start stop status link unlink claude codex resume skills help version update uninstall; do
   page="$("$REPO/ait" help "$topic")"
   assert_contains "$page" "Usage:"
   assert_contains "$page" "Prerequisites:"
@@ -146,7 +146,7 @@ pass "invalid command exit"
 
 operator_fixture="$TMP_ROOT/operator"
 operator_capture="$TMP_ROOT/operator-capture"
-mkdir -p "$operator_fixture/mcp/dist" "$operator_fixture/bin"
+mkdir -p "$operator_fixture/mcp/dist" "$operator_fixture/appview/dist" "$operator_fixture/bin"
 cp "$REPO/ait" "$operator_fixture/ait"
 cat > "$operator_fixture/mcp/dist/sessionPicker.js" <<'EOF'
 const fs = require('fs')
@@ -163,6 +163,8 @@ printf 'launcher reached: %s\n' "$*" > "$AIT_OPERATOR_CAPTURE"
 EOF
 chmod +x "$operator_fixture/ait" "$operator_fixture/bin/install.sh" \
   "$operator_fixture/bin/uninstall.sh"
+printf '%s\n' 'import fs from "node:fs"; fs.writeFileSync(process.env.AIT_OPERATOR_CAPTURE, "peer command reached")' \
+  > "$operator_fixture/appview/dist/peerCli.mjs"
 
 run_operator_tty() {
   local command_name="$1" output status
@@ -188,11 +190,12 @@ assert_contains "$(cat "$operator_capture")" "launcher reached: --launch codex"
 pass "human PTY reaches launch, resume, and uninstall paths"
 
 for marker in CLAUDECODE CODEX_SESSION_ID CODEX_THREAD_ID; do
-  for command_name in claude codex resume uninstall; do
+  for command_name in claude codex resume uninstall link unlink; do
+    operator_args=("$command_name"); [ "$command_name" != unlink ] || operator_args+=(fixture-machine-key)
     rm -f "$operator_capture"
     set +e
     refused_output="$(env -i PATH="$PATH" HOME="$HOME" AIT_OPERATOR_CAPTURE="$operator_capture" \
-      "$marker=1" "$operator_fixture/ait" "$command_name" 2>&1)"
+      "$marker=1" "$operator_fixture/ait" "${operator_args[@]}" 2>&1)"
     refused_status=$?
     set -e
     [ "$refused_status" -eq 2 ] || fail "$marker $command_name was not refused"
@@ -203,11 +206,12 @@ for marker in CLAUDECODE CODEX_SESSION_ID CODEX_THREAD_ID; do
 done
 pass "Claude and Codex marker invocations refuse all operator work"
 
-for command_name in claude codex resume uninstall; do
+for command_name in claude codex resume uninstall link unlink; do
+  operator_args=("$command_name"); [ "$command_name" != unlink ] || operator_args+=(fixture-machine-key)
   rm -f "$operator_capture"
   set +e
   non_tty_output="$(env -i PATH="$PATH" HOME="$HOME" AIT_OPERATOR_CAPTURE="$operator_capture" \
-    "$operator_fixture/ait" "$command_name" < /dev/null 2>&1)"
+    "$operator_fixture/ait" "${operator_args[@]}" < /dev/null 2>&1)"
   non_tty_status=$?
   set -e
   [ "$non_tty_status" -eq 2 ] || fail "non-TTY $command_name was not refused"
@@ -218,15 +222,16 @@ done
 pass "non-TTY operator commands refuse before work"
 
 unguarded="$operator_fixture/ait-unguarded"
-sed '/refuse_operator_command "$1"/d; /refuse_operator_command resume/d; /refuse_operator_command uninstall/d' \
+sed '/refuse_operator_command "$1"/d; /refuse_operator_command "$command_name"/d; /refuse_operator_command resume/d; /refuse_operator_command uninstall/d' \
   "$operator_fixture/ait" > "$unguarded"
 chmod +x "$unguarded"
 for marker in CLAUDECODE CODEX_SESSION_ID; do
-  for command_name in claude codex resume uninstall; do
+  for command_name in claude codex resume uninstall link unlink; do
+    operator_args=("$command_name"); [ "$command_name" != unlink ] || operator_args+=(fixture-machine-key)
     rm -f "$operator_capture"
     set +e
     env -i PATH="$PATH" HOME="$HOME" AIT_OPERATOR_CAPTURE="$operator_capture" "$marker=1" \
-      "$unguarded" "$command_name" >/dev/null 2>&1
+      "$unguarded" "${operator_args[@]}" >/dev/null 2>&1
     negative_status=$?
     set -e
     [ "$negative_status" -ne 2 ] || fail "removed public check did not regress: $marker $command_name"
@@ -282,6 +287,12 @@ esac
 EOF
   cat > "$shim/npm" <<'EOF'
 #!/bin/sh
+if [ "$1" = --prefix ] && [ "$3" = run ] && [ "$4" = build ]; then
+  mkdir -p "$2/dist"
+  # Fixture output for the new preparation entrypoint; real PLC/PDS behavior
+  # is exercised by peer-link-test, not by the provisioner command shims.
+  printf '%s\n' 'if (process.argv[2] !== "prepare") process.exit(2)' > "$2/dist/peerPrepare.mjs"
+fi
 exit 0
 EOF
   chmod +x "$shim/npm"

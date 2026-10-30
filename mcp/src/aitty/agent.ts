@@ -17,9 +17,13 @@ import {
   appviewProxyHeaders,
   parseAtUri,
   buildReplyRef,
+  newAccountHandle,
+  resolveAppViewActorParams,
+  localPdsFetch,
   type StrongRef,
 } from '../atproto/aitClient.js'
 import { buildMentionFacets, type MentionFacet } from '../atproto/mentions.js'
+import { resolveActorDid } from '../atproto/actorLookup.js'
 
 export type { StrongRef }
 
@@ -45,7 +49,7 @@ interface TimelineResponse {
 }
 
 export function makeAgent(): AtpAgent {
-  const agent = new AtpAgent({ service: PDS_URL })
+  const agent = new AtpAgent({ service: PDS_URL, fetch: localPdsFetch })
   registerAitLexicons(agent) // shared with the MCP server (aitClient.ts)
   return agent
 }
@@ -54,10 +58,11 @@ export class HandleTakenError extends Error {}
 
 export async function createWatcherAccount(
   agent: AtpAgent,
-  handle: string,
+  slug: string,
   password: string,
 ): Promise<{ did: string; handle: string }> {
-  const email = `${handle.replace(/\.test$/, '')}@test.local`
+  const handle = await newAccountHandle(agent, slug)
+  const email = `${slug}@test.local`
   try {
     const res = await agent.com.atproto.server.createAccount({ handle, password, email })
     return { did: res.data.did, handle: res.data.handle }
@@ -72,19 +77,19 @@ export async function createWatcherAccount(
 
 export async function loginWatcher(
   agent: AtpAgent,
-  handle: string,
+  identifier: string,
   password: string,
 ): Promise<void> {
-  await agent.login({ identifier: handle, password })
+  await agent.login({ identifier, password })
 }
 
 export async function resolveHandleToDid(
-  agent: AtpAgent,
+  _agent: AtpAgent,
   handle: string,
 ): Promise<string> {
-  if (handle.startsWith('did:')) return handle
-  const res = await agent.com.atproto.identity.resolveHandle({ handle })
-  return res.data.did
+  const did = await resolveActorDid(handle)
+  if (!did) throw new Error(`No actor found in the local AppView for "${handle}".`)
+  return did
 }
 
 export async function followAccount(
@@ -129,7 +134,8 @@ async function proxyCall<T>(
   params: Record<string, unknown>,
   data?: unknown,
 ): Promise<T> {
-  const res = await agent.call(nsid, params, data, {
+  const resolvedParams = await resolveAppViewActorParams(params)
+  const res = await agent.call(nsid, resolvedParams, data, {
     headers: appviewProxyHeaders(),
   })
   return res.data as T
@@ -165,7 +171,7 @@ export async function fetchHandleForDid(
 //
 // User-owned record writes go through AtpAgent's bundled com.atproto.repo.*
 // namespace directly (those lexicons ship in @atproto/api), not the AppView
-// proxy. @handle.test mentions resolve to facets via buildMentionFacets
+// proxy. @name and explicit DID mentions resolve via buildMentionFacets
 // (session-free). Record shapes mirror mcp/src/tools/{post,reply}.ts.
 
 export interface WriteResult {
@@ -313,7 +319,8 @@ export async function setActorRetired(
   subject: string,
   retired: boolean,
 ): Promise<void> {
-  await proxyCall(agent, 'ait.actor.setRetired', {}, { subject, retired })
+  const did = await resolveHandleToDid(agent, subject)
+  await proxyCall(agent, 'ait.actor.setRetired', {}, { subject: did, retired })
 }
 
 // A post and the replies beneath it, as a tree. The AppView may also include

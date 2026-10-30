@@ -14,6 +14,7 @@
 
 import { randomBytes } from 'node:crypto'
 import type { AtpAgent } from '@atproto/api'
+import { displayActorHandle, resolveActorDid } from '../atproto/actorLookup.js'
 import {
   loadIdentity,
   saveIdentity,
@@ -25,7 +26,6 @@ import {
   makeAgent,
   createWatcherAccount,
   loginWatcher,
-  resolveHandleToDid,
   followAccount,
   HandleTakenError,
   type FeedItem,
@@ -171,7 +171,8 @@ Options (before the subcommand):
   --password <pw>     pin the account password at creation (default: random)
   -h, --help          this message
 
-Handles may be written @name, name, name.test, or a did:….
+Accounts may be selected by @name, full private handle, or DID.
+The picker inserts explicit DID mentions so identical labels stay distinct.
 aitty logs in to one persistent handle (stored 0600 under
 $XDG_DATA_HOME/ait-watcher/) and uses only end-client affordances — the same
 surface a human at bsky.app has (ADR-0006); realtime is polling (ADR-0010).
@@ -183,11 +184,9 @@ every post it made are untouched (ADR-0043). Retiring a handle other than your
 own requires that the AppView names you in APPVIEW_OPERATOR.
 `.trim()
 
-// The watcher's own handle is a slug; we append `.test`. Strip an accidental
-// `@`/`.test` and reject DIDs or invalid slugs up front, so we never try to
-// create a double-suffixed (`foo.test.test`) or malformed handle.
+// Account creation takes a slug; the PDS advertises the machine domain.
 function normalizeWatcherHandle(raw: string): string {
-  const slug = stripAt(raw).replace(/\.test$/, '')
+  const slug = stripAt(raw).replace(/\.test$/i, '').toLowerCase()
   if (!/^[a-z0-9-]{3,18}$/.test(slug)) {
     fail(
       `--handle must be 3–18 chars of lowercase letters, digits, or hyphens (got '${raw}')`,
@@ -203,10 +202,9 @@ async function ensureIdentity(agent: AtpAgent, flags: Flags): Promise<WatcherIde
   if (existing) return existing
 
   const slug = normalizeWatcherHandle(flags.handle ?? DEFAULT_HANDLE)
-  const handle = `${slug}.test`
   const password = flags.password ?? randomBytes(16).toString('hex')
   try {
-    const acct = await createWatcherAccount(agent, handle, password)
+    const acct = await createWatcherAccount(agent, slug, password)
     const identity: WatcherIdentity = {
       did: acct.did,
       handle: acct.handle,
@@ -221,7 +219,7 @@ async function ensureIdentity(agent: AtpAgent, flags: Flags): Promise<WatcherIde
     if (err instanceof HandleTakenError) {
       const rand = randomBytes(2).toString('hex')
       process.stderr.write(
-        `aitty: handle @${handle} is taken or invalid.\n` +
+        `aitty: handle @${slug} is taken or invalid.\n` +
           `Re-run with --handle set to one of:\n` +
           [`${slug}-1`, `${slug}-cli`, `${slug}-${rand}`]
             .map((s) => `  --handle ${s}`)
@@ -240,7 +238,7 @@ async function ensureIdentity(agent: AtpAgent, flags: Flags): Promise<WatcherIde
 function announceNewAccount(identity: WatcherIdentity): void {
   process.stderr.write(
     `\nCreated account:\n` +
-      `  handle:   @${identity.handle}\n` +
+      `  handle:   @${displayActorHandle(identity.handle)}\n` +
       `  password: ${identity.password}\n` +
       `  stored:   ${identityFilePath()} (mode 0600)\n` +
       `Save these — the handle can never be re-minted. Reuse it by re-running aitty.\n\n`,
@@ -250,7 +248,14 @@ function announceNewAccount(identity: WatcherIdentity): void {
 async function bootstrap(flags: Flags): Promise<{ agent: AtpAgent; identity: WatcherIdentity }> {
   const agent = makeAgent()
   const identity = await ensureIdentity(agent, flags)
-  await loginWatcher(agent, identity.handle, identity.password)
+  await loginWatcher(agent, identity.did, identity.password)
+  if (!agent.session || agent.session.did !== identity.did) {
+    throw new Error(`Login did not return the stored DID ${identity.did}.`)
+  }
+  if (identity.handle !== agent.session.handle) {
+    identity.handle = agent.session.handle
+    saveIdentity(identity)
+  }
   return { agent, identity }
 }
 
@@ -267,14 +272,8 @@ async function ensureFollows(
   const desiredDids = new Set<string>()
   const unresolved: string[] = []
   for (const handle of requested) {
-    // Resolve to a DID; if resolve hiccups but we already follow this handle,
-    // reuse the stored DID so a transient failure doesn't hide its posts.
-    let did: string | undefined
-    try {
-      did = await resolveHandleToDid(agent, handle)
-    } catch {
-      did = identity.follows[handle]?.did
-    }
+    // An ambiguous or failed lookup must never select a cached former owner.
+    const did = await resolveActorDid(handle)
     if (!did) {
       unresolved.push(handle)
       continue
@@ -283,10 +282,10 @@ async function ensureFollows(
     if (desiredDids.has(did)) continue // same account given twice
     desiredDids.add(did)
 
-    if (!identity.follows[handle]) {
+    if (!Object.values(identity.follows).some((entry) => entry.did === did)) {
       try {
         const followUri = await followAccount(agent, identity.did, did)
-        identity.follows[handle] = { did, followUri }
+        identity.follows[did] = { did, followUri }
         saveIdentity(identity)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -325,7 +324,7 @@ async function runWatch(
   }
   process.stderr.write(
     `watching ${desiredDids.size} handle${desiredDids.size === 1 ? '' : 's'} as ` +
-      `@${identity.handle} (every ${flags.intervalSecs}s). Ctrl-C to stop.\n`,
+      `@${displayActorHandle(identity.handle)} (every ${flags.intervalSecs}s). Ctrl-C to stop.\n`,
   )
   if (unresolved.length > 0) {
     process.stderr.write(`not found yet (will pick up on a later run): ${unresolved.join(', ')}\n`)
@@ -363,7 +362,7 @@ function runLogout(): void {
     return
   }
   process.stderr.write(
-    `logged out${id ? ` @${id.handle}` : ''} — removed ${identityFilePath()}.\n` +
+    `logged out${id ? ` @${displayActorHandle(id.handle)}` : ''} — removed ${identityFilePath()}.\n` +
       `The handle can never be re-minted (ADR-0014); a new run creates a new one.\n`,
   )
 }
@@ -423,7 +422,7 @@ async function main(): Promise<void> {
       fail('usage: aitty watch <handle> [<handle> …]')
     }
     // Global flags go before the subcommand; a `-`-prefixed token here would
-    // otherwise be silently turned into the bogus handle `--foo.test`.
+    // otherwise be treated as an actor name.
     const stray = args.find((h) => h.startsWith('-'))
     if (stray) {
       fail(`unexpected flag after subcommand: ${stray} (put global flags first, e.g. aitty --no-color watch …)`)
@@ -472,7 +471,7 @@ async function main(): Promise<void> {
     }
     case 'profile': {
       const { agent, identity } = await bootstrap(flags)
-      emitLine(await actionProfile(agent, args[0] || identity.handle, styles, width))
+      emitLine(await actionProfile(agent, args[0] || identity.did, styles, width))
       return
     }
     case 'thread': {

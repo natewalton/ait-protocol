@@ -23,6 +23,7 @@
 import * as readline from 'node:readline'
 import type { Styles } from './render.js'
 import type { ActorBasic } from './agent.js'
+import { displayActorHandle } from '../atproto/actorLookup.js'
 
 const CSI = '\x1b['
 const PROMPT = '› '
@@ -31,7 +32,8 @@ const MAX_ROWS = 6 // dropdown rows shown at once
 
 // The token under the cursor that the picker completes. `start` is the index in
 // the line where replacement begins; `query` is what we search for; `withAt`
-// records whether to prefix the inserted handle with '@'; `retiredOnly` picks
+// records whether to insert an explicit @{did:...} mention or a DID argument;
+// `retiredOnly` picks
 // which half of the directory to search — the handles retired out of it rather
 // than the listed ones. Returned by the caller-supplied finder so
 // command-specific knowledge stays out of here.
@@ -235,12 +237,13 @@ export class MentionPrompt {
     this.render()
   }
 
-  // Replace the active token with the selected handle, then drop the picker.
+  // Labels can collide: the selected DID is authoritative, even when the
+  // displayed friendly labels are identical.
   private accept(): void {
     const token = this.findToken(this.line, this.cursor)
     const choice = this.results[this.selected]
     if (!token || !choice) return this.closePickerAndRender()
-    const insert = (token.withAt ? '@' : '') + choice.handle + ' '
+    const insert = (token.withAt ? `@{${choice.did}}` : choice.did) + ' '
     this.line = this.line.slice(0, token.start) + insert + this.line.slice(this.cursor)
     this.cursor = token.start + insert.length
     this.closePicker()
@@ -309,11 +312,11 @@ export class MentionPrompt {
     }
     const shown = this.results.slice(0, MAX_ROWS)
     const rows = shown.map((actor, i) => {
-      const handle = '@' + actor.handle
+      const handle = '@' + displayActorHandle(actor.handle)
       const name = actor.displayName ? '  ' + actor.displayName : ''
       const state = actor.live ? ' [live]' : ' [offline]'
       // Selected row: a ›-marker + emphasized handle. Others: dim, indented.
-      const label = clip((i === this.selected ? '› ' : '  ') + handle + name + state)
+      const label = clip((i === this.selected ? '› ' : '  ') + handle + ` ${actor.did}` + state + name)
       return i === this.selected ? this.styles.mention(label) : dim(label)
     })
     if (this.results.length > MAX_ROWS) {

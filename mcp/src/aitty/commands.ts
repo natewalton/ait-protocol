@@ -25,16 +25,16 @@ import {
 } from './agent.js'
 import { saveIdentity, type WatcherIdentity } from './identity.js'
 import { relativeTime, renderPost, type Styles } from './render.js'
+import { displayActorHandle } from '../atproto/actorLookup.js'
 
-// @foo → foo.test ; foo → foo.test ; foo.test → foo.test ; did:… passes through.
+// Strip input decoration without modifying case-sensitive DIDs or full names.
 export function stripAt(s: string): string {
-  return s.replace(/^@/, '').toLowerCase()
+  return s.replace(/^@/, '')
 }
 
 export function normalizeHandle(raw: string): string {
   const s = stripAt(raw)
-  if (s.startsWith('did:')) return s
-  return s.includes('.') ? s : `${s}.test`
+  return s.startsWith('did:') || s.includes('.') ? s : s.toLowerCase()
 }
 
 // --- Writes -----------------------------------------------------------------
@@ -67,13 +67,15 @@ export async function actionFollow(
   target: string,
 ): Promise<string> {
   const key = normalizeHandle(target)
-  if (id.follows[key]) return `already following ${key}`
   const did = await resolveHandleToDid(agent, key)
+  if (Object.values(id.follows).some((entry) => entry.did === did)) {
+    return `already following ${displayActorHandle(key)}`
+  }
   if (did === id.did) return `that's you — can't follow yourself`
   const followUri = await followAccount(agent, id.did, did)
-  id.follows[key] = { did, followUri }
+  id.follows[did] = { did, followUri }
   saveIdentity(id)
-  return `followed ${key}`
+  return `followed ${displayActorHandle(key)}`
 }
 
 export async function actionUnfollow(
@@ -82,12 +84,14 @@ export async function actionUnfollow(
   target: string,
 ): Promise<string> {
   const key = normalizeHandle(target)
-  const entry = id.follows[key]
-  if (!entry) return `not following ${key} (no local follow to undo)`
+  const did = await resolveHandleToDid(agent, key)
+  const stored = Object.entries(id.follows).find(([, entry]) => entry.did === did)
+  if (!stored) return `not following ${displayActorHandle(key)} (no local follow to undo)`
+  const [storedKey, entry] = stored
   await unfollowAccount(agent, id.did, entry.followUri)
-  delete id.follows[key]
+  delete id.follows[storedKey]
   saveIdentity(id)
-  return `unfollowed ${key}`
+  return `unfollowed ${displayActorHandle(key)}`
 }
 
 // Retire a handle from directory search, or list it again (ADR-0043). Aimed at
@@ -105,8 +109,8 @@ export async function actionRetire(
   const key = normalizeHandle(target)
   await setActorRetired(agent, key, retired)
   return retired
-    ? `retired ${key} — it no longer shows up when anyone searches handles. Its posts are untouched.`
-    : `restored ${key} — it shows up in handle search again.`
+    ? `retired ${displayActorHandle(key)} — it no longer shows up when anyone searches handles. Its posts are untouched.`
+    : `restored ${displayActorHandle(key)} — it shows up in handle search again.`
 }
 
 // --- Reads (rendered listings) ----------------------------------------------
@@ -123,9 +127,10 @@ export async function actionProfile(
   width: number,
 ): Promise<string> {
   const key = normalizeHandle(actor)
+  const did = await resolveHandleToDid(agent, key)
   const [profile, recent] = await Promise.all([
-    fetchProfile(agent, key),
-    fetchAuthorFeed(agent, key, 5).catch(() => [] as FeedItem[]),
+    fetchProfile(agent, did),
+    fetchAuthorFeed(agent, did, 5).catch(() => [] as FeedItem[]),
   ])
   return renderProfile(profile, recent, styles, width)
 }
@@ -147,7 +152,7 @@ function renderNotifications(notes: NotificationView[], styles: Styles): string 
   const now = Date.now()
   return notes
     .map((n) => {
-      const who = styles.handle('@' + (n.author.handle || n.author.did))
+      const who = styles.handle('@' + displayActorHandle(n.author.handle || n.author.did))
       const when = styles.dim('· ' + relativeTime(n.indexedAt, now))
       if (n.reason === 'follow') return `${who} followed you ${when}`
       const verb = n.reason === 'reply' ? 'replied' : 'mentioned you'
@@ -164,8 +169,8 @@ function renderProfile(
   width: number,
 ): string {
   const nameLine = p.displayName
-    ? `${p.displayName} (${styles.handle('@' + p.handle)})`
-    : styles.handle('@' + p.handle)
+    ? `${p.displayName} (${styles.handle('@' + displayActorHandle(p.handle))})`
+    : styles.handle('@' + displayActorHandle(p.handle))
   const bio = p.description ? p.description : styles.dim('(no bio yet)')
   const counts = styles.dim(
     `${p.postsCount} posts · ${p.followersCount} followers · ${p.followsCount} following`,

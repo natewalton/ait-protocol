@@ -1,7 +1,7 @@
 import type { IdResolver } from '@atproto/identity'
 import { INVALID_HANDLE } from '@atproto/syntax'
 import type { Db } from '../db.js'
-import { hydrateHandle } from './hydrateActor.js'
+import { friendlyHandle, hydrateHandle, qualifyActorLabel } from './hydrateActor.js'
 import { isLive } from '../pushRegistry.js'
 
 export interface SearchActorsParams {
@@ -23,26 +23,26 @@ export interface SearchActorsResult {
 
 interface ActorRow {
   did: string
+  source: string | null
+  label: string | null
+  active: number | null
+  retiredAt: string | null
   displayName: string | null
 }
 
 // Directory search backing the aitty @-picker (specs/actor-search.md).
 //
-// ADR-0038 removed the stored `actors.handle` column — handles are hydrated
-// from the DID at query time via IdResolver, never persisted. So there is no
-// column to prefix-match in SQL (and no FTS5 index over handles). Instead we
-// hydrate-then-filter: pull every active actor, resolve each handle (the
-// MemoryCache makes steady-state a hash lookup), prefix-match in memory, sort,
-// and cap. For a local single-instance network (ADR-0034) the actor count is
-// small, so the O(active actors) sweep is fine for v1. protocol.md's FTS5
-// end-state would need a refreshable stored-handle index, which reopens the
-// cold-start staleness class ADR-0038 closed — left to a spec/ADR decision.
+// Hydrate through the aggregate DID resolver. Source and label in actors are
+// event attribution, not an identity authority or a permanent handle cache.
 export async function searchActors(
   db: Db,
   idResolver: IdResolver,
   params: SearchActorsParams,
 ): Promise<SearchActorsResult> {
-  const needle = params.q.toLowerCase()
+  const input = params.q.replace(/^@/, '').toLowerCase()
+  const needle = /^[a-z0-9-]+\.[a-z2-7]{52}\.aitproto\.com$/.test(input)
+    ? input
+    : friendlyHandle(input)
 
   // Active actors only — the same exclusion the other read paths apply
   // (getTimeline gates on `a.active = 1 OR a.active IS NULL`). `ensureActor`
@@ -53,21 +53,12 @@ export async function searchActors(
   // take its posts down, so getTimeline/getAuthorFeed/getPostThread/getProfile
   // deliberately ignore the column.
   //
-  // The two scopes are disjoint, never nested: `retiredOnly` searches the
-  // retired set *instead of* the listed one. That keeps the sweep below — which
-  // resolves a handle per surviving row, on every keystroke of a picker — as
-  // small as the caller's intent. A client asking to restore a handle can only
-  // act on retired ones, so offering it listed ones would resolve hundreds of
-  // DIDs to fill the dropdown with rows it must reject.
-  const retiredFilter = params.retiredOnly
-    ? ' AND a.retiredAt IS NOT NULL'
-    : ' AND a.retiredAt IS NULL'
+  // Count collisions across both scopes before returning the selected one.
   const rows = db
     .prepare(
-      `SELECT a.did AS did, p.displayName AS displayName
+      `SELECT a.did, a.source, a.label, a.active, a.retiredAt, p.displayName
        FROM actors a
-       LEFT JOIN profiles p ON p.did = a.did
-       WHERE (a.active = 1 OR a.active IS NULL)${retiredFilter}`,
+       LEFT JOIN profiles p ON p.did = a.did`,
     )
     .all() as ActorRow[]
 
@@ -81,19 +72,38 @@ export async function searchActors(
       try {
         const handle = await hydrateHandle(idResolver, row.did)
         return { ...row, handle }
-      } catch {
+      } catch (err) {
+        console.error(`searchActors: ${row.did}: ${err instanceof Error ? err.message : err}`)
         return null // unresolvable DID — drop it from results
       }
     }),
   )
 
+  // Count before filtering/capping. An inactive, retired, or unresolvable
+  // collision must not make a bare label appear safe to address.
+  const owners = new Map<string, Set<string>>()
+  for (const row of [...rows, ...hydrated.flatMap((row) =>
+    row ? [{ did: row.did, label: row.handle }] : [],
+  )]) {
+    const label = row.label
+    if (!label || label === INVALID_HANDLE) continue
+    const key = friendlyHandle(label).toLowerCase()
+    if (!owners.has(key)) owners.set(key, new Set())
+    owners.get(key)!.add(row.did)
+  }
   const matches: ActorBasic[] = []
   for (const row of hydrated) {
     if (!row) continue
+    if (row.active !== 1 && row.active !== null) continue
+    if (params.retiredOnly !== (row.retiredAt !== null)) continue
     if (row.handle === INVALID_HANDLE) continue
-    if (!row.handle.toLowerCase().startsWith(needle)) continue
+    const label = friendlyHandle(row.handle)
+    if (!label.toLowerCase().startsWith(needle) && !row.handle.toLowerCase().startsWith(needle)) continue
     const actor: ActorBasic = { did: row.did, handle: row.handle, live: isLive(row.did) }
-    if (row.displayName) actor.displayName = row.displayName
+    const qualified = qualifyActorLabel(label, row.source, row.did)
+    actor.displayName = owners.get(label.toLowerCase())!.size > 1
+      ? qualified
+      : row.displayName || label
     matches.push(actor)
   }
 

@@ -5,6 +5,7 @@ import {
 } from '@atproto/api'
 import {
   requireIdentity,
+  getIdentity,
   setIdentity,
   updateIdentityTokens,
   type Identity,
@@ -15,6 +16,8 @@ import {
   registerAitLexicons,
   assertValidAitRecord,
   appviewProxyHeaders,
+  resolveAppViewActorParams,
+  localPdsFetch,
 } from './aitClient.js'
 
 // One agent per MCP process. We wire persistSession so that AtpAgent's
@@ -29,6 +32,8 @@ function persistSession(
   session: AtpSessionData | undefined,
 ): void {
   if ((evt === 'create' || evt === 'update') && session) {
+    const id = getIdentity()
+    if (!id || id.did !== session.did) return
     // Tokens refreshed (or just installed). Patch in-memory + on-disk
     // identity. did / handle / password don't change here.
     updateIdentityTokens({
@@ -44,7 +49,7 @@ function persistSession(
 
 function getAgent(): AtpAgent {
   if (!agent) {
-    agent = new AtpAgent({ service: PDS_URL, persistSession })
+    agent = new AtpAgent({ service: PDS_URL, fetch: localPdsFetch, persistSession })
     // Register ait.* lexicons so calls like agent.call('ait.feed.getTimeline',
     // …) resolve the NSID instead of throwing LexiconDefNotFoundError (ADR-0036).
     // The registration (and the agent.lex cast it needs) lives in aitClient so
@@ -92,16 +97,17 @@ function shareReauth(run: () => Promise<AtpAgent>): Promise<AtpAgent> {
 
 async function loginWithStoredCredentials(id: Identity): Promise<AtpAgent> {
   const a = getAgent()
-  await a.login({ identifier: id.handle, password: id.password })
-  if (a.session) {
-    setIdentity({
-      did: id.did,
-      handle: id.handle,
-      password: id.password,
-      accessJwt: a.session.accessJwt,
-      refreshJwt: a.session.refreshJwt,
-    })
+  await a.login({ identifier: id.did, password: id.password })
+  if (!a.session || a.session.did !== id.did) {
+    throw new Error(`Re-authentication did not return the stored DID ${id.did}.`)
   }
+  setIdentity({
+    did: id.did,
+    handle: a.session.handle,
+    password: id.password,
+    accessJwt: a.session.accessJwt,
+    refreshJwt: a.session.refreshJwt,
+  })
   return a
 }
 
@@ -211,8 +217,9 @@ export async function appViewCall<T>(
     signal?: AbortSignal
   } = {},
 ): Promise<T> {
+  const params = await resolveAppViewActorParams(opts.params)
   return withAuthedAgent(async (agent) => {
-    const res = await agent.call(nsid, opts.params, opts.data, {
+    const res = await agent.call(nsid, params, opts.data, {
       headers: appviewProxyHeaders(),
       signal: opts.signal,
     })

@@ -1,0 +1,10 @@
+(version 1)
+(allow default)
+(deny network*)
+(allow network-bind (local ip "localhost:*"))
+(allow network-inbound (local ip "localhost:*"))
+(allow network-outbound (remote ip "localhost:*"))
+; Only the owned fixture's private command sockets, never live AIT sockets.
+(allow network-bind (local unix-socket (regex #"^/private/tmp/ait-link-[^/]+/")))
+(allow network-inbound (local unix-socket (regex #"^/private/tmp/ait-link-[^/]+/")))
+(allow network-outbound (remote unix-socket (regex #"^/private/tmp/ait-link-[^/]+/")))

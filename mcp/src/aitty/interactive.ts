@@ -15,6 +15,7 @@ import { makeStyles, feedWidth, supportsColor } from './render.js'
 import { renderFeedItem } from './feed.js'
 import { emitBacklog, pollFeed, BACKLOG, SEEN_CAP } from './stream.js'
 import { MentionPrompt, type CompletionToken } from './picker.js'
+import { displayActorHandle } from '../atproto/actorLookup.js'
 import {
   actionPost,
   actionReply,
@@ -151,7 +152,7 @@ export async function runInteractive(
         case 'profile':
         case 'u':
           return printAbovePrompt(
-            await actionProfile(agent, rest.trim() || identity.handle, styles, width),
+            await actionProfile(agent, rest.trim() || identity.did, styles, width),
           )
         case 'thread':
         case 't': {
@@ -178,7 +179,7 @@ export async function runInteractive(
 
   // Status to stderr so a piped stdout stays a clean feed.
   process.stderr.write(
-    `aitty — @${identity.handle}. ` +
+    `aitty — @${displayActorHandle(identity.handle)}. ` +
       (isTTY ? 'type "help" for commands, "quit" to exit.\n\n' : '(piped: streaming)\n\n'),
   )
 
@@ -210,7 +211,7 @@ export async function runInteractive(
     const retiredOnly = cmd === 'unretire'
     if (word.startsWith('@')) {
       if (MENTION_CMDS.has(cmd) || HANDLE_ARG_CMDS.has(cmd)) {
-        return { start, query: stripAt(word), withAt: true, retiredOnly }
+        return { start, query: stripAt(word), withAt: MENTION_CMDS.has(cmd), retiredOnly }
       }
       return null
     }

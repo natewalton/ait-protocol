@@ -41,7 +41,9 @@ only; cleanup checks its recorded postmaster PID before stopping that cluster.
 Each PDS enrolls a scratch PLC actor and writes history before preparation.
 The proof submits an endpoint-only operation to the owning PLC, repeats it
 without adding another operation, and restarts the PDS with its service DID
-retained. The original access token and repository bytes still work. Verified
+retained. The original access token still works; the original refresh token
+obtains a usable new access token for the same actor. Repository bytes remain
+unchanged. Verified
 CAR and WSS traffic then crosses Iroh, reaching existing AIT thread and
 notification query functions.
 

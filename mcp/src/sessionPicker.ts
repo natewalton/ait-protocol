@@ -22,6 +22,8 @@ const APPVIEW_URL = process.env.APPVIEW_URL ?? 'http://localhost:2585'
 export type Harness = 'claude' | 'codex'
 
 export interface ResumableSession {
+  // Public immutable identity for presence joins; never persisted by discovery.
+  did: string | null
   // null: a Claude conversation that exists on disk but has never joined AIT.
   // It resumes by exact UUID so the operator can join from inside it, and is
   // otherwise invisible: no handle to list, search, or check for liveness.
@@ -40,6 +42,7 @@ interface SessionDiscovery {
 }
 
 interface ActorBasic {
+  did: string
   handle: string
   live: boolean
 }
@@ -144,6 +147,7 @@ async function claudeSessions(): Promise<ResumableSession[]> {
         continue
       }
       result.push({
+        did: identity?.did ?? null,
         handle: identity?.handle ?? null,
         harness: 'claude',
         project,
@@ -163,14 +167,14 @@ async function codexSessions(signal?: AbortSignal): Promise<ResumableSession[]> 
   } catch {
     return []
   }
-  const mappedThreads: Array<{ threadId: string; handle: string }> = []
+  const mappedThreads: Array<{ threadId: string; did: string; handle: string }> = []
   for (const entry of maps) {
     if (!entry.isFile() || !/^codex-thread-[A-Za-z0-9-]+\.json$/.test(entry.name)) continue
     const threadId = entry.name.slice('codex-thread-'.length, -'.json'.length)
     if (!THREAD_ID_SHAPE.test(threadId)) continue
     const sessionId = readThreadSessionId(threadId)
     const identity = sessionId ? readPublicIdentity(sessionId) : null
-    if (identity) mappedThreads.push({ threadId, handle: identity.handle })
+    if (identity) mappedThreads.push({ threadId, did: identity.did, handle: identity.handle })
   }
   if (mappedThreads.length === 0) return []
 
@@ -192,7 +196,7 @@ async function codexSessions(signal?: AbortSignal): Promise<ResumableSession[]> 
       process.stderr.write(unavailable)
       return []
     }
-    for (const { threadId, handle } of mappedThreads) {
+    for (const { threadId, did, handle } of mappedThreads) {
       signal?.throwIfAborted()
       let thread: ThreadReadResponse['thread']
       try {
@@ -208,6 +212,7 @@ async function codexSessions(signal?: AbortSignal): Promise<ResumableSession[]> 
       }
       if (!existingDirectory(thread.cwd)) continue
       result.push({
+        did,
         handle,
         harness: 'codex',
         project: thread.cwd,
@@ -232,31 +237,35 @@ async function codexSessions(signal?: AbortSignal): Promise<ResumableSession[]> 
 
 export async function discoverSessions(signal?: AbortSignal): Promise<SessionDiscovery> {
   const sessions = [ ...(await claudeSessions()), ...(await codexSessions(signal)) ]
-  const liveHandles = new Set<string>()
-  const joinedHandles = sessions.flatMap((session) =>
-    session.handle === null ? [] : [session.handle.toLocaleLowerCase()],
-  )
-  for (const handle of new Set(joinedHandles)) {
-    const listed = (await searchActors(handle, false, signal)).find(
-      (actor) => actor.handle.toLocaleLowerCase() === handle,
+  const liveDids = new Set<string>()
+  const joined = new Map(sessions.flatMap((session) =>
+    session.did === null || session.handle === null
+      ? []
+      : [[session.did, session.handle.split('.')[0].toLocaleLowerCase()] as const],
+  ))
+  for (const [did, query] of joined) {
+    // Search the label prefix across old/new namespaces, then join by DID.
+    // A namesake is never evidence that this local session is live.
+    const listed = (await searchActors(query, false, signal)).find(
+      (actor) => actor.did === did,
     )
     // A retired handle is intentionally absent from the public directory, but
     // its existing session can still be live. Check that separate view only
-    // for a locally known handle missing from the listed set.
-    const actor = listed ?? (await searchActors(handle, true, signal)).find(
-      (candidate) => candidate.handle.toLocaleLowerCase() === handle,
+    // for a locally known DID missing from the listed set.
+    const actor = listed ?? (await searchActors(query, true, signal)).find(
+      (candidate) => candidate.did === did,
     )
-    if (actor?.live) liveHandles.add(handle)
+    if (actor?.live) liveDids.add(did)
   }
   const sorted = sessions.sort(
     (a, b) => b.modifiedAt - a.modifiedAt || (a.handle ?? '').localeCompare(b.handle ?? ''),
   )
   return {
     offline: sorted.filter(
-      (session) => session.codexWriter !== undefined || session.handle === null || !liveHandles.has(session.handle.toLocaleLowerCase()),
+      (session) => session.codexWriter !== undefined || session.did === null || !liveDids.has(session.did),
     ),
     live: sorted.filter(
-      (session) => session.codexWriter === undefined && session.handle !== null && liveHandles.has(session.handle.toLocaleLowerCase()),
+      (session) => session.codexWriter === undefined && session.did !== null && liveDids.has(session.did),
     ),
   }
 }

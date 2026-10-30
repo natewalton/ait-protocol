@@ -20,8 +20,15 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
   let cursor = 0
   let running
   const controller = new AbortController()
+  const opened = Promise.withResolvers()
   const subscription = new Subscription({ service, agent, signal: controller.signal,
     method: METHOD, getParams: () => ({ cursor }),
+    // Public ws option, forwarded by Subscription/WebSocketKeepAlive. Let the
+    // upstream reconnect an asleep peer before issuing any snapshot reads.
+    finishRequest(request, websocket) {
+      websocket.once('open', opened.resolve)
+      request.end()
+    },
     validate: value => lexicons.assertValidXrpcMessage(METHOD, value) })
 
   async function boundDocument(did, refresh = false) {
@@ -131,6 +138,9 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
     const first = iterator.next() // Open the official stream before taking snapshots.
     void first.catch(error => controller.abort(error))
     try {
+      // A quiet but open stream must backfill too. The read also propagates
+      // cancellation/terminal errors if no connection ever opens.
+      await Promise.race([opened.promise, first])
       await backfill()
       let next = await first
       while (!next.done) {

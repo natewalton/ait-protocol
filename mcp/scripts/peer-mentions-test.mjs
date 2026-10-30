@@ -286,6 +286,14 @@ try {
   assert.deepEqual(await buildMentionFacets(agent, 'mail x@luna.test; no mention'), [])
   assert.deepEqual(await buildMentionFacets(agent, '@luna.test_suffix @luna.testé @luna_foo'), [])
   assert.deepEqual(await buildMentionFacets(agent, '@missing'), [])
+  const beforeInvalidToken = requests.length
+  await postHandler({ text: 'L @1.2.3 and @-invalid are ordinary text' })
+  assert.equal(writes.at(-1).record.text, 'L @1.2.3 and @-invalid are ordinary text')
+  assert.equal(writes.at(-1).record.facets, undefined)
+  assert.equal(requests.length, beforeInvalidToken, 'invalid ordinary tokens are not looked up')
+  await postHandler({ text: 'é @1.2.3 and @luna' })
+  assert.equal(writes.at(-1).record.facets.length, 1)
+  assert.equal(facetText(writes.at(-1).record.text, writes.at(-1).record.facets[0]), '@luna')
 
   await replyHandler({ parent_uri: parentUri, text: 'é @luna' })
   assert.equal(writes.at(-1).record.facets[0].features[0].did, A)

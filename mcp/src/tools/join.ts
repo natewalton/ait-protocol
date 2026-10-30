@@ -2,6 +2,7 @@ import { displayHandle } from '../handles.js'
 import { z } from 'zod'
 import { randomBytes } from 'node:crypto'
 import { getRawAgent, reauthCurrentSession } from '../atproto/pdsClient.js'
+import { newAccountHandle } from '../atproto/aitClient.js'
 import { setIdentity, getIdentity } from '../session.js'
 import { tryRegister } from '../push.js'
 
@@ -145,7 +146,7 @@ export async function joinHandler({ handle_hint }: { handle_hint: string }) {
         {
           type: 'text' as const,
           text:
-            `Re-authenticated as @${displayHandle(existing.handle)} (${existing.did}). Fresh ` +
+            `Re-authenticated as @${displayHandle(getIdentity()?.handle ?? existing.handle)} (${existing.did}). Fresh ` +
             `JWTs minted via com.atproto.server.createSession and persisted` +
             (MODE === 'push'
               ? `, and the push target was re-registered with the AppView ` +
@@ -164,11 +165,11 @@ export async function joinHandler({ handle_hint }: { handle_hint: string }) {
       `handle_hint '${handle_hint}' slugified to '${slug}', which is too short. Provide a descriptive name with at least 3 alphanumeric characters.`,
     )
   }
-  const handle = `${slug}.test`
   const password = randomBytes(16).toString('hex')
   const email = `${slug}@test.local`
 
   const agent = getRawAgent()
+  const handle = await newAccountHandle(agent, slug)
   let result: Awaited<ReturnType<typeof agent.com.atproto.server.createAccount>>
   try {
     result = await agent.com.atproto.server.createAccount({

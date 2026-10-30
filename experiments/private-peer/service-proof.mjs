@@ -188,6 +188,12 @@ async function instance(label, pgPort) {
   const preparedCfg = await startPds(s, s.hostname, s.serviceDid)
   assert.equal(preparedCfg.service.did, s.serviceDid)
   assert.equal((await rpc(s, 'com.atproto.server.getSession', undefined, s.account.accessJwt)).did, s.account.did)
+  const local = new AtpAgent({ service: s.localUrl })
+  const refreshed = await local.com.atproto.server.refreshSession(undefined, {
+    headers: { authorization: `Bearer ${s.account.refreshJwt}` },
+  })
+  assert.equal(refreshed.data.did, s.account.did)
+  assert.equal((await rpc(s, 'com.atproto.server.getSession', undefined, refreshed.data.accessJwt)).did, s.account.did)
   assert.equal(sha(await localRepo(s)), s.repoHash)
   assert.equal(sha(readFileSync(s.identityFile)), s.identityHash)
   s.link = { approved: true }
@@ -195,7 +201,7 @@ async function instance(label, pgPort) {
   const identity = await s.peer.resolver.did.resolveAtprotoData(s.account.did)
   const car = Buffer.from(await (await s.peer.get(`/xrpc/com.atproto.sync.getRepo?did=${s.account.did}`)).arrayBuffer())
   assert.equal(sha(car), s.repoHash); await verifyRepoCar(car, s.account.did, identity.signingKey)
-  report('real PLC/PDS preparation preserves actor, keys, old access token and signed repository', {
+  report('real PLC/PDS preparation preserves actor, keys, old access/refresh session and signed repository', {
     source: label, did: s.account.did, serviceDid: s.serviceDid, operations: change.count,
     repoSha256: s.repoHash, identityFileSha256: s.identityHash,
   })

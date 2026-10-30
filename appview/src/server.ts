@@ -65,10 +65,16 @@ async function main() {
   // run-appview.sh makes the installation's appview directory the cwd.
   const repo = path.resolve(process.cwd(), '..')
   const peers = await startPeerNetwork({ directory: stateDirectory(DB_PATH), db,
-    pdsUrl: PDS_URL, plcUrl: PLC_URL, accountFile: installationPaths(repo).accountFile,
+    pdsUrl: PDS_URL, plcUrl: PLC_URL, localResolver, accountFile: installationPaths(repo).accountFile,
+    // Reuse AppView's configured port for UDP, so approved direct addresses
+    // survive an ordinary restart without a discovery service or new setting.
+    bindAddress: `0.0.0.0:${PORT}`,
   })
   const idResolver = peers.resolver as IdResolver
-  const verifyViewer = makeVerifyViewer(idResolver, APPVIEW_DID!)
+  // Service-auth JWTs come from this installation's PDS. Reuse its existing
+  // cached resolver, including the upstream signature-failure forceRefresh.
+  // Display/source routing must not turn retained names into authentication.
+  const verifyViewer = makeVerifyViewer(localResolver, APPVIEW_DID!)
 
   // Open the official subscription before verified repository backfill. The
   // shared driver acknowledges each message only after projection succeeds.

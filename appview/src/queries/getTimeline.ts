@@ -67,6 +67,7 @@ export async function getTimeline(
   const handles = await hydrateHandles(
     idResolver,
     rows.map((r) => r.did),
+    db,
   )
 
   const feed = rows.map((r) => ({

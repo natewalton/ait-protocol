@@ -1,4 +1,5 @@
 import type { AtpAgent } from '@atproto/api'
+import { isValidHandle } from '@atproto/syntax'
 import { resolveActorDid } from './actorLookup.js'
 
 // Friendly labels, legacy handles, and explicit @{did:...} selection. Keep
@@ -23,7 +24,12 @@ export async function buildMentionFacets(
   const actors = matches.map((m) => m[1].startsWith('{')
     ? m[1].slice(1, -1)
     : m[1].includes('.') ? m[1] : m[1].toLowerCase())
-  const uniqueActors = [...new Set(actors)]
+  // Invalid ordinary @tokens remain literal text. Explicit DID selections
+  // always go through validation; their failures must not be silently skipped.
+  const uniqueActors = [...new Set(actors.filter((actor, i) =>
+    matches[i][1].startsWith('{') ||
+    isValidHandle(actor.includes('.') ? actor : `${actor}.aitproto.com`),
+  ))]
   const didByActor = new Map<string, string>()
   await Promise.all(
     uniqueActors.map(async (actor) => {

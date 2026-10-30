@@ -39,11 +39,9 @@ export async function getProfile(
 ): Promise<ProfileView> {
   const { did, pdsUrl } = params
 
-  // ADR-0038: the handle is hydrated from the DID at query time rather than
-  // read from a stored column. A resolver failure (unknown DID or a transient
-  // PLC outage) propagates as a 5xx — same as getTimeline/getAuthorFeed, which
-  // also let hydrateHandle errors surface rather than masking them as 404.
-  const handle = await hydrateHandle(idResolver, did)
+  // Peer display names remain readable from verified projection while their
+  // source is offline or Unlinked. Local names retain strict DID hydration.
+  const handle = await hydrateHandle(idResolver, did, db)
 
   const profile = db
     .prepare(

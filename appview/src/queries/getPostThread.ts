@@ -110,6 +110,7 @@ export async function getPostThread(
   const handleByDid = await hydrateHandles(
     idResolver,
     [...rows, ...ancestorRows].map((r) => r.did),
+    db,
   )
 
   // Build a tree by replyParentUri. Sort siblings by createdAt ASC so

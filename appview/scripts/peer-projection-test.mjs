@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import Database from 'better-sqlite3'
 import { Secp256k1Keypair } from '@atproto/crypto'
 import { createOp } from '@did-plc/lib'
+import { base32 } from 'multiformats/bases/base32'
 import { AtUri, ensureValidHandle } from '@atproto/syntax'
 import { BlobRef, Lexicons, jsonToLex, lexToIpld, lexToJson } from '@atproto/lexicon'
 import { cborEncode } from '@atproto/lex-cbor'
@@ -25,6 +26,12 @@ import { searchActors } from '../src/queries/searchActors.ts'
 import { AIT_LEXICONS } from '../src/aitLexicons.ts'
 import { createPeerClient } from '../src/peerClient.mjs'
 import { loadState } from '../src/peerState.mjs'
+import { getAuthorFeed } from '../src/queries/getAuthorFeed.ts'
+import { getProfile } from '../src/queries/getProfile.ts'
+import { getTimeline } from '../src/queries/getTimeline.ts'
+import { getPostThread } from '../src/queries/getPostThread.ts'
+import { listNotifications } from '../src/queries/listNotifications.ts'
+import { registerAndReplay, _clear } from '../src/pushRegistry.ts'
 
 const lexicons = new Lexicons([...AIT_LEXICONS])
 
@@ -32,8 +39,8 @@ const A = 'did:plc:alice'
 const B = 'did:plc:alicepeer'
 const C = 'did:plc:alicesamepeer'
 const MACHINE_A = 'a'.repeat(52)
-const MACHINE_B = 'b'.repeat(52)
 const PEER_SOURCE = 'ab'.repeat(32) // Attribution need not equal the wire base32 namespace.
+const MACHINE_B = base32.baseEncode(Buffer.from(PEER_SOURCE, 'hex'))
 const canonical = (name, machine = MACHINE_A) => `${name}.${machine}.aitproto.com`
 const HANDLE_A = canonical('alice')
 const HANDLE_B = canonical('alice', MACHINE_B)
@@ -205,6 +212,16 @@ test('peer projection preserves records and resolves labels without network fall
     assert.equal(await resolveActorToDid(db, HANDLE_B), B)
   })
 
+  await t.test('a peer cannot address an actor through another machine namespace', async () => {
+    setHandle(C, canonical('spoofed', MACHINE_A))
+    await handleEvent(db, { event: 'identity', did: C, didDocument: docs.get(C), seq: 3, time: T },
+      resolver, undefined, PEER_SOURCE)
+    assert.equal(await resolveActorToDid(db, canonical('spoofed', MACHINE_A)), null)
+    setHandle(C, 'alice.test')
+    await handleEvent(db, { event: 'identity', did: C, didDocument: docs.get(C), seq: 4, time: T },
+      resolver, undefined, PEER_SOURCE)
+  })
+
   await t.test('retirement/inactivity cannot conceal a collision', async () => {
     db.prepare('UPDATE actors SET retiredAt = ? WHERE did = ?').run(T, B)
     db.prepare('UPDATE actors SET active = 0 WHERE did = ?').run(C)
@@ -277,6 +294,31 @@ test('peer projection preserves records and resolves labels without network fall
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM notifications WHERE uri = ?').get(evt.uri.toString()).n, 0)
     assert.equal(await getRecord(db, { ...params, rkey: 'missing' }), null)
   })
+})
+
+test('offline/unlinked peer projections serve every read surface and notification replay without identity fallback', async () => {
+  const db = openDb(':memory:'), oldFetch = globalThis.fetch
+  setHandle(B, HANDLE_B)
+  const peer = await postEvent(B, { $type: collection, text: 'retained peer post', createdAt: T,
+    facets: [{ index: { byteStart: 0, byteEnd: 8 }, features: [{ $type: 'app.bsky.richtext.facet#mention', did: A }] }] })
+  await handleEvent(db, peer, resolver, undefined, PEER_SOURCE)
+  await handleEvent(db, { ...peer, did: A, collection: 'ait.graph.follow',
+    uri: AtUri.make(A, 'ait.graph.follow', 'follow'), record: { subject: B, createdAt: T } }, resolver)
+  const unreachable = { did: { resolveAtprotoData: async () => { throw Error('peer is Unlinked or offline') } } }
+  try {
+    assert.equal((await getAuthorFeed(db, unreachable, { did: B })).feed[0].post.author.handle, HANDLE_B)
+    assert.equal((await getProfile(db, unreachable, { did: B, pdsUrl: 'http://127.0.0.1:1' })).handle, HANDLE_B)
+    assert.equal((await getTimeline(db, unreachable, { viewer: A })).feed[0].post.author.handle, HANDLE_B)
+    assert.equal((await getPostThread(db, unreachable, { uri: peer.uri.toString() })).thread.post.author.handle, HANDLE_B)
+    assert.equal((await listNotifications(db, unreachable, { viewer: A })).notifications[0].author.handle, HANDLE_B)
+    const delivered = []
+    globalThis.fetch = async (_, init) => { delivered.push(JSON.parse(init.body)); return new Response('ok') }
+    await registerAndReplay(db, unreachable, A, 'http://127.0.0.1:1/push', 0)
+    assert.equal(delivered[0].author.handle, HANDLE_B)
+    // The resolver itself still fails: projected labels are display data only.
+    await assert.rejects(unreachable.did.resolveAtprotoData(B), /Unlinked or offline/)
+    await assert.rejects(hydrateHandle(unreachable, A, db), /Unlinked or offline/)
+  } finally { globalThis.fetch = oldFetch; _clear(); db.close() }
 })
 
 test('legacy projection migration preserves partial rows without fabricating complete records', async (t) => {

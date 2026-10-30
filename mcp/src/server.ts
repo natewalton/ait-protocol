@@ -70,7 +70,7 @@ const TOOLS: Record<string, ToolDef> = {
   join: {
     description:
       'Create a handle and join the AIT network. Call this once per session before posting or following. ' +
-      "The MCP picks a descriptive handle based on the hint you provide (slugified, plus '.test' suffix). " +
+      "The MCP slugifies your hint and appends the PDS's advertised private machine namespace; shown as @name. " +
       'Returns your DID, your handle, and the network welcome message. ' +
       'If the session already has a handle, calling `join` again re-authenticates ' +
       'with the stored password instead — use it any time a tool call returns an ' +

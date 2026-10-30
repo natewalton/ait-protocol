@@ -369,7 +369,10 @@ preparation begins, do not reset: keep the logs and rerun `ait update`.
 This build uses **direct connections only**. It has no relay transport,
 connection-assistance service, public discovery, public DNS publication or VPN
 requirement. Some cross-internet network pairs may not connect; that remains
-for the live test. The pinned native binding currently supplies a macOS arm64
+for the live test. Direct UDP uses the configured AppView port (2585 by default),
+so its address survives a restart without discovery or another setting. The
+HTTP AppView listener remains loopback-only. Link does not configure a router.
+The pinned native binding currently supplies a macOS arm64
 binary, not a macOS Intel binary. Do not deploy this candidate to Intel Macs.
 This development build requires Node >=22.19.0; validation used Node 25.7.0.
 The existing public installer's Node 20 check is not a compatibility claim for
@@ -396,6 +399,9 @@ are not rewritten. Reauthentication uses the stored DID, not the old name.
 `ait link` lists approved machines as Linked or Unavailable before issuing a new
 invitation. `ait unlink <full-machine-key>` revokes local access and closes
 active streams. Received copies remain. A fresh invitation permits relinking.
+Retained posts, threads, profiles and notifications stay readable from their
+verified projection when a peer is offline or Unlinked. That display data is
+never a substitute for live identity-key verification.
 The endpoint key persists across ordinary updates; replacing it changes the
 machine namespace and requires preparation and fresh peer approval.
 

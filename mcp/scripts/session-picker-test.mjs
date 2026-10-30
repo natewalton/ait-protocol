@@ -10,7 +10,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ait-session-picker-'))
+const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ait-session-picker-')))
 const home = path.join(root, 'home')
 const xdg = path.join(root, 'xdg')
 const bin = path.join(root, 'bin')
@@ -22,6 +22,7 @@ const codexId = '22222222-2222-4222-8222-222222222222'
 const claudeHandle = 'claude-session.test'
 const codexHandle = 'codex-session.test'
 const fakeSecret = 'THIS MUST NEVER BE PRINTED'
+const actorDid = (handle) => `did:plc:${createHash('sha256').update(handle).digest('hex').slice(0, 24)}`
 
 const mkdir = (directory) => fs.mkdirSync(directory, { recursive: true })
 const write = (file, value) => {
@@ -34,7 +35,7 @@ const identityPath = (id) => path.join(
   `identity-${createHash('sha256').update(id).digest('hex').slice(0, 16)}.json`,
 )
 const writeIdentity = (id, handle) => write(identityPath(id), JSON.stringify({
-  did: 'did:plc:fixture',
+  did: actorDid(handle),
   handle,
   ciphertext: fakeSecret,
   nonce: 'nonce',
@@ -48,15 +49,18 @@ const writeExecutable = (name) => {
 
 const liveFile = path.join(root, 'live-handles.json')
 const retiredFile = path.join(root, 'retired-handles.json')
+const actorsFile = path.join(root, 'directory-actors.json')
+const directoryActors = [claudeHandle, codexHandle].map((handle) => ({ did: actorDid(handle), handle }))
 const concurrencyFile = path.join(root, 'presence-concurrency')
 const appviewServerFile = path.join(root, 'appview-server.mjs')
 write(liveFile, '[]')
 write(retiredFile, '[]')
+write(actorsFile, JSON.stringify(directoryActors))
 write(concurrencyFile, '0')
 write(appviewServerFile, `
 import { readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
-const [liveFile, retiredFile, concurrencyFile, ...handles] = process.argv.slice(2)
+const [liveFile, retiredFile, concurrencyFile, actorsFile] = process.argv.slice(2)
 let active = 0
 let peak = 0
 const server = createServer((request, response) => {
@@ -68,9 +72,9 @@ const server = createServer((request, response) => {
   const live = new Set(JSON.parse(readFileSync(liveFile, 'utf8')))
   const retired = new Set(JSON.parse(readFileSync(retiredFile, 'utf8')))
   const retiredOnly = url.searchParams.get('retiredOnly') === 'true'
-  const actors = handles
-    .filter((handle) => handle.startsWith(query) && retired.has(handle) === retiredOnly)
-    .map((handle) => ({ did: 'did:plc:fixture', handle, live: live.has(handle) }))
+  const actors = JSON.parse(readFileSync(actorsFile, 'utf8'))
+    .filter((actor) => actor.handle.startsWith(query) && retired.has(actor.handle) === retiredOnly)
+    .map((actor) => ({ ...actor, live: live.has(actor.handle) }))
   setTimeout(() => {
     response.setHeader('content-type', 'application/json')
     response.end(JSON.stringify({ actors }))
@@ -83,7 +87,7 @@ server.listen(0, '127.0.0.1', () => {
 `)
 const appviewServer = spawn(
   process.execPath,
-  [appviewServerFile, liveFile, retiredFile, concurrencyFile, claudeHandle, codexHandle],
+  [appviewServerFile, liveFile, retiredFile, concurrencyFile, actorsFile],
   { stdio: ['ignore', 'pipe', 'inherit'] },
 )
 const appviewPort = await new Promise((resolve, reject) => {
@@ -107,8 +111,16 @@ for (const marker of [
   'CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT',
   'CODEX_SESSION_ID', 'CODEX_THREAD_ID', 'AIT_SESSION_ID', 'AI_AGENT',
 ]) delete env[marker]
-const picker = path.resolve(new URL('../dist/sessionPicker.js', import.meta.url).pathname)
 const repo = path.resolve(new URL('../..', import.meta.url).pathname)
+// Compile source into the fixture, leaving the shared checkout's build alone.
+const fixtureDist = path.join(root, 'build', 'mcp', 'dist')
+const build = spawnSync(process.execPath, [
+  path.join(repo, 'mcp', 'node_modules', 'typescript', 'bin', 'tsc'),
+  '--project', path.join(repo, 'mcp', 'tsconfig.json'), '--outDir', fixtureDist,
+], { cwd: root, encoding: 'utf8' })
+assert.equal(build.status, 0, build.stdout + build.stderr)
+fs.symlinkSync(path.join(repo, 'mcp', 'node_modules'), path.join(root, 'build', 'mcp', 'node_modules'))
+const picker = path.join(fixtureDist, 'sessionPicker.js')
 process.on('exit', () => {
   appviewServer.kill()
   codexServer.kill()
@@ -234,6 +246,50 @@ result = run(claudeId)
 assertSelection(result, 'claude', claudeProject, claudeId)
 result = run(codexId)
 assertSelection(result, 'codex', codexProject, codexId)
+
+// Pre-upgrade identities retain their old names. Presence must join on DID
+// when the directory hydrates the new private machine namespace, for BOTH
+// harnesses and both listed/retired directory scopes. Discovery never writes.
+const upgradedActors = directoryActors.map((actor) => ({
+  ...actor, handle: actor.handle.replace(/\.test$/, `.${'a'.repeat(52)}.aitproto.com`),
+}))
+const identitySnapshots = [claudeId, codexId].map((id) => fs.readFileSync(identityPath(id), 'utf8'))
+write(actorsFile, JSON.stringify(upgradedActors))
+write(liveFile, JSON.stringify(upgradedActors.map((actor) => actor.handle)))
+for (const retired of [[], upgradedActors.map((actor) => actor.handle)]) {
+  write(retiredFile, JSON.stringify(retired))
+  for (const [oldHandle, harness, project, id] of [
+    [claudeHandle, 'claude', claudeProject, claudeId],
+    [codexHandle, 'codex', codexProject, codexId],
+  ]) {
+    result = run(oldHandle, 'yes\n')
+    assertSelection(result, harness, project, id)
+    assert.match(result.stderr, /Resume it anyway\? \[y\/N\]/,
+      `${harness} with old stored name must be confirmed live by its DID`)
+    result = run(id, 'n\n')
+    assert.equal(result.status, 1)
+    assert.equal(result.stdout, '')
+    assert.match(result.stderr, /resume cancelled; no harness was started/)
+  }
+}
+assert.deepEqual([claudeId, codexId].map((id) => fs.readFileSync(identityPath(id), 'utf8')), identitySnapshots)
+
+// A live namesake with a different DID must not make either local session live.
+write(retiredFile, '[]')
+write(actorsFile, JSON.stringify([
+  ...directoryActors.map((actor) => ({ ...actor, did: 'did:plc:otherowner' })), ...upgradedActors,
+]))
+write(liveFile, JSON.stringify([claudeHandle, codexHandle]))
+for (const [handle, harness, project, id] of [
+  [claudeHandle, 'claude', claudeProject, claudeId],
+  [codexHandle, 'codex', codexProject, codexId],
+]) {
+  result = run(handle)
+  assertSelection(result, harness, project, id)
+  assert.doesNotMatch(result.stderr, /Resume it anyway\? \[y\/N\]/)
+}
+write(actorsFile, JSON.stringify(directoryActors))
+write(liveFile, '[]')
 
 // A duplicate public handle fails closed and exposes only safe row data.
 const duplicateId = '66666666-6666-4666-8666-666666666666'
@@ -431,7 +487,7 @@ const cancelPublicRoot = path.join(root, 'public-cancel-checkout')
 mkdir(path.join(cancelPublicRoot, 'mcp'))
 fs.copyFileSync(path.join(repo, 'ait'), path.join(cancelPublicRoot, 'ait'))
 fs.chmodSync(path.join(cancelPublicRoot, 'ait'), 0o755)
-fs.cpSync(path.join(repo, 'mcp', 'dist'), path.join(cancelPublicRoot, 'mcp', 'dist'), {
+fs.cpSync(fixtureDist, path.join(cancelPublicRoot, 'mcp', 'dist'), {
   recursive: true,
 })
 // The selector lists Codex threads through the app-server client, which needs ws.
@@ -520,7 +576,7 @@ const publicRoot = path.join(root, 'public-checkout')
 mkdir(path.join(publicRoot, 'mcp', 'dist'))
 fs.copyFileSync(path.join(repo, 'ait'), path.join(publicRoot, 'ait'))
 fs.chmodSync(path.join(publicRoot, 'ait'), 0o755)
-fs.cpSync(path.join(repo, 'mcp', 'dist'), path.join(publicRoot, 'mcp', 'dist'), { recursive: true })
+fs.cpSync(fixtureDist, path.join(publicRoot, 'mcp', 'dist'), { recursive: true })
 fs.symlinkSync(path.join(repo, 'mcp', 'node_modules'), path.join(publicRoot, 'mcp', 'node_modules'))
 write(path.join(publicRoot, 'bin', 'install.sh'),
   '#!/bin/sh\nprintf "PUBLIC %s %s %s\\n" "$PWD" "$2" "$4"\n')

@@ -6,6 +6,8 @@ import path from 'node:path'
 import os from 'node:os'
 import http from 'node:http'
 import net from 'node:net'
+import tls from 'node:tls'
+import { Duplex } from 'node:stream'
 import { once, EventEmitter } from 'node:events'
 import { spawn, execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
@@ -44,6 +46,8 @@ async function startPds(s, values) {
   const listen = s.pds.app.listen.bind(s.pds.app)
   s.pds.app.listen = (port, ...args) => listen(port, '127.0.0.1', ...args)
   const server = await s.pds.start(); s.pdsPort = server.address().port
+  s.upgradeHeaders = []
+  server.on('upgrade', req => { s.upgradeHeaders.push({ ...req.headers }) })
   assert(![2582, 2583, 2585].includes(s.pdsPort)); s.url = `http://127.0.0.1:${s.pdsPort}`
 }
 async function stopPds(s) {
@@ -66,7 +70,11 @@ async function fixture(name, pgPort) {
   const database = Database.postgres({ url: databaseUrl }); await database.migrateToLatestOrThrow()
   s.plc = PlcServer.create({ db: database, port: 0 })
   const listen = s.plc.app.listen.bind(s.plc.app); s.plc.app.listen = (port, ...args) => listen(port, '127.0.0.1', ...args)
-  s.plcPort = (await s.plc.start()).address().port
+  const plcHttp = await s.plc.start(); s.plcPort = plcHttp.address().port
+  s.plcDocReads = 0
+  plcHttp.on('request', req => {
+    if (/^\/did:plc:[a-z2-7]{24}$/.test(decodeURIComponent(new URL(req.url, 'http://fixture').pathname))) s.plcDocReads++
+  })
   fs.writeFileSync(path.join(s.repo, 'plc/.env'), envText({ DATABASE_URL: databaseUrl }))
   s.values = { port: 0, hostname: 'pds.localhost', serviceDid: 'did:web:pds.localhost',
     dataDirectory: path.join(s.repo, 'pds/.pds'), blobstoreDiskLocation: path.join(s.repo, 'pds/.pds/blobs'),
@@ -113,6 +121,7 @@ async function startAppview(s) {
   const env = { PATH: process.env.PATH, HOME: path.join(s.repo, 'home'), LOG_ENABLED: 'false',
     APPVIEW_PORT: String(s.appviewPort), APPVIEW_PDS_URL: s.url, APPVIEW_PDS_WS_URL: s.url.replace('http:', 'ws:'),
     APPVIEW_PLC_URL: s.values.didPlcUrl }
+  s.launchEnv = env
   s.child = spawn(process.execPath, [path.join(repo, 'appview/dist/server.js')], { cwd: path.join(s.repo, 'appview'), env, stdio: ['ignore', 'pipe', 'pipe'] })
   s.output = ''
   const capture = chunk => { s.output += chunk; fs.appendFileSync(path.join(s.repo, 'appview-output.log'), chunk) }
@@ -176,6 +185,38 @@ async function unapprovedRead(invitation) {
   } finally { connection?.close(0n, []); await endpoint.close() }
 }
 
+// An approved but adversarial peer controls its HTTP bytes, not the gateway's
+// destination or forwarded credentials. Use real native auth and verified TLS.
+async function peerRequest(from, to, invitation, request) {
+  const saved = JSON.parse(fs.readFileSync(path.join(installationPaths(from.repo).directory, 'machine.json')))
+  const ticket = JSON.parse(Buffer.from(invitation.slice(9), 'base64url'))
+  const builder = Endpoint.builder(); presetMinimal(builder)
+  builder.secretKey([...Buffer.from(saved.secret, 'hex')]); builder.bindAddr('0.0.0.0:0')
+  builder.relayMode(RelayMode.disabled()); builder.alpns([[...Buffer.from('ait-atproto/1')]])
+  const endpoint = await builder.bind()
+  let connection, secure
+  try {
+    connection = await endpoint.connect(EndpointTicket.fromString(ticket.ticket).endpointAddr(), [...Buffer.from('ait-atproto/1')])
+    const stream = await connection.openBi()
+    const transport = new Duplex({
+      read() { stream.recv.read(65536).then(bytes => this.push(bytes.length ? Buffer.from(bytes) : null), error => this.destroy(error)) },
+      write(chunk, _, done) { stream.send.writeAll([...chunk]).then(() => done(), done) },
+      final(done) { stream.send.finish().then(() => done(), done) },
+    })
+    const values = parse(fs.readFileSync(path.join(to.repo, 'pds/.env')))
+    secure = tls.connect({ socket: transport, servername: values.PDS_HOSTNAME,
+      ca: fs.readFileSync(path.join(installationPaths(to.repo).directory, 'ca.pem')) })
+    await within(once(secure, 'secureConnect'), 'adversarial peer TLS')
+    let response = ''
+    const result = new Promise((resolve, reject) => {
+      secure.on('data', part => { response += part; if (response.includes('\r\n\r\n')) resolve(response) })
+      secure.once('end', () => resolve(response)); secure.once('error', reject)
+    })
+    secure.write(request)
+    return await within(result, 'adversarial peer request')
+  } finally { secure?.destroy(); connection?.close(0n, []); await endpoint.close() }
+}
+
 try {
   execFileSync(`${pgBin}/initdb`, ['-D', pgData, '-U', 'ait_fixture', '--auth-local=trust', '--auth-host=trust', '--no-locale', '--encoding=UTF8'], { stdio: 'ignore' })
   const pgPort = await freePort()
@@ -203,8 +244,33 @@ try {
   await Promise.all([notification(a, b.oldPost.uri), notification(b, a.oldPost.uri)])
   await assert.rejects(localCommand(b.control, 'link', { invitation }))
   report('public Link confirmation creates approved direct streams; old history replays and invitation reuse fails')
+  let trapRequests = 0
+  const trap = http.createServer((req, res) => { trapRequests++; res.end('unreachable') })
+  trap.listen(0, '127.0.0.1'); await once(trap, 'listening')
+  const host = parse(fs.readFileSync(path.join(a.repo, 'pds/.env'))).PDS_HOSTNAME
+  try {
+    for (const target of ['//', `https://example.com/xrpc/com.atproto.sync.listRepos`,
+      `http://127.0.0.1:${trap.address().port}/xrpc/com.atproto.sync.listRepos`]) {
+      const response = await peerRequest(b, a, invitation, `GET ${target} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`)
+      assert.match(response, /^HTTP\/1\.1 400/, `unsafe request target ${target}`)
+    }
+    assert.equal(trapRequests, 0, 'peer-chosen origin must never receive a request')
+    const response = await peerRequest(b, a, invitation,
+      `GET /xrpc/com.atproto.sync.subscribeRepos?cursor=0 HTTP/1.1\r\nHost: ${host}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ${randomBytes(16).toString('base64')}\r\nAuthorization: Bearer peer-secret\r\nCookie: peer-cookie\r\nX-Forwarded-For: 10.0.0.1\r\n\r\n`)
+    assert.match(response, /^HTTP\/1\.1 101/)
+    const forwarded = a.upgradeHeaders.at(-1)
+    for (const header of ['authorization', 'cookie', 'x-forwarded-for']) assert.equal(forwarded[header], undefined)
+  } finally { await new Promise(resolve => trap.close(resolve)) }
+  report('approved-peer malformed/absolute targets refuse without crash or SSRF; WSS strips peer credentials')
   const directory = await tool(a, 'searchActors', { query: 'bobby' })
   assert.match(directory.content[0].text, new RegExp(b.account.did)); assert(!directory.content[0].text.includes('.test'))
+  const readsBefore = a.plcDocReads
+  await tool(a, 'getProfile', { actor: b.account.did })
+  const readsAfterFirst = a.plcDocReads
+  await tool(a, 'getProfile', { actor: b.account.did })
+  assert(readsAfterFirst - readsBefore <= 1, 'first viewer-key verification should need at most one PLC read')
+  assert.equal(a.plcDocReads, readsAfterFirst, 'repeat authenticated read must reuse the local viewer-key cache')
+  console.log(`viewer-key PLC reads: first=${readsAfterFirst - readsBefore}, repeat=${a.plcDocReads - readsAfterFirst}`)
   await tool(a, 'follow', { target: 'bobby' })
   const posted = await tool(a, 'post', { text: 'hello @bobby from a direct peer' })
   const postUri = /URI: (\S+)/.exec(posted.content[0].text)[1]
@@ -218,14 +284,41 @@ try {
   assert.equal(record.uri, postUri); assert.equal(record.value.facets[0].features[0].did, b.account.did)
   await assert.rejects(b.agent.com.atproto.repo.getRecord({ repo: a.account.did, collection: 'ait.feed.post', rkey: postUri.split('/').at(-1), cid: b.oldPost.cid }))
   report('existing MCP discovery/follow/post/reply/thread and local-PDS reply lookup agree on original DIDs/CIDs; callbacks delivered')
-  const before = a.push.length, key = (await localCommand(a.control, 'status')).peers[0].id
+  let before = a.push.length
+  const key = (await localCommand(a.control, 'status')).peers[0].id
   assert.equal((await localCommand(a.control, 'unlink', { id: key })).state, 'Unlinked')
   assert.equal((await localCommand(a.control, 'status')).peers.length, 0)
-  await publicLink(b, await publicLink(a))
+  assert.match((await tool(a, 'getPostThread', { post_uri: postUri })).content[0].text, new RegExp(replyUri))
+  assert.match((await tool(a, 'getProfile', { actor: b.account.did })).content[0].text, /bobby/)
+  assert.match((await tool(a, 'getTimeline', {})).content[0].text, /bobby/)
+  assert.match((await tool(a, 'listNotifications', {})).content[0].text, /bobby/)
+  const duplicate = spawn(process.execPath, [path.join(repo, 'appview/dist/server.js')], {
+    cwd: path.join(a.repo, 'appview'), env: a.launchEnv, stdio: ['ignore', 'ignore', 'pipe'],
+  })
+  let duplicateError = ''; duplicate.stderr.on('data', chunk => { duplicateError += chunk })
+  assert.equal((await within(once(duplicate, 'exit'), 'active socket owner refusal'))[0], 1)
+  assert.match(duplicateError, /refusing to replace an active/)
+  assert.equal((await localCommand(a.control, 'status')).peers.length, 0)
+  const stopped = once(a.child, 'exit'); a.child.kill('SIGKILL'); await within(stopped, 'owned fixture crash')
+  assert(fs.lstatSync(a.control).isSocket(), 'SIGKILL must leave the fixture socket for this regression')
+  await startAppview(a)
+  assert.match((await tool(a, 'getPostThread', { post_uri: postUri })).content[0].text, new RegExp(replyUri))
+  before = a.push.length // Startup backlog replay is separate from relink idempotence.
+  report('retained peer history stays readable after Unlink/restart; dead socket is reclaimed and active owner preserved')
+  const renewed = await publicLink(a)
+  const addresses = text => EndpointTicket.fromString(JSON.parse(Buffer.from(text.slice(9), 'base64url')).ticket).endpointAddr().directAddresses().sort()
+  assert.deepEqual(addresses(renewed), addresses(invitation), 'direct addresses must survive ordinary AppView restart')
+  await publicLink(b, renewed)
   // A new notification is an event barrier behind replay, not a timing sleep.
   const barrier = await tool(b, 'post', { text: 'after relink @alice' })
   await notification(a, /URI: (\S+)/.exec(barrier.content[0].text)[1])
   assert.equal(a.push.length, before + 1)
+  const reverse = (await localCommand(b.control, 'status')).peers[0].id
+  await localCommand(b.control, 'unlink', { id: reverse })
+  await publicLink(b, await publicLink(a)) // Inviter still had approval this time.
+  const reverseBarrier = await tool(b, 'post', { text: 'reverse relink @alice' })
+  await notification(a, /URI: (\S+)/.exec(reverseBarrier.content[0].text)[1])
+  assert.equal(a.push.length, before + 2)
   report('Unlink closes approved access; relink/replay does not duplicate notifications')
 } catch (error) { failure = error; console.error(error) }
 finally {

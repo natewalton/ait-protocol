@@ -32,7 +32,7 @@ interface ActorRow {
 
 // Directory search backing the aitty @-picker (specs/actor-search.md).
 //
-// Hydrate through the aggregate DID resolver. Source and label in actors are
+// Read projected peer names and hydrate local DIDs. Source and label in actors are
 // event attribution, not an identity authority or a permanent handle cache.
 export async function searchActors(
   db: Db,
@@ -70,7 +70,7 @@ export async function searchActors(
   const hydrated = await Promise.all(
     rows.map(async (row) => {
       try {
-        const handle = await hydrateHandle(idResolver, row.did)
+        const handle = await hydrateHandle(idResolver, row.did, db)
         return { ...row, handle }
       } catch (err) {
         console.error(`searchActors: ${row.did}: ${err instanceof Error ? err.message : err}`)

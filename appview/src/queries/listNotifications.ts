@@ -240,6 +240,7 @@ async function hydrateNotifications(
   const handles = await hydrateHandles(
     idResolver,
     rows.map((r) => r.authorDid),
+    db,
   )
 
   return rows.map((r) => {

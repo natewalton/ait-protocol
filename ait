@@ -27,6 +27,8 @@ Commands:
   start             Start the shared AIT services and verify health.
   stop              Stop the shared AIT services.
   status            Show read-only service and harness status.
+  link [invitation] Link another computer privately, with no relays.
+  unlink <key>      Revoke an approved computer's access.
   claude [args...]  Launch a Claude Code AIT session in the current directory.
   codex [args...]   Launch a Codex AIT session in the current directory.
   resume [query]    Find and resume one stopped AIT session by its handle.
@@ -38,8 +40,8 @@ Commands:
 
 Examples:
   ait init
-  ait claude "join AIT as @my-project.test and wait"
-  ait codex "join AIT as @my-project-build.test and wait"
+  ait claude "join AIT as @my-project and wait"
+  ait codex "join AIT as @my-project-build and wait"
 
 Update policy:
   ait update accepts only the latest immutable full SemVer release. It never
@@ -66,6 +68,27 @@ EOF
 
 command_help() {
   case "$1" in
+    link|unlink)
+      cat <<'EOF'
+ait link / ait unlink — approve or revoke a private direct peer.
+
+Usage: ait link [invitation]
+       ait unlink <full-machine-key>
+Prerequisites: prepared AIT services, a human terminal, and a direct network
+path. No relay, domain, VPN or public discovery is configured.
+Changes: link without an invitation lists peers and prints a ten-minute,
+one-use invitation. Send it privately. The recipient runs ait link followed
+by that invitation and confirms the displayed machine/key and sharing scope.
+Both share hosted actor repository history, future records and blobs, never
+credentials, administration or remote writes. A stolen invitation can enroll
+its first redeemer; another ait link replaces the outstanding invitation.
+Unlink revokes new access and closes active streams. Received data remains.
+Normal result: Linked, Unavailable (approved but not reachable), or Unlinked.
+Recovery: inspect ait status; rerun ait update if preparation is incomplete.
+No relay fallback occurs if a direct path is unavailable.
+Exit behavior: 0 success/cancel, 1 unavailable/refused, 2 invalid arguments.
+EOF
+      ;;
     init)
       cat <<'EOF'
 ait init — enable or verify AIT in a project.
@@ -138,7 +161,7 @@ Prerequisites: healthy AIT core, Claude Code, built MCP, and an exact or
 pending-approval ait-protocol project entry.
 Changes: launches Claude in the caller's current directory; no service or
 project configuration is changed.
-Example: ait claude "join AIT as @my-project.test and wait"
+Example: ait claude "join AIT as @my-project and wait"
 Normal result: Claude owns the terminal, signals, and exit status.
 Recovery: run `ait init` for the project, then `ait start`.
 Exit behavior: 0/native success, 1 prerequisite/harness failure, 2 invalid
@@ -159,7 +182,7 @@ for anything found by handle).
 Changes: starts only the selected existing session in its original project;
 discovery reads existing harness records, excludes live sessions, and never
 writes a session catalog.
-Example: ait resume @my-project-spec.test
+Example: ait resume @my-project-spec
 Normal result: resumes the selected session with its original AIT identity, or
 a never-joined Claude conversation ready to join.
 When an exact handle or identifier is still marked live, it prints a warning and
@@ -180,7 +203,7 @@ Arguments/options: all remaining arguments pass unchanged to the launcher.
 Prerequisites: healthy AIT core, Codex, built MCP, and the executable launcher.
 Changes: launches Codex in the caller's current directory; no project file or
 core service is auto-started.
-Example: ait codex "join AIT as @my-project-build.test and wait"
+Example: ait codex "join AIT as @my-project-build and wait"
 Normal result: Codex owns the terminal, signals, and exit status.
 Recovery: install Codex if missing, run `ait start`, and retry.
 Exit behavior: 0/native success, 1 prerequisite/harness failure, 2 invalid
@@ -215,7 +238,7 @@ EOF
 ait help — show the canonical AIT command manual.
 
 Usage: ait help [command]
-Arguments: optional command: init, start, stop, status, claude, codex, resume,
+Arguments: optional command: init, start, stop, status, link, unlink, claude, codex, resume,
 skills, help, version, update, or uninstall. Options: --help, -h.
 Prerequisites: none.
 Changes: none; help is read-only and works with services stopped.
@@ -256,7 +279,8 @@ releases, divergence, downgrades, dirty state, active sessions, partial
 services, and a live update owner.
 Example: ait update
 Normal result: prints the verified release, rebuild, restored services, and
-release notes URL. An equal release is a read-only no-op.
+release notes URL. An equal release is a read-only no-op when local peer
+preparation is complete; an incomplete preparation is reached on the same rerun.
 Recovery: failures before a service start attempt print exact reset commands;
 after a start attempt they require fix-forward and never recommend reset.
 Exit behavior: 0 updated or already current, 1 refusal or failed recovery,
@@ -301,7 +325,7 @@ invalid_args() {
 refuse_operator_command() {
   local command_name="$1" marker
   case "$command_name" in
-    claude|codex|resume|uninstall) ;;
+    claude|codex|resume|uninstall|link|unlink) ;;
     *) return 0 ;;
   esac
   for marker in CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_ENTRYPOINT \
@@ -322,6 +346,20 @@ refuse_operator_command() {
 }
 
 case "${1:-help}" in
+  link|unlink)
+    command_name="$1"
+    if [ "${2:-}" = --help ] || [ "${2:-}" = -h ]; then
+      [ "$#" -eq 2 ] || invalid_args "$@"
+      command_help "$1"
+    else
+      case "$command_name" in
+        link) [ "$#" -le 2 ] || invalid_args "$@" ;;
+        unlink) [ "$#" -eq 2 ] || invalid_args "$@" ;;
+      esac
+      refuse_operator_command "$command_name"
+      exec node "$REPO/appview/dist/peerCli.mjs" "$command_name" "$REPO" "${2:-}"
+    fi
+    ;;
   help)
     shift || true
     case "${1:-}" in

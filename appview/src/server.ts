@@ -1,6 +1,8 @@
 import 'dotenv/config'
-import { Firehose, MemoryRunner, type Event } from '@atproto/sync'
 import { IdResolver, MemoryCache } from '@atproto/identity'
+import { schemas } from '@atproto/api'
+import { safeFetchWrap } from '@atproto-labs/fetch-node'
+import path from 'node:path'
 import {
   AuthRequiredError,
   InvalidRequestError,
@@ -11,7 +13,6 @@ import {
 } from '@atproto/xrpc-server'
 import { AIT_LEXICONS } from './aitLexicons.js'
 import { openDb } from './db.js'
-import { handleEvent } from './indexer.js'
 import { getAuthorFeed } from './queries/getAuthorFeed.js'
 import { getProfile } from './queries/getProfile.js'
 import { searchActors } from './queries/searchActors.js'
@@ -24,6 +25,10 @@ import { decodeSeqCursor, encodeSeqCursor } from './queries/cursor.js'
 import { resolveActorToDid } from './queries/resolveHandle.js'
 import { makeVerifyViewer } from './xrpc/auth.js'
 import { isValidPushUrl, registerAndReplay } from './pushRegistry.js'
+import { getRecord } from './queries/getRecord.js'
+import { startPeerNetwork, stateDirectory } from './peerNetwork.mjs'
+import { installationPaths } from './peerPrepare.mjs'
+import { createVerifiedFeed } from './peerFeed.mjs'
 
 const PORT = parseInt(process.env.APPVIEW_PORT ?? '2585', 10)
 const DB_PATH = process.env.APPVIEW_DB_PATH ?? './data/appview.sqlite'
@@ -48,54 +53,68 @@ async function main() {
   // PLC roundtrip. The same cache also accelerates JWT signature
   // verification through `resolveAtprotoKey` for free.
   const idCache = new MemoryCache()
-  const idResolver = new IdResolver({ plcUrl: PLC_URL, didCache: idCache })
+  const localResolver = new IdResolver({ plcUrl: PLC_URL, didCache: idCache,
+    fetch: async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : input), origin = new URL(PLC_URL)
+      if (url.origin !== origin.origin || !/^did:plc:[a-z2-7]{24}$/.test(decodeURIComponent(url.pathname.slice(1)))) {
+        throw new Error('local identity request outside the configured PLC')
+      }
+      return fetch(url, { ...init, redirect: 'error' })
+    } })
+  localResolver.handle.resolve = async () => undefined
+  // run-appview.sh makes the installation's appview directory the cwd.
+  const repo = path.resolve(process.cwd(), '..')
+  const peers = await startPeerNetwork({ directory: stateDirectory(DB_PATH), db,
+    pdsUrl: PDS_URL, plcUrl: PLC_URL, accountFile: installationPaths(repo).accountFile,
+  })
+  const idResolver = peers.resolver as IdResolver
   const verifyViewer = makeVerifyViewer(idResolver, APPVIEW_DID!)
 
-  // Always subscribe from seq 0. Without a cursor, @atproto/sync's
-  // Subscription sends no `cursor` param, which subscribeRepos treats as
-  // "start at the live head" — meaning a wiped-and-restarted AppView never
-  // replays pre-restart records. The indexer's upserts are idempotent, so
-  // replaying from 0 on every restart is safe; durability/persistence of a
-  // cursor can come later if replay time becomes meaningful.
-  //
-  // We pass a MemoryRunner (with startCursor: 0) rather than the bare
-  // `getCursor: () => 0` option because @atproto/sync's getParams builder
-  // returns the getCursor *function itself* (not its result) when no runner is
-  // set, which fails query-param encoding. Observed on 0.1.40 and retained
-  // through the 0.3 upgrade (the AppView still replays from seq 0 cleanly).
-  const runner = new MemoryRunner({ startCursor: 0 })
-  const firehose = new Firehose({
-    idResolver,
-    service: PDS_WS_URL,
-    runner,
-    handleEvent: async (evt: Event) => {
-      try {
-        // idResolver carries the cache for #identity invalidation AND is
-        // needed for hydrating notification pushes; idCache passed
-        // explicitly because the resolver's internal cache field isn't
-        // part of the typed public surface.
-        await handleEvent(db, evt, idResolver, idCache)
-      } catch (err) {
-        console.error('indexer error:', err)
-      }
+  // Open the official subscription before verified repository backfill. The
+  // shared driver acknowledges each message only after projection succeeds.
+  const localTransport = (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init), url = new URL(request.url)
+    if (url.origin !== new URL(PDS_URL).origin || request.method !== 'GET' ||
+      !['/xrpc/com.atproto.sync.listRepos', '/xrpc/com.atproto.sync.getRepo'].includes(url.pathname)) {
+      throw new Error('local repository read outside the configured PDS')
+    }
+    return fetch(request, { redirect: 'error' })
+  }
+  // The inner transport already pins the configured local PDS and two routes.
+  const smallRead = safeFetchWrap({ fetch: localTransport, allowHttp: true, allowPrivateIps: true, allowCustomPort: true })
+  const repoRead = safeFetchWrap({ fetch: localTransport, allowHttp: true, allowPrivateIps: true, allowCustomPort: true,
+    responseMaxSize: 100 * 1024 * 1024 })
+  const firehose = createVerifiedFeed({ db, idResolver: localResolver, service: PDS_WS_URL, agent: undefined,
+    getJson: async (route: string) => {
+      const response = await smallRead(new URL(route, PDS_URL), { redirect: 'error' })
+      if (!response.ok) throw new Error(`local repository listing failed: ${response.status}`)
+      return response.json()
     },
-    onError: (err: Error) => {
-      const cause = (err as Error & { cause?: unknown }).cause
-      console.error('firehose error:', err.message, cause instanceof Error ? cause.message : cause)
+    getRepo: async (did: string) => {
+      const response = await repoRead(new URL(`/xrpc/com.atproto.sync.getRepo?did=${encodeURIComponent(did)}`, PDS_URL), { redirect: 'error' })
+      if (!response.ok) throw new Error(`local repository download failed: ${response.status}`)
+      return new Uint8Array(await response.arrayBuffer())
     },
-    filterCollections: ['ait.feed.post', 'ait.graph.follow', 'ait.actor.profile'],
-    unauthenticatedCommits: true,
-    unauthenticatedHandles: true,
   })
-
-  firehose.start()
+  void firehose.start().catch((error: unknown) => console.error('local indexing stopped; restart AppView after fixing the reported error:', error))
   console.log(`firehose subscribed to ${PDS_WS_URL}`)
 
   // Lexicon-driven XRPC. `xrpc.router` IS the Express app; routes mount on
   // `xrpc.routes` (a Router added to the app before the constructor's
   // `/xrpc/:methodId` catchall), so the health probe registered below
   // matches before the catchall's MethodNotImplementedError fires.
-  const xrpc = createXrpcServer([...AIT_LEXICONS])
+  const standard = schemas.filter(doc => ['com.atproto.repo.getRecord', 'com.atproto.identity.resolveHandle'].includes(doc.id))
+  const xrpc = createXrpcServer([...AIT_LEXICONS, ...standard])
+  xrpc.method('com.atproto.identity.resolveHandle', async ctx => {
+    const did = await resolveActorToDid(db, ctx.params.handle as string)
+    if (!did) throw new InvalidRequestError('actor not found', 'HandleNotFound')
+    return { encoding: 'application/json', body: { did } }
+  })
+  xrpc.method('com.atproto.repo.getRecord', async ctx => {
+    const record = await getRecord(db, ctx.params as { repo: string; collection: string; rkey: string; cid?: string })
+    if (!record) throw new InvalidRequestError('record not found', 'RecordNotFound')
+    return { encoding: 'application/json', body: record }
+  })
 
   // Minimal callback typing keeps @types/express out of the project's
   // devDependencies — the only direct express touchpoint in user code is
@@ -124,14 +143,13 @@ async function main() {
     return { credentials: { did: viewer } }
   }
 
-  // Handle→DID resolution lives at the handler boundary (ADR-0038): the PDS is
-  // canonical for .test handles and the lexicon takes at-identifier per
-  // ADR-0028's "stay canonical" rule. The queries only ever see a DID.
+  // Names resolve from the verified projection at the handler boundary. The
+  // canonical lexicon still takes an at-identifier; queries only see a DID.
   const getAuthorFeedHandler: MethodHandler = async (ctx) => {
     const actor = ctx.params.actor as string
     const limit = ctx.params.limit as number | undefined
     const cursor = ctx.params.cursor as string | undefined
-    const did = await resolveActorToDid(PDS_URL, actor)
+    const did = await resolveActorToDid(db, actor)
     if (!did) {
       return { encoding: 'application/json', body: { feed: [] } }
     }
@@ -144,7 +162,7 @@ async function main() {
     // An unresolvable handle is ProfileNotFound (declared in the lexicon). A
     // DID that resolves to no identity surfaces from getProfile as a 5xx,
     // matching getAuthorFeed/getTimeline — we don't mask resolver outages.
-    const did = await resolveActorToDid(PDS_URL, actor)
+    const did = await resolveActorToDid(db, actor)
     if (!did) {
       throw new InvalidRequestError('profile not found', 'ProfileNotFound')
     }
@@ -186,7 +204,7 @@ async function main() {
       ctx.input as { body: { subject: string; retired: boolean } }
     ).body
 
-    const subjectDid = await resolveActorToDid(PDS_URL, subject)
+    const subjectDid = await resolveActorToDid(db, subject)
     if (!subjectDid) {
       throw new InvalidRequestError(`no actor for ${subject}`, 'ActorNotFound')
     }
@@ -198,7 +216,7 @@ async function main() {
       // unset, and `viewer` is always a DID string, so the comparison alone
       // covers the unconfigured case.
       const operatorDid = OPERATOR
-        ? await resolveActorToDid(PDS_URL, OPERATOR)
+        ? await resolveActorToDid(db, OPERATOR)
         : null
       if (viewer !== operatorDid) {
         throw new InvalidRequestError(
@@ -342,7 +360,7 @@ async function main() {
   // together without waiting, so the PDS may not answer yet, and the per-request
   // lookup resolves it later anyway.
   if (OPERATOR) {
-    void resolveActorToDid(PDS_URL, OPERATOR).then((did) => {
+    void resolveActorToDid(db, OPERATOR).then((did) => {
       console.log(
         did
           ? `operator ${OPERATOR} → ${did} (may retire any actor from the directory; ADR-0043)`
@@ -354,6 +372,7 @@ async function main() {
   const shutdown = async () => {
     console.log('appview stopping')
     await firehose.destroy().catch(() => {})
+    await peers.close()
     httpServer.close()
     db.close()
     process.exit(0)

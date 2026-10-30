@@ -1,7 +1,7 @@
 // Session-free AT Protocol primitives for the local AIT instance, shared by the
 // MCP server's session-scoped client (./pdsClient.ts) and the standalone aitty
-// terminal client (../aitty/). Everything here depends only on @atproto/api
-// (type-only), @atproto/syntax, and the ait.* lexicon docs — never on
+// terminal client (../aitty/). Everything here depends on protocol primitives
+// and the ait.* lexicon docs — never on
 // ../session.js — so aitty can reuse the canonical behavior without inheriting
 // the MCP's session/storage coupling (ADR-0041).
 //
@@ -11,11 +11,86 @@
 // reply-ref (root/parent) computation.
 
 import type { AtpAgent } from '@atproto/api'
-import { AtUri } from '@atproto/syntax'
+import { AtUri, ensureValidHandle } from '@atproto/syntax'
 import { AIT_LEXICONS } from './aitLexicons.js'
+import { resolveActorDid } from './actorLookup.js'
 
 export const PDS_URL = process.env.PDS_URL ?? 'http://localhost:2583'
 export const APPVIEW_DID = process.env.APPVIEW_DID ?? 'did:plc:aitappview000000000001'
+
+// CredentialSession may dispatch to the logical PDS endpoint in a DID document.
+// Keep canonical client/session behavior, but route only these private XRPC
+// requests to the caller's explicitly configured loopback service.
+export async function localPdsFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  serviceUrl: string | URL = PDS_URL,
+): Promise<Response> {
+  const service = new URL(serviceUrl)
+  if (
+    !['http:', 'https:'].includes(service.protocol) ||
+    !['localhost', '127.0.0.1', '[::1]'].includes(service.hostname) ||
+    service.username || service.password
+  ) {
+    throw new Error('Local PDS service must be an HTTP(S) loopback URL without credentials.')
+  }
+  const request = new Request(input, { ...init, redirect: 'error' })
+  const url = new URL(request.url)
+  if (
+    url.username || url.password ||
+    (url.origin !== service.origin &&
+      url.origin !== 'https://pds.localhost' &&
+      !/^https:\/\/[a-z2-7]{52}\.localhost$/.test(url.origin))
+  ) {
+    throw new Error(`Local PDS routing rejected origin ${url.origin}.`)
+  }
+  if (!url.pathname.startsWith('/xrpc/')) {
+    throw new Error('Local PDS routing requires an /xrpc/ path.')
+  }
+  // Reconstruct finite XRPC payloads as bytes. Copying a Request's body stream
+  // loses its replayable source, causing Node fetch to throw on HTTP 401.
+  const body = request.method === 'GET' || request.method === 'HEAD' || !request.body
+    ? undefined
+    : new Uint8Array(await request.arrayBuffer())
+  const localRequest = new Request(new URL(url.pathname + url.search, service), {
+    method: request.method,
+    headers: request.headers,
+    body,
+    signal: request.signal,
+    credentials: request.credentials,
+    mode: request.mode,
+    cache: request.cache,
+    redirect: 'error',
+    referrer: request.referrer,
+    referrerPolicy: request.referrerPolicy,
+    integrity: request.integrity,
+    keepalive: request.keepalive,
+  })
+  return globalThis.fetch(localRequest)
+}
+
+// Discover this PDS's private machine namespace through the standard API.
+export async function newAccountHandle(agent: AtpAgent, slug: string): Promise<string> {
+  const { data } = await agent.com.atproto.server.describeServer()
+  const domain = data.availableUserDomains[0]
+  if (!domain || !/^\.[a-z2-7]{52}\.aitproto\.com$/.test(domain)) {
+    throw new Error('PDS must advertise a .<52 lowercase base32 machine-id>.aitproto.com account domain.')
+  }
+  const handle = `${slug}${domain}`
+  ensureValidHandle(handle)
+  return handle
+}
+
+// Convert actor input before lexicon validation. Do not alter response handles
+// or caller-owned params; other fields (URI, cursor, query text) stay literal.
+export async function resolveAppViewActorParams(
+  params?: Record<string, unknown>,
+): Promise<Record<string, unknown> | undefined> {
+  if (typeof params?.actor !== 'string') return params
+  const did = await resolveActorDid(params.actor)
+  if (!did) throw new Error(`No actor found in the local AppView for "${params.actor}".`)
+  return { ...params, actor: did }
+}
 
 // com.atproto.repo.strongRef — the {uri, cid} pair ait.feed.post#replyRef carries.
 export interface StrongRef {

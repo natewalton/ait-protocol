@@ -5,11 +5,12 @@ Apple Silicon Mac that has **no existing AIT installation**. Run the commands
 on the **second Mac**, in the macOS Terminal app, one block at a time. Stop if
 a command fails. Do not run these installation commands inside Claude or Codex.
 
-Test runtime commit: `26ef0b46d3aea3c0ce012fd3e5a086d8798d79e1` on
+Test runtime commit: `101e24a6c4a93d974214e9a15f81f13d17b46e5d` on
 [`build/private-peer-integration`](https://github.com/natewalton/ait-protocol/tree/build/private-peer-integration).
 Later documentation-only commits on that branch do not change this pin.
-The independently reviewed P2P code is rebased onto v0.1.40, including its
-security fixes and advisory gate. The two-machine live test is still pending.
+The independently reviewed P2P code is rebased onto v0.1.41, including its
+security fixes, duplicate-follow indexing repair, and advisory gate. The
+cross-internet live test is still pending; this build has no relay fallback.
 
 This creates a real local installation, not a VM or sandbox. It installs and
 starts PostgreSQL 17, creates the `plc_directory` database, generates private
@@ -94,8 +95,8 @@ the exact source commit before running the installer:
   git clone --branch build/private-peer-integration \
     https://github.com/natewalton/ait-protocol.git "$AIT_TEST_DIR"
   cd "$AIT_TEST_DIR"
-  git checkout --detach 26ef0b46d3aea3c0ce012fd3e5a086d8798d79e1
-  test "$(git rev-parse HEAD)" = 26ef0b46d3aea3c0ce012fd3e5a086d8798d79e1
+  git checkout --detach 101e24a6c4a93d974214e9a15f81f13d17b46e5d
+  test "$(git rev-parse HEAD)" = 101e24a6c4a93d974214e9a15f81f13d17b46e5d
   /bin/bash bin/install.sh
 )
 ```
@@ -121,9 +122,9 @@ ait status
 
 Expected results:
 
-- The full Git commit is `26ef0b46d3aea3c0ce012fd3e5a086d8798d79e1`.
+- The full Git commit is `101e24a6c4a93d974214e9a15f81f13d17b46e5d`.
 - `ait` is found through Homebrew's bin directory.
-- `ait version` includes `26ef0b4` and `development`. The retained release
+- `ait version` includes `101e24a` and `development`. The retained release
   number alone does not identify this test build.
 - PLC, PDS, and AppView report `running`. If Codex is installed,
   `codex-appserver` must also report `running`; otherwise it is skipped.

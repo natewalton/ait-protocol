@@ -75,8 +75,8 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       await project({ ...base, ...entry, uri, event: 'create', record: cborToLexRecord(bytes) })
     }
     const previous = db.prepare(
-      'SELECT uri FROM posts WHERE did = ? UNION SELECT uri FROM follows WHERE did = ?',
-    ).all(did, did)
+      'SELECT uri FROM posts WHERE did = ? UNION SELECT uri FROM follows WHERE did = ? UNION SELECT uri FROM follow_duplicates WHERE did = ?',
+    ).all(did, did, did)
     if (db.prepare('SELECT did FROM profiles WHERE did = ?').get(did)) {
       previous.push({ uri: AtUri.make(did, 'ait.actor.profile', 'self').toString() })
     }

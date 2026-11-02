@@ -274,6 +274,45 @@ for (const retired of [[], upgradedActors.map((actor) => actor.handle)]) {
 }
 assert.deepEqual([claudeId, codexId].map((id) => fs.readFileSync(identityPath(id), 'utf8')), identitySnapshots)
 
+// Exact friendly names work directly, including the live confirmation path.
+for (const [index, id] of [claudeId, codexId].entries()) {
+  const identity = JSON.parse(identitySnapshots[index])
+  write(identityPath(id), JSON.stringify({ ...identity, handle: upgradedActors[index].handle }))
+}
+write(retiredFile, '[]')
+for (const live of [true, false]) {
+  write(liveFile, JSON.stringify(live ? upgradedActors.map(actor => actor.handle) : []))
+  for (const [index, harness, project, id] of [
+    [0, 'claude', claudeProject, claudeId],
+    [1, 'codex', codexProject, codexId],
+  ]) {
+    for (const query of [directoryActors[index].handle.replace(/\.test$/, ''), upgradedActors[index].handle]) {
+      result = run(`@${query}`, live ? 'yes\n' : '')
+      assertSelection(result, harness, project, id)
+      if (live) {
+        assert.match(result.stderr, /Resume it anyway\? \[y\/N\]/)
+        result = run(query, 'n\n')
+        assert.equal(result.status, 1)
+        assert.equal(result.stdout, '')
+      } else assert.doesNotMatch(result.stderr, /Resume it anyway/)
+    }
+  }
+}
+// A friendly name must count collisions across machines and live/offline rows.
+const namesake = JSON.parse(fs.readFileSync(identityPath(claudeId), 'utf8'))
+namesake.handle = codexHandle.replace(/\.test$/, `.${'b'.repeat(52)}.aitproto.com`)
+write(identityPath(claudeId), JSON.stringify(namesake))
+write(actorsFile, JSON.stringify([{ ...upgradedActors[0], handle: namesake.handle }, upgradedActors[1]]))
+write(liveFile, JSON.stringify([upgradedActors[1].handle]))
+result = run('codex-session', 'yes\n')
+assert.equal(result.status, 1)
+assert.equal(result.stdout, '')
+assert.match(result.stderr, /ambiguous/)
+assert.doesNotMatch(result.stderr, /Resume it anyway/)
+result = run(upgradedActors[1].handle, 'yes\n')
+assertSelection(result, 'codex', codexProject, codexId)
+for (const [index, id] of [claudeId, codexId].entries()) write(identityPath(id), identitySnapshots[index])
+
 // A live namesake with a different DID must not make either local session live.
 write(retiredFile, '[]')
 write(actorsFile, JSON.stringify([
@@ -349,7 +388,7 @@ assert.equal(result.status, 0, result.stderr)
 assert.match(result.stderr, /@claude-session\.test/)
 assert.doesNotMatch(result.stderr, /@codex-session\.test/)
 assert.match(result.stderr, /1 live session hidden/)
-result = run('codex-session')
+result = run('codex-sess')
 assert.equal(result.status, 1)
 assert.doesNotMatch(result.stderr, /Resume it anyway\? \[y\/N\]/)
 result = run(codexHandle, 'y\n')

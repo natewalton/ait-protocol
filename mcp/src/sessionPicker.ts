@@ -8,6 +8,7 @@ import { SERVER_OVERLOADED, type ThreadReadResponse } from './codex/appServerTyp
 import { sharedAppServerSocketPath } from './codex/paths.js'
 import { readThreadSessionId } from './codex/threadMap.js'
 import { canonicalUuid, readPublicIdentity, STORAGE_DIR } from './storage.js'
+import { displayActorHandle } from './atproto/actorLookup.js'
 
 // A Codex thread id is a filename component, read back verbatim from
 // codex-thread-<id>.json, so it is shape-checked without being re-cased. A
@@ -259,9 +260,12 @@ function matches(session: ResumableSession, query: string): boolean {
 
 function exactMatches(sessions: ResumableSession[], query: string): ResumableSession[] {
   const value = query.trim().replace(/^@/, '').toLocaleLowerCase()
+  const friendlyQuery = !value.includes('.')
   return sessions.filter(
     (session) =>
       session.handle?.toLocaleLowerCase() === value ||
+      (friendlyQuery && session.handle !== null &&
+        displayActorHandle(session.handle).toLocaleLowerCase() === value) ||
       session.identifier.toLocaleLowerCase() === value,
   )
 }

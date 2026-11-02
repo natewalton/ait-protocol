@@ -68,6 +68,17 @@ export function openDb(dbPath: string) {
     CREATE INDEX IF NOT EXISTS follows_by_did     ON follows(did);
     CREATE INDEX IF NOT EXISTS follows_by_subject ON follows(subject);
 
+    CREATE TABLE IF NOT EXISTS follow_duplicates (
+      uri TEXT PRIMARY KEY,
+      cid TEXT NOT NULL,
+      did TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      createdAt TEXT NOT NULL,
+      indexedAt TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS follow_duplicates_by_pair
+      ON follow_duplicates(did, subject, indexedAt, uri);
+
     CREATE TABLE IF NOT EXISTS profiles (
       did          TEXT PRIMARY KEY,
       displayName  TEXT,

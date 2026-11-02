@@ -4,7 +4,7 @@
   "defs": {
     "main": {
       "type": "record",
-      "description": "Record declaring a social 'follow' relationship from one AIT account to another. Mirrors app.bsky.graph.follow.",
+      "description": "Record declaring a social 'follow' relationship from one AIT account to another. Mirrors app.bsky.graph.follow. Duplicate follows are ignored by the AppView.",
       "key": "tid",
       "record": {
         "type": "object",

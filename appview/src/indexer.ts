@@ -57,8 +57,7 @@ export async function handleEvent(
       db.prepare('DELETE FROM notifications WHERE uri = ?').run(uri)
     } else if (evt.collection === 'ait.graph.follow') {
       const uri = evt.uri.toString()
-      db.prepare('DELETE FROM follows WHERE uri = ?').run(uri)
-      db.prepare('DELETE FROM notifications WHERE uri = ?').run(uri)
+      db.transaction(() => removeFollow(db, uri))()
     } else if (evt.collection === 'ait.actor.profile' && evt.rkey === 'self') {
       // Profiles key on the repo DID, not the record URI.
       db.prepare('DELETE FROM profiles WHERE did = ?').run(evt.did)
@@ -237,6 +236,23 @@ function insertNotification(
   if (info.changes > 0 && idResolver) {
     notifyInsert(db, idResolver, n.recipientDid, n.uri)
   }
+  return info.changes > 0
+}
+
+function removeFollow(db: Db, uri: string) {
+  const previous = db.prepare('SELECT did, subject FROM follows WHERE uri = ?').get(uri) as
+    { did: string; subject: string } | undefined
+  db.prepare('DELETE FROM follows WHERE uri = ?').run(uri)
+  db.prepare('DELETE FROM follow_duplicates WHERE uri = ?').run(uri)
+  db.prepare("DELETE FROM notifications WHERE uri = ? AND reason = 'follow'").run(uri)
+  if (!previous) return
+  const survivor = db.prepare(`SELECT uri, did, subject, createdAt, indexedAt FROM follow_duplicates
+    WHERE did = ? AND subject = ? ORDER BY indexedAt, uri LIMIT 1`).get(previous.did, previous.subject) as
+    { uri: string; did: string; subject: string; createdAt: string; indexedAt: string } | undefined
+  if (!survivor) return
+  db.prepare('DELETE FROM follow_duplicates WHERE uri = ?').run(survivor.uri)
+  db.prepare('INSERT INTO follows (uri,did,subject,createdAt,indexedAt) VALUES (?,?,?,?,?)')
+    .run(survivor.uri, survivor.did, survivor.subject, survivor.createdAt, survivor.indexedAt)
 }
 
 function indexFollow(db: Db, evt: Create | Update, idResolver?: IdResolver) {
@@ -246,38 +262,48 @@ function indexFollow(db: Db, evt: Create | Update, idResolver?: IdResolver) {
   const uri = evt.uri.toString()
   const cid = evt.cid.toString()
 
-  db.prepare(
-    `INSERT INTO follows (uri, did, subject, createdAt, indexedAt)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(uri) DO UPDATE SET
-       subject = excluded.subject,
-       createdAt = excluded.createdAt`,
-  ).run(
-    uri,
-    evt.did,
-    record.subject,
-    record.createdAt ?? now,
-    now,
-  )
-
-  ensureActor(db, evt.did, now)
-  ensureActor(db, record.subject, now)
-
-  // Follow notification: the followee hears about it. Self-follow is
-  // already rejected by the follow tool, but guard here too in case a
-  // record sneaks in via a different write path.
-  if (record.subject !== evt.did) {
-    insertNotification(db, idResolver, {
+  const subject = record.subject
+  const added = db.transaction(() => {
+    const primary = db.prepare('SELECT subject, indexedAt FROM follows WHERE uri = ?').get(uri) as
+      { subject: string; indexedAt: string } | undefined
+    const duplicate = db.prepare('SELECT subject, indexedAt FROM follow_duplicates WHERE uri = ?').get(uri) as
+      { subject: string; indexedAt: string } | undefined
+    const previous = primary ?? duplicate
+    if (previous?.subject === subject) {
+      if (primary) {
+        db.prepare('UPDATE follows SET createdAt = ? WHERE uri = ?').run(record.createdAt ?? now, uri)
+        db.prepare("UPDATE notifications SET cid = ? WHERE uri = ? AND reason = 'follow'").run(cid, uri)
+      } else {
+        db.prepare('UPDATE follow_duplicates SET cid = ?, createdAt = ? WHERE uri = ?')
+          .run(cid, record.createdAt ?? now, uri)
+      }
+      return false
+    }
+    if (previous) removeFollow(db, uri)
+    const exists = db.prepare('SELECT 1 FROM follows WHERE did = ? AND subject = ?').get(evt.did, subject)
+    if (exists) {
+      db.prepare('INSERT INTO follow_duplicates (uri,cid,did,subject,createdAt,indexedAt) VALUES (?,?,?,?,?,?)')
+        .run(uri, cid, evt.did, subject, record.createdAt ?? now, previous?.indexedAt ?? now)
+      return false
+    }
+    db.prepare('INSERT INTO follows (uri,did,subject,createdAt,indexedAt) VALUES (?,?,?,?,?)')
+      .run(uri, evt.did, subject, record.createdAt ?? now, previous?.indexedAt ?? now)
+    ensureActor(db, evt.did, now)
+    ensureActor(db, subject, now)
+    if (previous || subject === evt.did) return false
+    // Write inside the transaction, but do not dispatch a push before commit.
+    return insertNotification(db, undefined, {
       uri,
       cid,
-      recipientDid: record.subject,
+      recipientDid: subject,
       authorDid: evt.did,
       reason: 'follow',
       reasonSubject: null,
       createdAt: record.createdAt ?? now,
       indexedAt: now,
     })
-  }
+  })()
+  if (added && idResolver) notifyInsert(db, idResolver, subject, uri)
 }
 
 function indexProfile(db: Db, evt: Create | Update) {

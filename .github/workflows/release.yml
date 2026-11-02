@@ -60,6 +60,7 @@ jobs:
           npm --prefix appview ci --prefer-offline --no-audit
           npm --prefix mcp ci --prefer-offline --no-audit
           npm --prefix appview run build
+          node appview/scripts/duplicate-follow-test.mjs
           npm --prefix mcp run build
           bin/check-single-lexicon.sh
           bin/check-advisories.sh

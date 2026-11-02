@@ -136,8 +136,16 @@ jobs:
           NODE
           )"
           if ! git diff --quiet "refs/ait-release-ancestry/$previous..HEAD" -- appview/src/db.ts; then
-            echo 'AppView migration surface changed; use a separately reviewed data-migration and recovery design.' >&2
-            exit 1
+            # Only this reviewed additive migration is approved (see
+            # specs/reliable-follow-indexing.md). All other transitions refuse.
+            old_schema="$(git show "refs/ait-release-ancestry/$previous:appview/src/db.ts" | sha256sum | cut -d ' ' -f 1)"
+            new_schema="$(sha256sum appview/src/db.ts | cut -d ' ' -f 1)"
+            if [ "$previous" != v0.1.40 ] || [ "$RELEASE_VERSION" != 0.1.41 ] ||
+               [ "$old_schema" != 71fc964bd38ea19ec745b737d6eae096687815c5ff09493975dd268843b6e452 ] ||
+               [ "$new_schema" != bbacf4a06705ba8a69d26f87da01f8b6328d383e7213f9e8828506daafbc3257 ]; then
+              echo 'AppView migration surface changed; use a separately reviewed data-migration and recovery design.' >&2
+              exit 1
+            fi
           fi
       - name: Prepare inspected draft
         if: env.RELEASE_OPERATION == 'prepare'

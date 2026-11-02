@@ -1,7 +1,8 @@
 # Keep messages flowing when an account follows someone twice
 
 Status: Shared fix implemented and independently reviewed; local P2P repair
-verified. Public release blocked by newly unreviewed advisories.
+verified. Dependency corrections reviewed; advisory gate passes. Public release
+preparation is pending.
 Release authorized by Nate on 2026-11-02; do not release P2P wholesale.
 Date: 2026-11-01 (America/New_York; evidence captured 2026-11-02 UTC).
 Baseline: private-peer build `a103c90fb8986c6657e0ae963b0555cbe8cbf078`.
@@ -139,9 +140,11 @@ session JWTs, identities, actor source attribution or peer approval state.
 
 ## Files touched
 
-The stable release uses seven paths: VERSION, .github/workflows/release.yml,
+The stable release uses eleven paths: VERSION, .github/workflows/release.yml,
 appview/src/db.ts, appview/src/indexer.ts, lexicons/ait/graph/follow.json,
-appview/scripts/duplicate-follow-test.mjs and this spec. The workflow runs the
+appview/scripts/duplicate-follow-test.mjs, appview/package.json,
+appview/package-lock.json, pds/package.json, pds/package-lock.json and this spec.
+The workflow runs the
 portable regression after building AppView. No P2P code is included in stable.
 
 The P2P-local variant uses the following seven paths:
@@ -267,11 +270,30 @@ PIDs stayed 53888/53913; only AppView restarted (67169). Both missing posts are
 readable, recipient notifications exist, and the reviewer replied confirming
 receipt. Backup: `/private/tmp/ait-follow-live-backup.PDhkV6`.
 
-Publication is blocked by the unchanged advisory gate: newly unreviewed
-GHSA-8494-f6mr-cjpv (@hapi/content), GHSA-3g3m-2fjr-6pw4 (glob), and
-GHSA-g3hv-75wg-m249 (minimatch). Do not add exceptions or change unrelated
-dependencies under this correction without disposition. No public release or
-main/P2P remote push has been made.
+Nate authorized resolving the release's dependency findings on 2026-11-02.
+The PDS lock now has @hapi/content 6.0.3, glob 14.0.2 and minimatch 11.0.1;
+AppView has minimatch 11.0.1. The glob/minimatch fixes require major-version
+overrides, limited to those packages. All 69 AT Protocol/PLC lock entries and
+the PLC/MCP locks remain unchanged. No README advisory exceptions changed.
+The four-workspace advisory gate passes with zero unreviewed findings.
+Actual glob async/sync/abort, ts-morph pattern selection and disposition parsing
+(including a 1 MiB malformed token) pass; patched dependencies also pass smoke
+checks on Node 20.20.2. Independent Codex security/release review returned GO.
+
+The workflow's blanket database-change refusal otherwise prevents this reviewed
+additive migration from shipping. Retain that refusal except for the exact
+v0.1.40 to 0.1.41 transition whose old db.ts SHA-256 is
+`71fc964bd38ea19ec745b737d6eae096687815c5ff09493975dd268843b6e452` and whose
+new SHA-256 is
+`bbacf4a06705ba8a69d26f87da01f8b6328d383e7213f9e8828506daafbc3257`.
+The independent review verified both hashes; executed shell checks accept that
+tuple and reject independently changed baseline, target and either hash. This
+adds no workflow input or general migration bypass. The migration regression
+also preserves a seeded existing notification's sequence 41, URI and CID.
+
+Advisory sources: [content](https://github.com/advisories/GHSA-8494-f6mr-cjpv),
+[glob](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4), and
+[minimatch](https://github.com/advisories/GHSA-g3hv-75wg-m249).
 
 ## What was rejected
 

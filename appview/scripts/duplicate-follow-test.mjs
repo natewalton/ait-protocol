@@ -91,10 +91,19 @@ test('additive migration preserves existing follow and notification sequence', a
     db.exec(`CREATE TABLE follows(uri TEXT PRIMARY KEY,did TEXT NOT NULL,subject TEXT NOT NULL,
       createdAt TEXT NOT NULL,indexedAt TEXT NOT NULL,UNIQUE(did,subject))`)
     db.prepare('INSERT INTO follows VALUES (?,?,?,?,?)').run('legacy', A, B, T, T)
+    db.exec(`CREATE TABLE notifications (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT, uri TEXT NOT NULL, cid TEXT NOT NULL,
+      recipientDid TEXT NOT NULL, authorDid TEXT NOT NULL, reason TEXT NOT NULL,
+      reasonSubject TEXT, createdAt TEXT NOT NULL, indexedAt TEXT NOT NULL,
+      UNIQUE(uri,recipientDid))`)
+    db.prepare('INSERT INTO notifications VALUES (?,?,?,?,?,?,?,?,?)')
+      .run(41, 'legacy', 'original-cid', B, A, 'follow', null, T, T)
     db.close(); db = openDb(file)
     const original = db.prepare('SELECT * FROM follows').all()
     await handleEvent(db, await event('extra'), resolver)
-    assert.equal(count(db, 'notifications'), 0)
+    assert.equal(count(db, 'notifications'), 1)
+    assert.deepEqual(db.prepare('SELECT seq,uri,cid FROM notifications').get(),
+      { seq: 41, uri: 'legacy', cid: 'original-cid' })
     db.close(); db = openDb(file)
     assert.deepEqual(db.prepare('SELECT * FROM follows').all(), original)
     assert.equal(count(db, 'follow_duplicates'), 1)

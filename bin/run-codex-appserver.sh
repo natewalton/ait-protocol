@@ -1,5 +1,5 @@
 #!/bin/bash
-# Wrapper that execs the SHARED codex app-server for AIT codex mode.
+# Wrapper that runs the shared Codex app-server and serializes its startup.
 #
 # ONE app-server serves every Codex session on the host: each session opens its
 # own thread + AIT identity via thread/start config (specs/notification-codex.md).
@@ -16,20 +16,41 @@ set -euo pipefail
 # every session's MCP children, so raise its inherited capacity before exec.
 ulimit -Sn 8192
 
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
 
 sock="${AIT_CODEX_SHARED_SOCKET:-$HOME/.ait/codex-shared.sock}"
 mkdir -p "$(dirname "$sock")"
-# Wind down any server still on this socket before taking it. Unlinking the
-# socket alone (what this used to do) leaves that server running with the socket
-# pulled out from under it: unreachable, but still holding MCP children that are
-# logged in to the network. The helper also removes the socket file, which is
-# what makes bind succeed.
-"$REPO/bin/stop-codex-appserver.sh" "$sock"
-
+source "$REPO/bin/lib-service-pids.sh"
+CODEX_SOCK="$sock"
+# The kernel owns the lock lifetime. Keeping the file avoids an unlink/recreate
+# race; its contents are irrelevant and no PID-based lock recovery is needed.
+exec 9>>"$sock.start-lock"
+while :; do
+  live="$(running_pid codex-appserver)"
+  if [ -n "$live" ]; then
+    echo "codex-appserver already running (pid $live, adopted existing service)"
+    exit 0
+  fi
+  lock_status=0
+  /usr/bin/lockf -s -t 0 9 || lock_status=$?
+  [ "$lock_status" -ne 0 ] || break
+  if [ "$lock_status" -ne 75 ]; then
+    echo "error: could not acquire Codex startup lock" >&2
+    exit "$lock_status"
+  fi
+  echo "codex-appserver startup in progress; waiting for its socket" >&2
+  sleep 0.1
+done
+live="$(running_pid codex-appserver)"
+if [ -n "$live" ]; then
+  echo "codex-appserver already running (pid $live, adopted existing service)"
+  exit 0
+fi
+# Check and unlink are serialized with other starts and stop's final cleanup.
+rm -f "$sock"
 server="$REPO/mcp/dist/server.js"
 if [ ! -f "$server" ]; then
-  echo "run-codex-appserver: $server missing — run 'npm --prefix \"$REPO/mcp\" run build'" >&2
+  echo "run-codex-appserver: $server missing; run npm --prefix '$REPO/mcp' run build" >&2
   exit 1
 fi
 
@@ -50,9 +71,33 @@ unset AIT_SESSION_ID AIT_NOTIFICATION_MODE
 
 # Every thread on this server defaults to gpt-6.1-sol at medium reasoning, whatever the
 # operator's own ~/.codex/config.toml says, so ait codex sessions are uniform.
-exec "$CODEX_BIN" app-server --listen "unix://$sock" \
+child=""
+stop_child() {
+  if [ -n "$child" ]; then
+    stop_codex_pids "$(owned_codex_pids)" "$child"
+    wait "$child" 2>/dev/null || true
+  fi
+}
+trap 'stop_child; exit 143' TERM
+trap 'stop_child; exit 130' INT
+trap 'stop_child; exit 129' HUP
+"$CODEX_BIN" app-server --listen "unix://$sock" \
   -c 'model="gpt-6.1-sol"' \
   -c 'model_reasoning_effort="medium"' \
   -c "thread_unload_delay_secs=0" \
   -c "mcp_servers.ait.command=$NODE_BIN" \
-  -c "mcp_servers.ait.args=[\"$server\"]"
+  -c "mcp_servers.ait.args=[\"$server\"]" 9>&- &
+child=$!
+while kill -0 "$child" 2>/dev/null; do
+  if [ -S "$sock" ]; then
+    if ! live="$(running_pid codex-appserver)"; then stop_child; exit 1; fi
+    [ -z "$live" ] || break
+  fi
+  sleep 0.1
+done
+# Release in the shell that owns fd 9. Keep the wrapper alive for launchd and
+# forward shutdown signals to its child; the server never inherits the lock.
+exec 9>&-
+status=0
+wait "$child" || status=$?
+exit "$status"

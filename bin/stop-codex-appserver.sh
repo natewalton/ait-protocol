@@ -1,85 +1,34 @@
 #!/bin/bash
-# Stops every shared codex app-server bound to this host's AIT socket, and the
-# processes it spawned.
-#
-# Why this exists as its own script: bin/stop-all.sh only knows the pid it wrote
-# to /tmp/ait-codex-appserver.pid, and bin/run-codex-appserver.sh used to `rm -f`
-# the socket before binding. Between them, a running app-server could have the
-# socket unlinked out from under it and keep going — unreachable, unlogged, but
-# still holding live MCP children with their own AIT identities, still on the
-# network. Three such servers accumulated on this host over three weeks, one of
-# them still holding an MCP child five days after its socket was taken away.
-#
-# Selection is by the FULL socket path in the command line, which is unique to
-# this host's shared server. Never match on `node … dist/server.js`: every
-# session's ait MCP child shares that command line, including the one belonging
-# to the session running this script.
-#
-# Usage: bin/stop-codex-appserver.sh [socket-path]
+# Stop this checkout's servers on the exact socket, including orphaned instances.
 set -euo pipefail
-
+REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
 DEFAULT_SOCK="${AIT_CODEX_SHARED_SOCKET:-$HOME/.ait/codex-shared.sock}"
 SOCK="${1:-$DEFAULT_SOCK}"
-PIDFILE=/tmp/ait-codex-appserver.pid
-TERM_WAIT_SECS=5
+PIDFILE="${AIT_LOG_DIR:-/tmp}/ait-codex-appserver.pid"
+source "$REPO/bin/lib-service-pids.sh"
+CODEX_SOCK="$SOCK"
 
-# `pgrep -f` excludes itself, and the pattern carries the socket path, so a
-# per-session socket (bin/codex-session.sh mints its own) cannot match.
-servers=$(pgrep -f "codex app-server --listen unix://$SOCK" || true)
-
-if [ -z "$servers" ]; then
-  echo "codex app-server: none running on $SOCK"
-else
-  # Collect children BEFORE killing the parents: once a parent dies its children
-  # are reparented to init and `pgrep -P` can no longer find them.
-  # `|| true` inside the substitution, not after it: pipefail makes the pipeline
-  # return pgrep's status, and pgrep exits 1 when a server has no children at
-  # all — which under `set -e` killed this script before it killed anything.
-  children=""
-  for pid in $servers; do
-    children="$children $( { pgrep -P "$pid" || true; } | tr '\n' ' ')"
-  done
-
-  for pid in $servers; do
-    kill "$pid" 2>/dev/null && echo "stopping codex app-server (pid $pid)"
-  done
-
-  # Give them the chance to close threads and flush rollouts before forcing it.
-  for _ in $(seq "$TERM_WAIT_SECS"); do
-    still=$(pgrep -f "codex app-server --listen unix://$SOCK" || true)
-    [ -z "$still" ] && break
-    sleep 1
-  done
-  for pid in $(pgrep -f "codex app-server --listen unix://$SOCK" || true); do
-    kill -9 "$pid" 2>/dev/null && echo "force-killed codex app-server (pid $pid)"
-  done
-
-  # Then the children it spawned — the ait MCP servers and code-mode hosts that
-  # otherwise survive their parent and stay logged in to the network.
-  for pid in $children; do
-    kill -0 "$pid" 2>/dev/null || continue
-    kill "$pid" 2>/dev/null && echo "  stopping its child (pid $pid)"
-  done
-  sleep 1
-  for pid in $children; do
-    kill -0 "$pid" 2>/dev/null || continue
-    kill -9 "$pid" 2>/dev/null && echo "  force-killed its child (pid $pid)"
-  done
-fi
-
+# A pre-bind startup holds the lock. Stop its verified server first so its wrapper
+# can finish and release it. Taking the lock first would deadlock recovery.
+stop_codex_pids "$(owned_codex_pids)"
+mkdir -p "$(dirname "$SOCK")"
+exec 9>>"$SOCK.start-lock"
+while :; do
+  lock_status=0
+  /usr/bin/lockf -s -t 0 9 || lock_status=$?
+  [ "$lock_status" -ne 0 ] || break
+  [ "$lock_status" -eq 75 ] || exit "$lock_status"
+  # An opener is not necessarily the lock holder. Recheck service ownership;
+  # preserve a foreign startup and stop any own server that appeared meanwhile.
+  remaining="$(running_pid codex-appserver)"
+  stop_codex_pids "$(owned_codex_pids)"
+  sleep 0.1
+done
+# A start could win the lock after the first scan. Cleanup and another scan are
+# serialized with socket replacement, so no new owner's socket is unlinked.
+stop_codex_pids "$(owned_codex_pids)"
+remaining="$(running_pid codex-appserver)"
+if [ -n "$remaining" ]; then echo "error: Codex server still owns its socket" >&2; exit 1; fi
 rm -f "$SOCK"
-
-# The pidfile goes only when it names a process that is actually gone, and only
-# for the shared socket. Two callers depend on that restraint:
-#   - a wind-down of some other socket must not clear the shared server's file;
-#   - bin/codex-session.sh backgrounds bin/run-codex-appserver.sh and writes the
-#     new pid AFTERWARDS, so by the time this runs (from inside that wrapper,
-#     before it execs) the file may already name the incoming server. Deleting
-#     it there would make the next session think nothing was running and start
-#     yet another.
-if [ "$SOCK" = "$DEFAULT_SOCK" ] && [ -f "$PIDFILE" ]; then
-  if ! kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-    rm -f "$PIDFILE"
-  fi
-fi
-exit 0
+if [ "$SOCK" = "$DEFAULT_SOCK" ]; then rm -f "$PIDFILE"; fi
+echo "codex app-server: stopped owned servers on $SOCK"

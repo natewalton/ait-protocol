@@ -1,31 +1,21 @@
 #!/bin/bash
 # Stops the four AIT services started by bin/start-all.sh.
 set -euo pipefail
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
-LOGS=/tmp
+REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
+LOGS="${AIT_LOG_DIR:-/tmp}"
+failed=0
 
 # The codex app-server first, and by socket rather than pidfile: more than one
 # can be running (see bin/stop-codex-appserver.sh), and the pidfile names only
 # the most recent. This also reaps the MCP children it spawned.
-"$REPO/bin/stop-codex-appserver.sh"
+"$REPO/bin/stop-codex-appserver.sh" || failed=1
 
 # shellcheck source=bin/lib-service-pids.sh
 . "$REPO/bin/lib-service-pids.sh"
 
 for name in plc pds appview; do
   pidfile="$LOGS/ait-$name.pid"
-  pid=""
-  if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
-    pid="$(cat "$pidfile")"
-  else
-    # No usable pidfile. Ask the port instead of assuming nothing is running —
-    # assuming was how orphaned services survived a "successful" stop-all, still
-    # holding their ports and still on the network.
-    pid="$(running_pid "$name")"
-    if [ -n "$pid" ]; then
-      echo "$name has no pidfile; found it on its port (pid $pid)"
-    fi
-  fi
+  if ! pid="$(running_pid "$name")"; then failed=1; continue; fi
 
   if [ -z "$pid" ]; then
     echo "$name not running"
@@ -33,14 +23,15 @@ for name in plc pds appview; do
     continue
   fi
 
+  service_owns_pid "$name" "$pid" || { echo "error: $name owner changed before stop" >&2; failed=1; continue; }
   kill "$pid" 2>/dev/null || true
-  # Wait for the port to come free, then force it. A service that keeps its port
-  # after a "stop" is the failure this whole path exists to prevent.
+  # Allow graceful process exit, then reverify identity before escalation.
   for _ in 1 2 3 4 5; do
     if ! kill -0 "$pid" 2>/dev/null; then break; fi
     sleep 1
   done
   if kill -0 "$pid" 2>/dev/null; then
+    service_owns_pid "$name" "$pid" || { echo "error: $name owner changed before escalation" >&2; failed=1; continue; }
     kill -9 "$pid" 2>/dev/null || true
     echo "force-killed $name (pid $pid)"
   else
@@ -48,3 +39,4 @@ for name in plc pds appview; do
   fi
   rm -f "$pidfile"
 done
+exit "$failed"

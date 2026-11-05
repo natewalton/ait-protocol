@@ -719,9 +719,24 @@ esac
 if [ -n "$name" ]; then
   [ -f "$AIT_START_STATE/$name" ] && cat "$AIT_START_STATE/$name"
 elif [[ "$*" = *"-d cwd"* ]]; then
-  echo "n$AIT_START_REPO"
+  for service in plc pds appview; do
+    if [ -f "$AIT_START_STATE/$service" ] && [[ "$*" = *"-p $(cat "$AIT_START_STATE/$service") "* ]]; then
+      echo "n$AIT_START_REPO/$service"; exit 0
+    fi
+  done
 fi
 EOF
+cat > "$start_fixture/shim/ps" <<'EOF'
+#!/bin/bash
+for service in plc pds appview; do
+  if [ -f "$AIT_START_STATE/$service" ] && [ "$2" = "$(cat "$AIT_START_STATE/$service")" ]; then
+    if [ "$service" = appview ]; then echo 'node --enable-source-maps dist/server.js'; else echo 'node launcher.js'; fi
+    exit 0
+  fi
+done
+exec /bin/ps "$@"
+EOF
+chmod +x "$start_fixture/shim/ps"
 for wrapper in plc pds appview; do
   cat > "$start_fixture/bin/run-$wrapper.sh" <<EOF
 #!/bin/bash
@@ -742,7 +757,7 @@ chmod +x "$start_fixture/shim/curl" "$start_fixture/shim/lsof"
 export PATH="$start_fixture/shim:/usr/bin:/bin"
 export AIT_START_STATE="$start_state"
 export AIT_START_WRAPPER_PID_DIR="$TMP_ROOT/start-wrapper-pids"
-export AIT_START_REPO="$(cd "$start_fixture" && pwd)"
+export AIT_START_REPO="$(cd "$start_fixture" && pwd -P)"
 export AIT_LOG_DIR="$start_logs"
 mkdir -p "$AIT_START_WRAPPER_PID_DIR"
 
@@ -870,12 +885,32 @@ esac
 if [ -n "$name" ]; then
   [ -f "$AIT_START_STATE/$name" ] && cat "$AIT_START_STATE/$name"
 elif [[ "$*" = *"-d cwd"* ]]; then
-  echo "n$AIT_START_REPO"
+  for service in plc pds appview; do
+    if [ -f "$AIT_START_STATE/$service" ] && [[ "$*" = *"-p $(cat "$AIT_START_STATE/$service") "* ]]; then
+      echo "n$AIT_START_REPO/$service"; exit 0
+    fi
+  done
 elif [[ "$*" = *"$AIT_CODEX_SHARED_SOCKET"* ]] && [ -n "${AIT_CODEX_OWNER_PID:-}" ]; then
   echo "$AIT_CODEX_OWNER_PID"
 elif [[ "$*" = *"$AIT_CODEX_SHARED_SOCKET"* ]] && [ -f "$AIT_START_WRAPPER_PID_DIR/codex-socket-owner" ]; then
   cat "$AIT_START_WRAPPER_PID_DIR/codex-socket-owner"
 fi
+EOF
+cat > "$codex_start_fixture/shim/ps" <<'EOF'
+#!/bin/bash
+for service in plc pds appview; do
+  if [ -f "$AIT_START_STATE/$service" ] && [ "$2" = "$(cat "$AIT_START_STATE/$service")" ]; then
+    if [ "$service" = appview ]; then echo 'node dist/server.js'; else echo 'node launcher.js'; fi
+    exit 0
+  fi
+done
+if [ "$2" = "${AIT_CODEX_OWNER_PID:-}" ] ||
+   { [ -f "$AIT_START_WRAPPER_PID_DIR/codex-appserver" ] && [ "$2" = "$(cat "$AIT_START_WRAPPER_PID_DIR/codex-appserver")" ]; } ||
+   { [ -f "$AIT_START_WRAPPER_PID_DIR/codex-socket-owner" ] && [ "$2" = "$(cat "$AIT_START_WRAPPER_PID_DIR/codex-socket-owner")" ]; }; then
+  echo "codex app-server --listen unix://$AIT_CODEX_SHARED_SOCKET -c mcp_servers.ait.args=[\"$AIT_START_REPO/mcp/dist/server.js\"]"
+  exit 0
+fi
+exec /bin/ps "$@"
 EOF
 cat > "$codex_start_fixture/shim/pgrep" <<'EOF'
 #!/bin/bash
@@ -928,7 +963,7 @@ chmod +x "$codex_start_fixture/shim/"* "$codex_start_fixture/bin/run-codex-appse
 export PATH="$codex_start_fixture/shim:/usr/bin:/bin"
 export AIT_START_STATE="$codex_start_state"
 export AIT_START_WRAPPER_PID_DIR="$codex_start_wrapper_pids"
-export AIT_START_REPO="$(cd "$codex_start_fixture" && pwd)"
+export AIT_START_REPO="$(cd "$codex_start_fixture" && pwd -P)"
 export AIT_CODEX_SHARED_SOCKET="$TMP_ROOT/codex.sock"
 export AIT_CODEX_PROTOCOL_READY="$TMP_ROOT/codex.protocol-ready"
 export AIT_LOG_DIR="$codex_start_logs"
@@ -958,8 +993,8 @@ start_codex_fixture() {
   while [ ! -s "$codex_start_wrapper_pids/codex-appserver" ]; do sleep 0.1; done
 }
 seed_codex_core_state() {
-  local service
-  for service in plc pds appview; do printf '%s' "$$" > "$codex_start_state/$service"; done
+  local service pid=101
+  for service in plc pds appview; do printf '%s' "$pid" > "$codex_start_state/$service"; pid=$((pid + 1)); done
 }
 
 seed_codex_core_state
@@ -973,7 +1008,7 @@ pidfile_output="$("$codex_start_fixture/bin/start-all.sh" 2>&1)"
 pidfile_status=$?
 set -e
 [ "$pidfile_status" -eq 0 ] || fail "Codex pre-bind adoption failed: $pidfile_output"
-assert_contains "$pidfile_output" "codex-appserver already running (pid $test_decoy_pid, adopted — discovered before socket bind); waiting for socket"
+assert_contains "$pidfile_output" "codex-appserver already running (pid $test_codex_pid, adopted — discovered before socket bind); waiting for socket"
 assert_contains "$pidfile_output" "waiting for codex-appserver socket"
 socket_owner_pid="$(cat "$codex_start_wrapper_pids/codex-socket-owner")"
 assert_contains "$pidfile_output" "codex-appserver ready (pid $socket_owner_pid)"
@@ -1118,7 +1153,9 @@ pass "probe module-load failure reports a build problem without condemning the s
 lifecycle="$TMP_ROOT/codex-session-lifecycle"
 mkdir -p "$lifecycle/bin" "$lifecycle/mcp/dist/codex" "$lifecycle/shim" \
   "$lifecycle/logs" "$lifecycle/artifacts" "$lifecycle-wrapper-pids"
+lifecycle="$(cd "$lifecycle" && pwd -P)"
 cp "$REPO/bin/codex-session.sh" "$lifecycle/bin/codex-session.sh"
+cp "$REPO/bin/lib-service-pids.sh" "$lifecycle/bin/lib-service-pids.sh"
 chmod +x "$lifecycle/bin/codex-session.sh"
 : > "$lifecycle/mcp/dist/server.js"
 : > "$lifecycle/mcp/dist/codex/tuiRelay.js"
@@ -1143,6 +1180,12 @@ EOF
 cat > "$lifecycle/shim/codex" <<'EOF'
 #!/bin/bash
 printf '%s\n' "$*" > "$AIT_TUI_CAPTURE"
+if [ "${AIT_TEST_TERMINAL:-}" = 1 ]; then
+  stty -echo -icanon min 1 time 0
+  printf '\033[?1003h\033[?1006hTERMINAL-READY\n'
+  dd bs=1 count=1 of=/dev/null 2>/dev/null
+  exit 7
+fi
 exit 0
 EOF
 chmod +x "$lifecycle/shim/node" "$lifecycle/shim/codex" "$lifecycle/shim/sleep"
@@ -1161,6 +1204,76 @@ export AIT_LOG_DIR="$lifecycle/logs"
 export AIT_DRIVER_PID_FILE="$lifecycle/driver.pid"
 export AIT_FAKE_SHARED_SOCKET="$lifecycle/shared.sock"
 export AIT_TUI_CAPTURE="$lifecycle/tui.args"
+cat > "$lifecycle/shim/pgrep" <<'EOF'
+#!/bin/bash
+printf '%s\n' "$AIT_TEST_SHARED_PID"
+EOF
+cat > "$lifecycle/shim/ps" <<'EOF'
+#!/bin/bash
+echo "codex app-server --listen unix://$AIT_CODEX_SHARED_SOCKET -c mcp_servers.ait.args=[\"$AIT_LIFECYCLE_REPO/mcp/dist/server.js\"]"
+EOF
+chmod +x "$lifecycle/shim/pgrep" "$lifecycle/shim/ps"
+export AIT_CODEX_SHARED_SOCKET="$lifecycle/shared.sock" AIT_LIFECYCLE_REPO="$lifecycle"
+export AIT_TEST_SHARED_PID="$shared_fixture_pid"
+for cached in absent 99999999 "$second_session_pid" "$shared_fixture_pid"; do
+  if [ "$cached" = absent ]; then rm -f "$lifecycle/logs/ait-codex-appserver.pid"
+  else printf '%s\n' "$cached" > "$lifecycle/logs/ait-codex-appserver.pid"; fi
+  PATH="$lifecycle/shim:/usr/bin:/bin" "$lifecycle/bin/codex-session.sh" \
+    --resume 11111111-1111-4111-8111-111111111111 >/dev/null 2>&1
+  assert_same "$shared_fixture_pid" "$(cat "$lifecycle/logs/ait-codex-appserver.pid")"
+  process_alive "$shared_fixture_pid" || fail 'resume stopped the shared server'
+  process_alive "$second_session_pid" || fail 'resume stopped the sibling session'
+done
+pass "Codex resume repairs absent, dead and unrelated PID caches without disturbing siblings"
+export AIT_TERMINAL_LAUNCHER="$lifecycle/bin/codex-session.sh"
+AIT_TEST_TERMINAL=1 PATH="$lifecycle/shim:/usr/bin:/bin" /usr/bin/expect <<'EOF'
+set timeout 15
+log_user 0
+spawn /bin/bash -c {
+  before=$(stty -g)
+  "$AIT_TERMINAL_LAUNCHER"
+  result=$?
+  after=$(stty -g)
+  [ "$before" = "$after" ] || exit 41
+  [ "$result" = 7 ] || exit 42
+  stty -echo -icanon min 0 time 1
+  pending=$(dd bs=128 count=1 2>/dev/null)
+  stty "$before"
+  [ -z "$pending" ] || exit 43
+  echo TERMINAL-RESTORED
+}
+expect {
+  TERMINAL-READY { send -- "X\033\[<35;34;16M" }
+  timeout { exit 1 }
+  eof { exit 1 }
+}
+expect {
+  -exact "\033\[?1003l" {}
+  timeout { exit 1 }
+  eof { exit 1 }
+}
+expect {
+  TERMINAL-RESTORED {}
+  timeout { exit 1 }
+  eof { exit 1 }
+}
+expect eof
+set result [wait]
+exit [lindex $result 3]
+EOF
+unset AIT_TERMINAL_LAUNCHER
+pass "failed Codex TUI restores terminal modes, disables mouse tracking and flushes queued reports"
+# Model the saved state remaining after the controlling terminal disappears.
+# This non-PTY child has no /dev/tty; cleanup must still reap its driver.
+sed 's/^terminal_state=""$/terminal_state="terminal-was-closed"/' \
+  "$lifecycle/bin/codex-session.sh" > "$lifecycle/bin/closed-terminal.sh"
+chmod +x "$lifecycle/bin/closed-terminal.sh"
+PATH="$lifecycle/shim:/usr/bin:/bin" "$lifecycle/bin/closed-terminal.sh" \
+  </dev/null >"$lifecycle/closed-terminal.output" 2>&1
+driver_fixture_pid="$(cat "$lifecycle/driver.pid")"
+process_alive "$driver_fixture_pid" && fail "closed terminal left the driver running"
+assert_contains "$(cat "$lifecycle/closed-terminal.output")" 'session stopped'
+pass "unavailable controlling terminal cannot abort session-driver cleanup"
 PATH="$lifecycle/shim:/usr/bin:/bin" "$lifecycle/bin/codex-session.sh" --resume 11111111-1111-4111-8111-111111111111 >/dev/null 2>&1
 AIT_DRIVER_WAIT_FOR_MCP=1 AIT_FAST_SLEEP=1 PATH="$lifecycle/shim:/usr/bin:/bin" \
   "$lifecycle/bin/codex-session.sh" --resume 11111111-1111-4111-8111-111111111111 \

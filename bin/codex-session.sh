@@ -75,10 +75,15 @@ fi
 # Ensure the SHARED codex app-server is running (start once; leave it running for
 # other sessions). bin/start-all.sh / launchd may already have started it.
 appserver_pidfile="${AIT_LOG_DIR:-/tmp}/ait-codex-appserver.pid"
-if ! { [ -f "$appserver_pidfile" ] && kill -0 "$(cat "$appserver_pidfile")" 2>/dev/null; }; then
+mkdir -p "$(dirname "$appserver_pidfile")"
+source "$repo_root/bin/lib-service-pids.sh"
+shared_pid="$(running_pid codex-appserver)"
+if [ -n "$shared_pid" ]; then
+  printf '%s\n' "$shared_pid" > "$appserver_pidfile"
+else
   echo "codex-session: starting shared codex app-server…" >&2
   nohup "$repo_root/bin/run-codex-appserver.sh" \
-    >/tmp/ait-codex-appserver.log 2>/tmp/ait-codex-appserver.err &
+    >"${AIT_LOG_DIR:-/tmp}/ait-codex-appserver.log" 2>"${AIT_LOG_DIR:-/tmp}/ait-codex-appserver.err" &
   echo "$!" > "$appserver_pidfile"
   disown 2>/dev/null || true
 fi
@@ -88,6 +93,24 @@ log_file="$(mktemp -t ait-codex-log)"
 relay_pid=""
 relay_dir=""
 relay_sock=""
+terminal_state=""
+
+restore_terminal() {
+  [ -n "$terminal_state" ] || return 0
+  # Disable mouse tracking before returning to the shell. Queued reports are
+  # terminal input, not commands the operator typed.
+  { printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1015l' > /dev/tty; } 2>/dev/null || true
+  { stty "$terminal_state" < /dev/tty; } 2>/dev/null || true
+  { /usr/bin/perl -MPOSIX -e 'POSIX::tcflush(0, POSIX::TCIFLUSH)' < /dev/tty; } 2>/dev/null || true
+}
+
+attach_tui() {
+  local result=0
+  if [ -t 0 ]; then terminal_state="$(stty -g < /dev/tty)"; fi
+  codex resume "$tid" --remote "$1" || result=$?
+  restore_terminal
+  return "$result"
+}
 
 resume_requested=0
 for arg in "$@"; do
@@ -105,6 +128,7 @@ env AIT_NOTIFICATION_MODE=codex AIT_CODEX_SOCKET_FILE="$sock_file" \
 driver_pid=$!
 
 cleanup() {
+  restore_terminal
   if [ -n "$relay_pid" ]; then
     kill "$relay_pid" 2>/dev/null || true
     wait "$relay_pid" 2>/dev/null || true
@@ -146,10 +170,12 @@ done
 
 # Show the driver's startup output (session id, thread, join/register), then hand
 # the terminal to the TUI resumed into that exact thread on the shared server.
+shared_pid="$(running_pid codex-appserver)"
+[ -z "$shared_pid" ] || printf '%s\n' "$shared_pid" > "$appserver_pidfile"
 cat "$log_file" >&2
 echo "codex-session: attaching TUI — exit it (or Ctrl-C) to stop this session." >&2
 attach_status=0
-codex resume "$tid" --remote "unix://$sock" || attach_status=$?
+attach_tui "unix://$sock" || attach_status=$?
 
 # Codex 0.147.0's remote TUI asks for the entire transcript in one `thread/read`
 # websocket message during resume. Very long sessions can exceed the TUI's own
@@ -185,7 +211,7 @@ if [ "$attach_status" -ne 0 ] && [ "$resume_requested" -eq 1 ]; then
     relay_ticks=$((relay_ticks + 1))
   done
 
-  codex resume "$tid" --remote "unix://$relay_sock"
+  attach_tui "unix://$relay_sock"
 elif [ "$attach_status" -ne 0 ]; then
   exit "$attach_status"
 fi

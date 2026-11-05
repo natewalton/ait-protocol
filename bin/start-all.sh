@@ -6,7 +6,7 @@
 # requires granting bash Full Disk Access if the project lives under ~/Desktop.
 
 set -euo pipefail
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
 LOGS="${AIT_LOG_DIR:-/tmp}"
 mkdir -p "$LOGS"
 
@@ -79,10 +79,14 @@ wait_for_codex() {
     fi
   fi
   while :; do
+    # A concurrent launcher may have won and our wrapper may already have exited.
+    # Follow the verified service, not the lifetime of the losing wrapper.
+    owner="$(running_pid codex-appserver)" || return 1
+    [ -z "$owner" ] || pid="$owner"
     probe_status=0
     codex_protocol_ready || probe_status=$?
     if [ "$probe_status" -eq 0 ]; then
-      owner="$(running_pid codex-appserver)"
+      owner="$(running_pid codex-appserver)" || return 1
       [ -n "$owner" ] && pid="$owner"
       echo "$pid" > "$pidfile"
       echo "codex-appserver ready (pid $pid)"
@@ -130,21 +134,12 @@ wait_for_codex() {
   done
 }
 
-# Starting a second copy of a service that is already up is never harmless. A
-# port service dies on EADDRINUSE, leaving a pidfile that names a process which
-# is already gone. The codex app-server is worse: bin/run-codex-appserver.sh
-# stops whatever holds the socket first, so a second start would kill the live
-# server and every session MCP child under it. So: look for a real instance, and
-# adopt it into the pidfile rather than starting anything.
+# Discover before starting; PID caches never authorize a duplicate launch.
+# The Codex launcher also protects its socket independently of this caller.
 start_one() {
   local name=$1 wrapper=$2
   local pidfile="$LOGS/ait-$name.pid" observable live
-  if [ "$name" != codex-appserver ] && [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
-    echo "$name already running (pid $(cat "$pidfile"))"
-    return
-  fi
-
-  live="$(running_pid "$name")"
+  live="$(running_pid "$name")" || return 1
   if [ -n "$live" ]; then
     echo "$live" > "$pidfile"
     if [ "$name" = codex-appserver ]; then
@@ -155,10 +150,11 @@ start_one() {
       fi
       return
     fi
-    echo "$name already running (pid $live, adopted — it had no pidfile)"
+    echo "$name already running (pid $live, adopted existing service)"
     return
   fi
 
+  rm -f "$pidfile"
   nohup "$REPO/bin/$wrapper" > "$LOGS/ait-$name.log" 2> "$LOGS/ait-$name.err" &
   local pid=$!
   STARTING_NAME="$name"
@@ -175,7 +171,7 @@ start_one() {
   # Wait for the service's process/resource event before claiming success. The
   # sleep is only a progress cadence; there is no elapsed-time failure verdict.
   while :; do
-    live="$(service_event_pid "$name")"
+    live="$(service_event_pid "$name")" || return 1
     if [ -n "$live" ]; then break; fi
     if ! kill -0 "$pid" 2>/dev/null; then
       echo "$name wrapper exited before binding its listener/socket; see $LOGS/ait-$name.err" >&2
@@ -203,11 +199,11 @@ start_one() {
   STARTING_PIDFILE=""
 }
 
-start_one plc     run-plc.sh
-start_one pds     run-pds.sh
-start_one appview run-appview.sh
+start_one plc     run-plc.sh || FAILED="$FAILED plc"
+start_one pds     run-pds.sh || FAILED="$FAILED pds"
+start_one appview run-appview.sh || FAILED="$FAILED appview"
 if command -v codex >/dev/null 2>&1; then
-  start_one codex-appserver run-codex-appserver.sh
+  start_one codex-appserver run-codex-appserver.sh || FAILED="$FAILED codex-appserver"
 else
   echo "codex-appserver skipped (not installed)"
 fi

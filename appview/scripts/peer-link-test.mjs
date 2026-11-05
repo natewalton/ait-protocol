@@ -278,6 +278,21 @@ async function policyRefusals(local) {
 
 
 
+async function defaultAssistance(s) {
+  const serverFile = path.join(repo, 'appview/dist/server.js')
+  const hook = path.join(root, 'default-relay-hook.mjs')
+  const replacement = `import assert from 'node:assert/strict';export const stateDirectory=()=>'';export async function startPeerNetwork(options){assert.equal(options.assistanceRelay,'https://use1-1.relay.n0.iroh.link./');throw Error('DEFAULT_ASSISTANCE_VERIFIED')}`
+  fs.writeFileSync(hook, `import {registerHooks} from 'node:module';registerHooks({resolve(specifier,context,next){if(specifier==='./peerNetwork.mjs'&&context.parentURL===${JSON.stringify(pathToFileURL(serverFile).href)})return {url:${JSON.stringify('data:text/javascript,' + encodeURIComponent(replacement))},shortCircuit:true};return next(specifier,context)}})`)
+  const env = { ...s.launchEnv, APPVIEW_DB_PATH: path.join(root, 'default-relay.sqlite'), NODE_OPTIONS: `--import=${hook}` }
+  delete env.APPVIEW_PEER_RELAY
+  const child = spawn('sandbox-exec', ['-f', path.join(repo,'appview/scripts/peer-loopback.sb'), '/bin/bash', path.join(s.repo,'bin/run-appview.sh')], { cwd: s.repo, env, stdio:['ignore','pipe','pipe'] })
+  let output = ''
+  child.stdout.on('data', c => output += c); child.stderr.on('data', c => output += c)
+  assert.equal((await within(once(child,'exit'),'unset relay default'))[0], 1, output)
+  assert.match(output, /DEFAULT_ASSISTANCE_VERIFIED/)
+  report('real launch wrapper selects explicit n0 assistance when relay env is unset; captured before network construction')
+}
+
 async function connectBound() {
   const { startPeerNetwork } = await import('../dist/peerNetwork.mjs')
   const { IdResolver } = await import('@atproto/identity')
@@ -339,6 +354,7 @@ try {
     assert.equal(hash(Buffer.from((await s.agent.com.atproto.sync.getRepo({ did: s.account.did })).data)), s.carHash)
     await startAppview(s)
   }
+  await defaultAssistance(a)
   if (process.argv.includes('--server-policy')) {
     a.peerOptions={bindAddress:`127.0.0.1:${a.appviewPort}`};a.proxyPort=await freePort()
     await policyRefusals(a)

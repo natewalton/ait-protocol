@@ -1,6 +1,6 @@
 # Link with connection assistance and direct data
 
-Status: experiment implementation authorized by Nate on 2026-11-04 after independent spec GO; isolated candidate built and awaiting independent code review; no live deployment, public release or upstream posting authorized.
+Status: isolated experiment independently reviewed; published fork package reviewed. Development-branch adoption and two-Mac test preparation authorized by Nate on 2026-11-05; live test pending. No live installation or stable AIT release in this slice.
 Date: 2026-11-04.
 
 ## Why
@@ -416,3 +416,67 @@ Executed author evidence, 2026-11-04 (independent code verdict still pending):
 - This establishes the tested local transport policy and AIT integration. It is
   not a cross-internet connectivity-rate result, optimized release-binary proof,
   production packaging validation or release authorization.
+
+## Development-branch adoption, 2026-11-05
+
+Nate authorized preparing the real two-Mac test after package publication. This
+section supersedes the fixture-only assistance and no-packaging limits above for
+this adoption slice. The fork remains an independent library with no AIT code.
+
+Rebase the peer branch onto released v0.1.42 (`e78e012`) and preserve its service
+ownership and terminal cleanup. AppView installs the published
+`@natewalton/iroh-direct` 0.1.0-experimental.1 tarball by exact URL with npm lockfile
+integrity. Reviewed tarball SHA-256 is
+`bcd347b7b80c9decebd5336d9d1d7de52b3acc9b67f7d9c49f98c0d4a6e6b30a`.
+This branch requires Apple Silicon and Node >=24; the installer enforces the Node
+floor before provisioning. No native fallback or source-build substitution.
+
+The real AppView entrypoint defaults to the official Iroh 1.4.1 NA-east public
+development relay `https://use1-1.relay.n0.iroh.link./`. `APPVIEW_PEER_RELAY` can
+select an explicitly configured relay; empty disables assistance. The existing
+`presetMinimal`, native effective-policy assertion, per-peer approval and
+source-bound clients remain. Public discovery is disabled. The relay learns
+endpoint IDs, IPs and traffic metadata, but native policy prohibits application
+STREAM/DATAGRAM payload on it. No arbitrary-NAT connectivity guarantee.
+
+Adoption scope: **15 files**. AppView dependency/lock and peer imports; real-entrypoint relay default
+and env example; Link disclosure; installer Node floor and its existing test;
+existing journey fixture package references; README and second-Mac guide.
+No cryptography, scheduler, fork binary, stable release, live restart, identity
+reset, key rotation or data deletion is authorized.
+
+Acceptance: fresh locked dependency installation and AppView/MCP builds; existing
+peer feed/projection/mentions/picker and CLI suites; full owned two-install journey
+with official local relay and UDP proxies against the exact packaged binary,
+including relay-only timeout/cancel, restore, authenticated post/reply/notification,
+unlink and stock/policy-off refusal. The real launch wrapper remains exercised;
+its fixture explicitly sets empty assistance to avoid public network traffic.
+Package-native strict and default controls separately verify no policy drift.
+An independent reviewer checks the frozen integration and instructions before
+the branch is pushed. Both humans then upgrade their own installations during a
+planned pause and run the cross-internet conversation. Live success is not claimed
+until that test actually completes.
+
+Official relay/operator reference: https://github.com/n0-computer/iroh/blob/v1.4.1/iroh/src/defaults.rs
+and https://github.com/n0-computer/docs.iroh.computer/blob/main/add-a-relay.mdx .
+Public relays are for development/testing, not a production availability promise.
+
+Adoption paths: `README.md`, `appview/.env.example`, `appview/package.json`,
+`appview/package-lock.json`, `appview/src/peerNetwork.mjs`,
+`appview/src/peerState.mjs`, `appview/src/peerPrepare.mjs`,
+`appview/src/peerCli.mjs`, `appview/src/server.ts`,
+`appview/scripts/peer-link-test.mjs`, `bin/install.sh`, `bin/ait-test.sh`,
+`docs/private-peer-second-mac-test.md`, this spec, and
+`specs/private-peer-communication.md`.
+
+Executed adoption validation (Node 25.7.0, isolated checkout): all four `npm ci`
+installs and AppView/MCP builds pass; feed 12/12, projection 17/17, mentions and
+picker pass; CLI, updater 28 cases, v0.1.42 service-ownership suite and advisory
+gate pass. Full owned relay-assisted journey passes 10/10 using the installed
+release addon; stock and policy-off controls preserve local reads/writes.
+Packaged strict and default transport controls both pass. The npm SHA-512
+integrity matches the reviewed SHA-256 tarball; installed addon SHA-256 is
+`ba3b28c7645ec88d6734458e68ace70ee45a70cba6edaae89e297008aff96515`.
+A disposable strict endpoint reached the configured public development relay,
+advertised that same URL and closed without opening an application stream.
+No cross-internet peer conversation or live AIT upgrade has run in this slice.

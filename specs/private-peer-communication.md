@@ -1,9 +1,9 @@
 # Link independent AIT installations privately
 
-Status: Approved by Nate for isolated no-relay implementation, not live deployment.
-Date: 2026-10-30
+Status: reviewed private-peer implementation; Nate authorized packaged direct-payload fork adoption and two-Mac test preparation on 2026-11-05. Live test pending.
+Date: 2026-11-05
 Original source baseline for the citations below: 98390e9, v0.1.39.
-Branch rebased onto d7a8652, v0.1.40, including its security fixes and advisory gate.
+Current development branch is rebased onto e78e012, v0.1.42, retaining its security, service-ownership and terminal fixes.
 Original reviewed component proofs: cd8fa48.
 
 ## Why
@@ -23,14 +23,21 @@ session callbacks deliver notifications. Reuse the independently reviewed
 adapter and source-bound official resolver from `experiments/private-peer`.
 No parallel identity directory, replication store or new remote tools.
 
-Start with **no relays or public discovery**, including connection assistance.
-Use the minimal upstream preset and disabled relay transport. Exchange direct
-dialing information only inside invitations and approved links. If no direct
-connection exists, report Unavailable; never send application data via a relay.
-Use the configured AppView port for UDP as well as its loopback-only TCP API,
-so approved addresses survive normal restarts without new configuration/state.
-Do not promise arbitrary internet reachability or add router changes. Live
-testing will establish whether assistance is needed, with further user approval.
+Use the independent, published `@natewalton/iroh-direct` experimental package
+with its native direct-only application policy enabled and confirmed. The minimal
+preset keeps public discovery off. Explicit n0 development relay assistance can
+carry transport handshake/probing/control, never application payload, including
+retransmissions. The real entrypoint defaults to the official NA-east development
+relay; empty `APPVIEW_PEER_RELAY` disables assistance. Exchange addresses only in
+invitations and approved links. Native `applicationDataAllowed` is the sole
+transport-readiness fact consumed by AIT. If no direct path exists, report
+Unavailable; Link times out after 30 seconds and Ctrl-C cancels. No arbitrary
+internet reachability guarantee. The independent package, artifact pins and
+controlled loss/recovery tests are in
+[the assisted-connections spec](direct-data-with-assisted-connections.md).
+Use the configured AppView port for UDP as well as its loopback-only TCP API.
+Relay operators can observe endpoint and connection metadata. This public relay
+is for development/testing, not a production availability commitment.
 
 `ait link` prints the scope and a short-lived, one-use invitation to send through
 an already trusted channel. `ait link <invitation>` shows the machine/key and
@@ -111,7 +118,9 @@ shutdown journal or disruption recovery machinery.
 
 ## Files touched
 
-The implementation boundary is **54 files**, including this spec:
+The original peer implementation boundary was **54 files**, including this spec.
+The packaged-assistance adoption adds the paths counted in the linked assisted-
+connections spec and updates the second-Mac guide. Original responsibilities:
 
 - `ait`, `README.md`: Link/Unlink and operator instructions.
 - `bin/install.sh`, `bin/update.sh`, `bin/ait-test.sh`, `bin/ait-update-test.sh`: preparation/lifecycle and
@@ -155,8 +164,9 @@ count is a boundary, not a reason to add unused mechanisms.
 
 ## Out of scope
 
-- Relays, assistance services, public discovery/federation, domain registration,
-  public handle verification or VPNs. The owned suffix is a private namespace.
+- Relayed application payload, production relay operation, public discovery/
+  federation, domain registration, public handle verification or VPNs. Explicit
+  development connection assistance is in scope; the owned suffix stays private.
 - Identity replacement, re-authoring, a shared/mirrored PLC or second PDS.
 - Per-message ACLs, third-party deletion or guarantees against deliberate copying.
 - A general multi-instance installer, new resolver/network framework or bespoke retries.
@@ -164,11 +174,9 @@ count is a boundary, not a reason to add unused mechanisms.
   provisioning in this build. The user requested a live test afterward.
 - Intel packaging: the pinned Iroh binding has no macOS x64 artifact. This
   candidate is for isolated arm64 validation, not a general macOS release.
-  The pinned identity/fetch dependencies require Node >=22, and Undici 8.12.3
-  declares >=22.19.0 (`appview/node_modules/@atproto/identity/package.json:30`,
-  `appview/node_modules/undici/package.json:138`, inspected 2026-10-30).
-  Validation uses 25.7.0; reconciling the old public installer floor is a release
-  prerequisite, not a claim that this candidate supports Node 20.
+  The published native package requires Node >=24; this branch's installer
+  preflight enforces that floor. All four locked installs and both builds must
+  run during an upgrade, not just an AppView dist swap.
 
 ## Tests
 
@@ -202,9 +210,11 @@ from loopback or real harness notification receipt from a protocol callback.
 ## Sequencing or rollout
 
 Implement and independently review one complete candidate. Keep it uninstalled.
-Then Nate supplies/authorizes the two actual machines for a direct-only live
-test, including current Claude/Codex sessions. No assumption of cross-internet
-success, subscription quota, public infrastructure or release authority.
+The reviewed branch is published for both operators to upgrade during a planned
+session pause using [the two-Mac guide](../docs/private-peer-second-mac-test.md).
+Then run Link and a real bidirectional harness conversation across their separate
+internet connections. Preparation does not restart either live installation.
+No cross-internet success, model quota or stable-release authority is assumed.
 
 ## What was rejected
 

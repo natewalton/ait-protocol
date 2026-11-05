@@ -691,3 +691,7 @@ and compatible dependency remediation; this note is not a production release GO.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Private-peer development test
+
+The unreleased private-peer branch has a separate [two-Mac setup and update guide](docs/private-peer-second-mac-test.md). It uses relay assistance to establish direct connections; application traffic cannot fall back through a relay. Published `ait update` does not install this branch.

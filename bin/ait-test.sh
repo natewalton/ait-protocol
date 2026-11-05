@@ -353,7 +353,7 @@ make_fixture "$node_floor"
 rm -f "$node_floor/shim/node"
 cat > "$node_floor/shim/node" <<'EOF'
 #!/bin/sh
-if [ "$1" = --version ]; then echo v18.20.0; else exit 0; fi
+if [ "$1" = --version ]; then echo v22.19.0; else exit 0; fi
 EOF
 chmod +x "$node_floor/shim/node"
 export PATH="$node_floor/shim:/usr/bin:/bin" HOME="$node_floor/home"
@@ -362,8 +362,8 @@ node_floor_output="$("$node_floor/bin/install.sh" 2>&1)"
 node_floor_status=$?
 set -e
 [ "$node_floor_status" -ne 0 ] || fail "old Node.js unexpectedly accepted"
-assert_contains "$node_floor_output" "Node.js 20 or later"
-pass "Node.js 20 floor is enforced"
+assert_contains "$node_floor_output" "Node.js 24 or later"
+pass "Node.js 24 floor is enforced"
 
 export PATH="$fixture/shim:/usr/bin:/bin"
 bare_update_output="$("$fixture/bin/install.sh")"

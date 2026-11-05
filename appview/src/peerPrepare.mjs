@@ -7,7 +7,7 @@ import Database from 'better-sqlite3'
 import { parse } from 'dotenv'
 import { Secp256k1Keypair } from '@atproto/crypto'
 import { Client, validateOperationLog } from '@did-plc/lib'
-import { SecretKey } from '@number0/iroh'
+import { SecretKey } from '@natewalton/iroh-direct'
 import { base32 } from 'multiformats/bases/base32'
 import { loadState, writePrivate } from './peerState.mjs'
 

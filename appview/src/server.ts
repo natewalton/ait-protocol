@@ -73,7 +73,9 @@ export async function main(peerOptions: { assistanceRelay?: string; bindAddress?
       // Reuse AppView's configured port for UDP, so approved direct addresses
       // survive an ordinary restart without a discovery service or new setting.
       bindAddress: peerOptions.bindAddress ?? `0.0.0.0:${PORT}`,
-      assistanceRelay: peerOptions.assistanceRelay,
+      // Explicit development relay, no discovery preset. Empty disables
+      // assistance for LAN-only operation and isolated wrapper tests.
+      assistanceRelay: peerOptions.assistanceRelay ?? (process.env.APPVIEW_PEER_RELAY ?? 'https://use1-1.relay.n0.iroh.link./'),
       directAddress: peerOptions.directAddress,
     })
   } catch (error) {

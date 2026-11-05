@@ -25,15 +25,14 @@ export function parseInvitation(text) {
   assert.equal(value.version, 1); assert(Number.isSafeInteger(value.expires) && value.expires > Date.now(), 'invitation expired')
   assert.match(value.secret, /^[a-f0-9]{64}$/)
   const address = EndpointTicket.fromString(value.ticket).endpointAddr()
-  assert.equal(address.relayUrl(), null, 'relays are disabled')
-  assert(address.directAddresses().length, 'invitation has no direct address')
+  assert(address.directAddresses().length || address.relayUrl(), 'invitation has no connection address')
   return { ...value, address }
 }
 function checkDirect(connection, expected) {
   assert.equal(connection.remoteId().toString(), expected, 'wrong machine key')
   // RelayMode.disabled is the transport policy. A just-accepted connection may
   // not have emitted a Selected path snapshot yet; that is not a relay path.
-  assert(connection.paths().every(p => !p.isRelay), 'relay path is forbidden')
+  // Payload eligibility is enforced by the confirmed native endpoint policy.
 }
 async function readJson(stream) {
   const chunks = []; let size = 0
@@ -69,7 +68,11 @@ async function bridge(socket, stream) {
 
 // AppView owns one machine endpoint and its private local command socket.
 export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localResolver, accountFile,
-  bindAddress = '0.0.0.0:0', name = os.hostname() }) {
+  bindAddress = '0.0.0.0:0', name = os.hostname(), assistanceRelay, directAddress }) {
+  const builder = Endpoint.builder(); presetMinimal(builder)
+  const policyError = 'Private peer networking unavailable: this Iroh build cannot confirm direct-only application data.'
+  assert.equal(typeof builder.directApplicationDataOnly, 'function', policyError)
+  builder.directApplicationDataOnly()
   const machine = loadState(directory), sources = new Map(), connections = new Set(), sockets = new Set(), tasks = new Set()
   const controlPath = path.join(directory, 'control.sock')
   if (fs.existsSync(controlPath)) {
@@ -85,12 +88,52 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
     } finally { probe.destroy() }
   }
   let stopping = false
-  const builder = Endpoint.builder(); presetMinimal(builder)
   builder.secretKey([...Buffer.from(machine.state.secret, 'hex')]); builder.alpns([CONTROL, DATA])
-  builder.bindAddr(bindAddress); builder.relayMode(RelayMode.disabled())
+  builder.bindAddr(bindAddress); builder.relayMode(assistanceRelay ? RelayMode.customFromUrls([]) : RelayMode.disabled())
   const endpoint = await builder.bind()
+  try {
+    assert.equal(endpoint.directApplicationDataOnly?.(), true, policyError)
+    if (assistanceRelay) await endpoint.insertRelay({ url: assistanceRelay })
+    if (directAddress) await endpoint.addExternalAddr(directAddress)
+  } catch (error) { await endpoint.close(); throw error }
+  const isDirect = connection => !connection.closeReason() &&
+    connection.paths().some(p => p.isSelected && p.isIp)
+  async function waitDirect(connection, signal) {
+    signal?.throwIfAborted()
+    if (isDirect(connection)) return
+    let watcher, aborted
+    try {
+      await new Promise((resolve, reject) => {
+        aborted = () => reject(signal.reason)
+        signal?.addEventListener('abort', aborted, { once: true })
+        watcher = connection.watchPaths((...args) => {
+          if (args.find(Array.isArray)?.some(p => p.isSelected && p.isIp)) resolve()
+        })
+        connection.closed().then(reason => reject(Error(reason)))
+        if (isDirect(connection)) resolve()
+        if (signal?.aborted) aborted()
+      })
+    } finally { signal?.removeEventListener('abort', aborted); await watcher?.stop() }
+  }
+  const allowAddress = address => {
+    assert(!address.relayUrl() || assistanceRelay === address.relayUrl(), 'unconfigured assistance relay')
+    assert(address.directAddresses().length || address.relayUrl(), 'no connection addresses')
+  }
   const track = task => { tasks.add(task); task.then(() => tasks.delete(task), error => { tasks.delete(task); if (!stopping) console.error('private peer:', error.message) }); return task }
   const socket = value => { sockets.add(value); value.on('error', () => {}); value.once('close', () => sockets.delete(value)); return value }
+  const rememberConnection = connection => {
+    connections.add(connection)
+    const changed = () => {
+      const id = connection.remoteId().toString()
+      if (machine.state.peers[id] && ![...connections].some(c => c.remoteId().toString() === id && isDirect(c))) {
+        console.log(`Private peer ${id}: Unavailable: direct connection lost; no relay fallback.`)
+      }
+    }
+    const watcher = connection.watchPathEvents((...args) => {
+      if (args.some(event => event?.kind === 'Closed' && event.remoteAddr && event.remoteAddr !== 'unknown' && !/^https?:/.test(event.remoteAddr))) changed()
+    })
+    track(connection.closed().then(() => watcher.stop()))
+  }
   const ownInfo = () => ({ ticket: EndpointTicket.fromAddr(endpoint.addr()).toString(), ca: machine.ca, name })
   const hosted = did => {
     if (!fs.existsSync(accountFile)) return false
@@ -177,16 +220,20 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
   async function attach(id) {
     const peer = machine.state.peers[id]
     const address = EndpointTicket.fromString(peer.ticket).endpointAddr()
-    assert.equal(address.id().toString(), id); assert.equal(address.relayUrl(), null)
+    assert.equal(address.id().toString(), id); allowAddress(address)
     const entry = net.createServer({ allowHalfOpen: true, pauseOnConnect: true }, value => track((async () => {
       socket(value); let connection
+      const disconnected = new AbortController()
+      const cancel = () => { disconnected.abort(Error('local peer request closed')); connection?.close(0n, []) }
+      value.once('close', cancel)
       try {
         assert(machine.state.peers[id], 'Unlinked')
-        connection = await endpoint.connect(address, DATA); connections.add(connection); checkDirect(connection, id)
+        connection = await endpoint.connect(address, DATA); rememberConnection(connection); checkDirect(connection, id)
+        await waitDirect(connection, disconnected.signal)
         assert(machine.state.peers[id], 'Unlinked')
         await bridge(value, await connection.openBi()); connection.close(0n, []); await connection.closed()
       } catch (error) { connection?.close(1n, []); value.destroy(); throw error }
-      finally { if (connection) connections.delete(connection); value.destroy() }
+      finally { value.off('close', cancel); if (connection) connections.delete(connection); value.destroy() }
     })()))
     entry.listen(0, '127.0.0.1'); await once(entry, 'listening')
     const client = createPeerClient({ hostname: peerHostname(address.id()), entryPort: entry.address().port,
@@ -208,7 +255,7 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
       track((async () => {
         let connection, value
         try {
-          connection = await (await incoming.accept()).connect(); connections.add(connection)
+          connection = await (await incoming.accept()).connect(); rememberConnection(connection)
           const id = connection.remoteId().toString(); checkDirect(connection, id)
           if (Buffer.from(connection.alpn()).equals(Buffer.from(CONTROL))) {
             const stream = await connection.acceptBi(), request = await readJson(stream)
@@ -239,12 +286,11 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
     assert(peer && typeof peer.ca === 'string' && peer.ca.length < 8192 && peer.ca.includes('BEGIN CERTIFICATE'))
     assert(typeof peer.name === 'string' && /^[\x20-\x7e]{1,80}$/.test(peer.name), 'invalid machine name')
     const address = EndpointTicket.fromString(peer.ticket).endpointAddr()
-    assert.equal(address.id().toString(), expectedId); assert.equal(address.relayUrl(), null)
-    assert(address.directAddresses().length, 'no direct addresses')
+    assert.equal(address.id().toString(), expectedId); allowAddress(address)
   }
-  async function command(op, body = {}) {
+  async function command(op, body = {}, signal) {
     if (op === 'status') return { id: machine.id, peers: Object.entries(machine.state.peers).map(([id, peer]) => ({
-      id, name: peer.name, state: [...connections].some(c => c.remoteId().toString() === id && !c.closeReason()) ? 'Linked' : 'Unavailable',
+      id, name: peer.name, state: [...connections].some(c => c.remoteId().toString() === id && isDirect(c)) ? 'Linked' : 'Unavailable',
     })) }
     if (op === 'invite') {
       const invitation = { version: 1, ticket: ownInfo().ticket, name, secret: randomBytes(32).toString('hex'), expires: Date.now() + 10 * 60 * 1000 }
@@ -255,25 +301,54 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
     assert.equal(op, 'link', 'unknown peer command')
     const invite = parseInvitation(body.invitation), id = invite.address.id().toString()
     assert.notEqual(id, machine.id, 'cannot link this machine to itself')
+    allowAddress(invite.address)
     let connection
-    try {
-      connection = await endpoint.connect(invite.address, CONTROL); connections.add(connection); checkDirect(connection, id)
+    const attempt = new AbortController()
+    const cancelled = () => attempt.abort(Error('Link cancelled; no relay fallback.'))
+    signal?.addEventListener('abort', cancelled, { once: true })
+    const timeout = setTimeout(() => attempt.abort(Error('Unavailable: could not establish a direct connection; no relay fallback.')), 30000)
+    const operation = (async () => {
+      connection = await endpoint.connect(invite.address, CONTROL)
+      rememberConnection(connection); checkDirect(connection, id)
+      attempt.signal.throwIfAborted()
+      await waitDirect(connection, attempt.signal)
       const stream = await connection.openBi(); await writeJson(stream, { op: 'pair', secret: invite.secret, peer: ownInfo() })
       const response = await readJson(stream); validatePeer(response.peer, id)
-      // A rejected/reused invitation must not revoke an existing approval. Once
-      // accepted, replace the old feed without closing this pairing handshake.
+      attempt.signal.throwIfAborted()
       if (machine.state.peers[id]) await forget(id, connection)
       machine.state.peers[id] = response.peer; machine.save(); await attach(id)
       connection.close(0n, []); await connection.closed()
       return { state: 'Linked', id, name: response.peer.name }
-    } finally { connection?.close(0n, []); if (connection) connections.delete(connection) }
+    })()
+    let abort
+    try {
+      return await Promise.race([operation, new Promise((_, reject) => {
+        abort = () => { connection?.close(0n, []); reject(attempt.signal.reason) }
+        attempt.signal.addEventListener('abort', abort, { once: true })
+        if (signal?.aborted) cancelled()
+      })])
+    } catch (error) {
+      if (machine.state.peers[id]) {
+        const state = [...connections].some(c => c.remoteId().toString() === id && isDirect(c)) ? 'Linked' : 'Unavailable'
+        throw Error(`${error.message} Approval retained; current status: ${state}.`)
+      }
+      throw error
+    } finally {
+      clearTimeout(timeout); signal?.removeEventListener('abort', cancelled)
+      attempt.signal.removeEventListener('abort', abort)
+      connection?.close(0n, [])
+      await operation.catch(() => {})
+      if (connection) { connection.close(0n, []); connections.delete(connection) }
+    }
   }
   const control = http.createServer(async (req, res) => {
     try {
       assert.equal(req.method, 'POST')
       const chunks = []; let length = 0
       for await (const part of req) { length += part.length; assert(length <= 16384); chunks.push(part) }
-      const value = await command(req.url.slice(1), JSON.parse(Buffer.concat(chunks).toString() || '{}'))
+      const cancelled = new AbortController()
+      res.once('close', () => { if (!res.writableEnded) cancelled.abort() })
+      const value = await command(req.url.slice(1), JSON.parse(Buffer.concat(chunks).toString() || '{}'), cancelled.signal)
       res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(value))
     } catch (error) { res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: error.message })) }
   })

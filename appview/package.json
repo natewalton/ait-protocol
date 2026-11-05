@@ -2,7 +2,7 @@
   "name": "ait-appview",
   "version": "0.0.1",
   "private": true,
-  "description": "AIT AppView — firehose subscriber + SQLite indexer + XRPC query endpoints.",
+  "description": "AIT AppView \u2014 firehose subscriber + SQLite indexer + XRPC query endpoints.",
   "type": "module",
   "scripts": {
     "build": "tsc",
@@ -17,7 +17,6 @@
     "@atproto/crypto": "0.5.7",
     "@atproto-labs/fetch-node": "0.4.3",
     "@did-plc/lib": "0.0.4",
-    "@number0/iroh": "1.2.0",
     "@atproto/lexicon": "^0.7.1",
     "@atproto/sync": "0.3.1",
     "@atproto/syntax": "^0.6.1",
@@ -25,7 +24,8 @@
     "better-sqlite3": "^11.0.0",
     "dotenv": "^16.4.0",
     "multiformats": "13.4.2",
-    "undici": "8.12.3"
+    "undici": "8.12.3",
+    "@natewalton/iroh-direct": "https://github.com/natewalton/iroh-ffi/releases/download/iroh-direct-v0.1.0-experimental.1/natewalton-iroh-direct-0.1.0-experimental.1.tgz"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
@@ -37,5 +37,8 @@
     "esbuild": "^0.28.1",
     "minimatch": "11.0.1",
     "@atproto/ws-client": "0.1.0"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

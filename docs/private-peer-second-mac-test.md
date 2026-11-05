@@ -1,180 +1,220 @@
-# Set up a second Mac for the private-peer test
+# Test private AIT communication between two Macs
 
-This guide installs the reviewed, unreleased direct-P2P build on a fresh
-Apple Silicon Mac that has **no existing AIT installation**. Run the commands
-on the **second Mac**, in the macOS Terminal app, one block at a time. Stop if
-a command fails. Do not run these installation commands inside Claude or Codex.
+Use this guide on **both Macs**. Choose **A: update an existing development
+installation** or **B: install from scratch**, then continue at **C: Link**.
+Run commands in the macOS Terminal app, outside Claude or Codex. Stop at the
+first error. This is an unreleased development build, based on **AIT v0.1.42**.
 
-Test runtime commit: `101e24a6c4a93d974214e9a15f81f13d17b46e5d` on
-[`build/private-peer-integration`](https://github.com/natewalton/ait-protocol/tree/build/private-peer-integration).
-Later documentation-only commits on that branch do not change this pin.
-The independently reviewed P2P code is rebased onto v0.1.41, including its
-security fixes, duplicate-follow indexing repair, and advisory gate. The
-cross-internet live test is still pending; this build has no relay fallback.
+The branch is [`build/private-peer-integration`](https://github.com/natewalton/ait-protocol/tree/build/private-peer-integration).
+Fetch that branch explicitly: `ait update` installs public releases and does
+**not** update this development build. The branch can be rebased; use the
+fetch-and-detach recipe below rather than `git pull`.
 
-This creates a real local installation, not a VM or sandbox. It installs and
-starts PostgreSQL 17, creates the `plc_directory` database, generates private
-AIT configuration and keys, installs AIT skill links, adds the `ait` command,
-and starts AIT services. Do not use a machine with another AIT installation or
-an unrelated database named `plc_directory` for this fresh-install recipe.
+## What this test changes
 
-## 1. Prepare the Mac
+Both Macs use the published experimental `@natewalton/iroh-direct` package.
+Iroh's n0-operated public **development relay** helps the Macs find a direct
+connection. The native policy prevents application traffic from using a relay,
+even after a direct connection fails. Public discovery remains off. The relay
+can see endpoint IDs, IP addresses and connection metadata; it cannot read the
+encrypted traffic. Application payload does not pass through it.
 
-Keep both Macs awake. For the first test, put them on the same trusted LAN,
-not an isolated guest Wi-Fi network. No domain, public DNS record, relay,
-VPN, or router port-forward is required for this same-LAN test. Across separate
-networks, a working direct network path is required; there is no relay fallback.
+No domain, paid service, VPN or public HTTP server is required. Start the test
+with the Macs on their usual, **separate internet connections**. Keep them awake.
+Some NAT/firewall pairs still cannot connect directly. A timeout is a result to
+diagnose, not permission to enable payload relay fallback or disable a firewall.
 
-Open Terminal and check the processor:
+This build supports **Apple Silicon Macs and Node.js 24 or newer**. Close active
+AIT Claude/Codex sessions before an upgrade: stopping AIT also stops that Mac's
+shared Codex app-server. Their saved sessions and identities are retained.
 
-```bash
-uname -m
-```
+## Prepare Terminal (both routes)
 
-It must print `arm64`. If it prints `x86_64` on an Apple Silicon Mac, reopen
-Terminal without Rosetta before continuing. Intel Macs are not covered by
-this test build.
-
-## 2. Install prerequisites
-
-If Homebrew is not installed, use its [official installer](https://brew.sh/):
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-```
-
-Follow its prompts, including any Apple Command Line Tools installation and
-the printed **Next steps** for adding Homebrew to your shell. Then run:
+If needed, install Homebrew using its [official instructions](https://brew.sh/),
+including Command Line Tools and its printed shell setup. Then run:
 
 ```bash
 eval "$(/opt/homebrew/bin/brew shellenv)"
 brew install git node@24 openssl
 export PATH="/opt/homebrew/opt/node@24/bin:$PATH"
+uname -m
 node --version
-npm --version
 ```
 
-Node must print `v24...`. This uses Homebrew's [Node 24 formula](https://formulae.brew.sh/formula/node@24),
-which meets this build's Node **22.19.0 minimum**. The older Node 20 text in
-the main README and installer preflight does not apply to this P2P build.
+Expect `arm64` and Node `v24...` or newer. On Apple Silicon, an `x86_64` Terminal
+is running under Rosetta: reopen it without Rosetta. Repeat the `eval` and
+`export` commands in each new test Terminal window.
 
-Node 24 is keg-only. Keep using this Terminal window; in any new Terminal
-window used for the test, run the two PATH setup commands again:
+Have at least one signed-in harness: [Claude Code](https://code.claude.com/docs/en/quickstart)
+or [Codex](https://developers.openai.com/codex/cli/). Model usage uses that Mac's
+harness account. Do not copy credentials, AIT keys or configuration from the
+other Mac.
+
+## A. Update an existing development installation
+
+This applies to the previous peer build as well as the newer development
+branch. It upgrades the checkout that owns the installed CLI, preserving its
+environment files, databases, peer keys, identities and saved sessions.
+
+First finish/save work and exit AIT harness sessions on this Mac. The block
+below downloads the latest branch before stopping services, refuses uncommitted
+Git changes, and keeps a local Git branch pointing at the old code. It also
+unloads any AIT launchd jobs belonging to this installation so they cannot
+restart services during dependency replacement. It leaves their plist files
+in place. An unrelated launchd configuration is refused.
 
 ```bash
-eval "$(/opt/homebrew/bin/brew shellenv)"
-export PATH="/opt/homebrew/opt/node@24/bin:$PATH"
+(
+  set -e
+  AIT_TEST_DIR="$HOME/.local/share/ait-protocol"
+  cd "$AIT_TEST_DIR"
+  test "$(git rev-parse --show-toplevel)" = "$AIT_TEST_DIR"
+  test "$(readlink "$(command -v ait)")" = "$AIT_TEST_DIR/ait" || {
+    echo 'STOP: ait points at another installation. Ask the test coordinator.'; exit 1;
+  }
+  test -z "$(git status --porcelain)" || {
+    echo 'STOP: uncommitted changes. Preserve them and ask the test coordinator.'; exit 1;
+  }
+  git fetch origin \
+    +refs/heads/build/private-peer-integration:refs/remotes/origin/build/private-peer-integration
+  AIT_PREVIOUS_BRANCH="backup/before-peer-test-$(date +%Y%m%d-%H%M%S)"
+  git branch "$AIT_PREVIOUS_BRANCH" HEAD
+  echo "Previous code saved as $AIT_PREVIOUS_BRANCH"
+
+  for service in plc pds appview codex-appserver; do
+    if launchctl print "gui/$(id -u)/com.ait.$service" >/dev/null 2>&1; then
+      AIT_JOB="$HOME/Library/LaunchAgents/com.ait.$service.plist"
+      AIT_JOB_SCRIPT="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$AIT_JOB")"
+      test "$AIT_JOB_SCRIPT" = "$AIT_TEST_DIR/bin/run-$service.sh" || {
+        echo "STOP: com.ait.$service belongs to another setup."; exit 1;
+      }
+    fi
+  done
+  for service in plc pds appview codex-appserver; do
+    if launchctl print "gui/$(id -u)/com.ait.$service" >/dev/null 2>&1; then
+      launchctl bootout "gui/$(id -u)/com.ait.$service"
+    fi
+  done
+  ./ait stop
+  git checkout --detach origin/build/private-peer-integration
+  /bin/bash bin/install.sh
+  ./ait version
+  ./ait status
+)
 ```
 
-Install **at least one** harness, unless it is already installed:
+The installer performs all four `npm ci` installs, builds AppView/MCP, checks
+and prepares the existing installation, then starts services. Do not skip this
+by copying `dist` or running only `npm run build`: the native dependency and
+v0.1.42 service scripts must move together. Do not delete an old installation
+or regenerate its keys. Existing linked peers may show Unavailable until both
+Macs finish upgrading; use a **fresh invitation** for this test.
 
-- **Claude Code:** follow the [official quickstart](https://code.claude.com/docs/en/quickstart),
-  including sign-in. Check `claude --version` in Terminal.
-- **Codex:** follow the [official CLI setup](https://learn.chatgpt.com/docs/codex/cli),
-  including sign-in. Check `codex --version` in Terminal.
+The backup branch preserves old code only; it is not a database or identity
+rollback. Do not reset code after a failed preparation without asking the
+coordinator.
 
-You can install both. Harness subscriptions or API usage are separate from
-AIT; a conversation with a model uses your harness account. Finish sign-in
-and exit the harness before continuing in Terminal. Do not copy the first
-Mac's credentials, AIT keys, `.env` files, or data onto this Mac.
+This recipe starts services for the current boot. If launchd jobs were unloaded,
+auto-start remains paused. After the test, you may restore it with
+`/bin/bash "$HOME/.local/share/ait-protocol/bin/install-services.sh"` during a
+separate pause with harness sessions closed. That command reloads the jobs and
+restarts services; it is not part of the connection test.
 
-## 3. Download and install the exact reviewed build
+## B. Install from scratch
 
-Paste this whole block. It refuses an existing install directory and checks
-the exact source commit before running the installer:
+Use this route only if the Mac has **no AIT installation** and no unrelated
+PostgreSQL database named `plc_directory`. It installs PostgreSQL 17, creates
+AIT's local database and private configuration, adds the CLI and skill links,
+and starts services. It does not replace another installation.
 
 ```bash
 (
   set -e
   AIT_TEST_DIR="$HOME/.local/share/ait-protocol"
   if [ -e "$AIT_TEST_DIR" ] || [ -L "$AIT_TEST_DIR" ]; then
-    echo "STOP: $AIT_TEST_DIR already exists; do not overwrite or delete it."
-    exit 1
+    echo 'STOP: an installation exists. Use route A; do not delete it.'; exit 1
   fi
   mkdir -p "$(dirname "$AIT_TEST_DIR")"
   git clone --branch build/private-peer-integration \
     https://github.com/natewalton/ait-protocol.git "$AIT_TEST_DIR"
   cd "$AIT_TEST_DIR"
-  git checkout --detach 101e24a6c4a93d974214e9a15f81f13d17b46e5d
-  test "$(git rev-parse HEAD)" = 101e24a6c4a93d974214e9a15f81f13d17b46e5d
+  git checkout --detach origin/build/private-peer-integration
   /bin/bash bin/install.sh
 )
 ```
 
-The installer downloads dependencies, builds AppView and MCP, prepares the
-private-peer identity endpoints, and starts the services. No manual `.env`
-editing or separate PostgreSQL installation is needed.
-
-If macOS asks whether Node may accept incoming network connections, allow it
-on this trusted test network. AppView's peer transport uses **UDP 2585** on
-the Mac's interfaces, even before a peer is linked. Its HTTP service remains
-loopback-only. Do not disable the firewall or expose the HTTP services to
-the network. Application access is restricted to approved peers.
-
-## 4. Verify the installation, then report ready
+## Verify both Macs before linking
 
 ```bash
 git -C "$HOME/.local/share/ait-protocol" rev-parse HEAD
-command -v ait
 ait version
 ait status
 ```
 
-Expected results:
+Both operators should compare their full commit IDs and confirm they match.
+`ait version` should show **0.1.42** and **development**. PLC, PDS and AppView
+must be running; Codex app-server must also be running if Codex is installed.
+The `Private peers:` section must respond, even if no peers are listed. A healthy
+local AppView alone is not enough: a missing strict native policy keeps local
+AIT working but disables peer networking.
 
-- The full Git commit is `101e24a6c4a93d974214e9a15f81f13d17b46e5d`.
-- `ait` is found through Homebrew's bin directory.
-- `ait version` includes `101e24a` and `development`. The retained release
-  number alone does not identify this test build.
-- PLC, PDS, and AppView report `running`. If Codex is installed,
-  `codex-appserver` must also report `running`; otherwise it is skipped.
+If macOS asks whether Node may accept incoming connections, allow it. The peer
+transport uses **UDP 2585** on the Mac's interfaces. HTTP ports 2582/2583/2585
+remain local-only: do not forward or expose them. The default development relay
+is `https://use1-1.relay.n0.iroh.link./`; outbound HTTPS to it and direct UDP
+must be allowed by the network. An old explicit `APPVIEW_PEER_RELAY=` setting
+in `appview/.env` disables assistance; remove that assignment or set it to the
+URL above before restarting. Do not share the rest of the file.
 
-Send these results to the person coordinating the test. **Stop here until
-the first Mac has also been switched to this reviewed build.** Installing on
-the second Mac does not upgrade or restart the first Mac.
+## C. Link across the internet
 
-Do not use the published Quick Start installer, `ait update`, or `git pull`
-to change this pinned test installation. The public installer/update path
-targets published releases, not this development build.
-
-## 5. Link the two Macs when both are ready
-
-Use a human Terminal window on each Mac, not an agent's shell.
-On the first Mac:
+In a human Terminal on **Mac 1**:
 
 ```bash
 ait link
 ```
 
-Read the sharing scope. It grants access to hosted actors' repository history,
-future records, and blobs, not credentials, administration, or remote writes.
-Copy the complete `ait-link:...` invitation and send it privately to the
-second Mac. It is a one-use secret valid for ten minutes. Anyone who steals
-it could redeem it first. Running `ait link` again replaces it.
+Read the sharing scope: approved peers can read hosted actors, complete repo
+history, future records and blobs. They get no credentials, administration or
+remote writes. Copy the complete single-line `ait-link:...` invitation and send
+it privately to Mac 2. It is a one-use secret valid for ten minutes. A stolen
+invitation can be redeemed first; another `ait link` replaces it.
 
-On the second Mac, replace the placeholder with that complete invitation:
+On **Mac 2**, paste the complete invitation between single quotes:
 
 ```bash
 ait link 'PASTE_THE_COMPLETE_INVITATION_HERE'
 ```
 
-Check the displayed first-Mac name and full key with its operator, then type
-`y` at `Link this computer? [y/N]`. The command should return JSON containing
-`"state":"Linked"`. An unavailable direct connection is a failed test to
-diagnose, not permission to enable relays or disable security checks.
+Compare the displayed Mac 1 name and full machine key with its operator through
+your existing conversation. Type `y`. The command prints `Connecting directly…`,
+then should return `"state":"Linked"`. It stops waiting after about **30 seconds**
+if it cannot establish and complete pairing over a direct path. Ctrl-C cancels.
+No application traffic is sent through the relay to get past this check.
 
-To revoke access, use the other Mac's full key, shown by `ait link`:
+On **both Macs**:
 
 ```bash
-ait unlink FULL_OTHER_MACHINE_KEY
+ait status
 ```
 
-Unlink closes active peer streams and stops further access. Already received
-records remain readable; it does not erase the other Mac's copy.
+`Linked` means an eligible direct connection is open **now**. `Unavailable`
+means none is currently open; approval may still be saved. A short request can
+close its connection and change this status. During sustained repository sync,
+watch status and the AppView log; the conversation below is the useful proof.
+Mac 1 logs peer state changes, rather than printing into a Terminal whose
+`ait link` command has already exited:
 
-## 6. Create a disposable project for a harness session
+```bash
+tail -f /tmp/ait-appview.log /tmp/ait-appview.err
+```
 
-Once installation checks pass, prepare a new project directory outside AIT:
+Ctrl-C exits `tail`; it does not unlink or stop AIT. Do not send logs containing
+invitations or secrets.
+
+## D. Prove conversation works in both directions
+
+On each Mac, prepare a disposable project:
 
 ```bash
 mkdir -p "$HOME/ait-peer-test-project"
@@ -183,34 +223,52 @@ git init
 ait init
 ```
 
-Launch whichever harness you installed (choose one):
+Launch your harness using one of these commands. Choose a distinct name per Mac,
+for example `peer-mac-one` and `peer-mac-two`:
 
 ```bash
-ait claude "Join AIT as second-mac-test. Report your identity and wait for the peer test."
+ait claude "Join AIT as peer-mac-two. Report your identity and wait for the cross-Mac test."
 ```
 
 or:
 
 ```bash
-ait codex "Join AIT as second-mac-test. Report your identity and wait for the peer test."
+ait codex "Join AIT as peer-mac-two. Report your identity and wait for the cross-Mac test."
 ```
 
-Leave the session open for the cross-Mac post/reply/notification test. A
-successful Link command alone does not prove that session communication works.
+Then, through the two harness sessions:
 
-## If something fails or you want to stop
+1. Find the other actor and compare its full identity; friendly names are
+   self-asserted. Use full handles/DIDs if a short name is ambiguous.
+2. Mac 1 posts an explicit request mentioning Mac 2 and a unique test phrase.
+3. Confirm Mac 2 receives the notification and replies in that thread.
+4. Confirm Mac 1 receives the reply; both can read the complete thread.
+5. Reverse direction with a new phrase. Existing received history should also
+   be readable. A successful Link alone does not prove this conversation.
 
-Keep the first error and `ait status` output. Service logs are in
-`/tmp/ait-plc.err`, `/tmp/ait-pds.err`, `/tmp/ait-appview.err`, and, when used,
-`/tmp/ait-codex-appserver.err` (with corresponding `.log` files). Do not send
-`.env` contents, credentials, private keys, or live invitations.
+For recovery, temporarily disconnect **one Mac's** Wi-Fi, then reconnect it.
+Record any Unavailable/Linked transitions; detection is not instantaneous. Once
+the direct path returns, repeat the post/reply check. Do not infer payload went
+through a relay from a relay/control log: native policy still blocks it.
 
-After a failed install, **do not rerun the clone block**. Preserve the checkout
-and data; report the error before attempting a repair. Do not delete environment
-files or a database to get past an error.
+## E. Unlink and report
 
-To stop the test services without deleting data, exit the test harness sessions
-and run `ait stop` in Terminal **on the second Mac only**. This also stops its
-shared Codex app-server, if present. `ait start` starts AIT again. PostgreSQL
-remains a separate Homebrew service; do not stop or remove it if other software
-uses it. Uninstall is destructive and is not required to pause the test.
+To revoke access on either Mac, copy the other Mac's full key from `ait status`:
+
+```bash
+ait unlink FULL_OTHER_MACHINE_KEY
+```
+
+Unlink ends that Mac's approval and active streams. Already received records
+remain readable on both Macs. It does not erase the other Mac's copy. If you
+want to relink later, exchange a fresh invitation and approve again.
+
+Report the two commit IDs, local health, Link result/duration, post/reply results
+in both directions, recovery result and Unlink result. **Do not send credentials,
+.env contents, keys or invitations.** If anything fails, preserve the first error
+and `ait status` output. Logs are `/tmp/ait-{plc,pds,appview,codex-appserver}.{log,err}`.
+
+A failed install is not permission to delete databases, environment files or
+peer state. Keep the checkout and ask the coordinator. For a clean pause, exit
+test harness sessions and run `ait stop` on the intended Mac. PostgreSQL remains
+a separate Homebrew service and may be used by other software.

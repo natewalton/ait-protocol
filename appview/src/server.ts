@@ -66,14 +66,21 @@ export async function main(peerOptions: { assistanceRelay?: string; bindAddress?
   localResolver.handle.resolve = async () => undefined
   // run-appview.sh makes the installation's appview directory the cwd.
   const repo = path.resolve(process.cwd(), '..')
-  const peers = await startPeerNetwork({ directory: stateDirectory(DB_PATH), db,
-    pdsUrl: PDS_URL, plcUrl: PLC_URL, localResolver, accountFile: installationPaths(repo).accountFile,
-    // Reuse AppView's configured port for UDP, so approved direct addresses
-    // survive an ordinary restart without a discovery service or new setting.
-    bindAddress: peerOptions.bindAddress ?? `0.0.0.0:${PORT}`,
-    assistanceRelay: peerOptions.assistanceRelay,
-    directAddress: peerOptions.directAddress,
-  })
+  let peers
+  try {
+    peers = await startPeerNetwork({ directory: stateDirectory(DB_PATH), db,
+      pdsUrl: PDS_URL, plcUrl: PLC_URL, localResolver, accountFile: installationPaths(repo).accountFile,
+      // Reuse AppView's configured port for UDP, so approved direct addresses
+      // survive an ordinary restart without a discovery service or new setting.
+      bindAddress: peerOptions.bindAddress ?? `0.0.0.0:${PORT}`,
+      assistanceRelay: peerOptions.assistanceRelay,
+      directAddress: peerOptions.directAddress,
+    })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'AIT_PEER_POLICY_UNAVAILABLE') throw error
+    console.error((error as Error).message)
+    peers = { resolver: localResolver, async close() {} }
+  }
   const idResolver = peers.resolver as IdResolver
   // Service-auth JWTs come from this installation's PDS. Reuse its existing
   // cached resolver, including the upstream signature-failure forceRefresh.

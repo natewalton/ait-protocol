@@ -27,7 +27,7 @@ async function main() {
   const { directory } = installationPaths(repo), control = path.join(directory, 'control.sock')
   if (operation === 'status') {
     const status = await localCommand(control, 'status', {}, AbortSignal.timeout(3000))
-    for (const peer of status.peers) console.log(`${peer.state} ${JSON.stringify(peer.name)} ${peer.id}`)
+    for (const peer of status.peers) console.log(`  ${peer.state} ${JSON.stringify(peer.name)} ${peer.id}`)
     return
   }
   if (operation === 'unlink') {

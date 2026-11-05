@@ -30,9 +30,8 @@ export function parseInvitation(text) {
 }
 function checkDirect(connection, expected) {
   assert.equal(connection.remoteId().toString(), expected, 'wrong machine key')
-  // RelayMode.disabled is the transport policy. A just-accepted connection may
-  // not have emitted a Selected path snapshot yet; that is not a relay path.
-  // Payload eligibility is enforced by the confirmed native endpoint policy.
+  // Machine authentication is separate from payload readiness. The confirmed
+  // native endpoint policy enforces payload eligibility on every transmission.
 }
 async function readJson(stream) {
   const chunks = []; let size = 0
@@ -98,21 +97,21 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
     if (assistanceRelay) await endpoint.insertRelay({ url: assistanceRelay })
     if (directAddress) await endpoint.addExternalAddr(directAddress)
   } catch (error) { await endpoint.close(); throw error }
-  const isDirect = connection => !connection.closeReason() &&
-    connection.paths().some(p => p.isSelected && p.isIp)
+  const hasPayloadPath = connection => !connection.closeReason() &&
+    connection.paths().some(p => p.applicationDataAllowed)
   async function waitDirect(connection, signal) {
     signal?.throwIfAborted()
-    if (isDirect(connection)) return
+    if (hasPayloadPath(connection)) return
     let watcher, aborted
     try {
       await new Promise((resolve, reject) => {
         aborted = () => reject(signal.reason)
         signal?.addEventListener('abort', aborted, { once: true })
         watcher = connection.watchPaths((...args) => {
-          if (args.find(Array.isArray)?.some(p => p.isSelected && p.isIp)) resolve()
+          if (args.find(Array.isArray)?.some(p => p.applicationDataAllowed)) resolve()
         })
         connection.closed().then(reason => reject(Error(reason)))
-        if (isDirect(connection)) resolve()
+        if (hasPayloadPath(connection)) resolve()
         if (signal?.aborted) aborted()
       })
     } finally { signal?.removeEventListener('abort', aborted); await watcher?.stop() }
@@ -127,14 +126,14 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
     connections.add(connection)
     const changed = () => {
       const id = connection.remoteId().toString()
-      if (machine.state.peers[id] && ![...connections].some(c => c.remoteId().toString() === id && isDirect(c))) {
-        console.log(`Private peer ${id}: Unavailable: direct connection lost; no relay fallback.`)
-      }
+      const source = sources.get(id)
+      if (!machine.state.peers[id] || !source) return
+      const state = [...connections].some(c => c.remoteId().toString() === id && hasPayloadPath(c)) ? 'Linked' : 'Unavailable'
+      if (source.lastState !== state) console.log(`Private peer ${id}: ${state}${state === 'Unavailable' ? ': direct connection lost; no relay fallback.' : ': direct application path available.'}`)
+      source.lastState = state
     }
-    const watcher = connection.watchPathEvents((...args) => {
-      if (args.some(event => event?.kind === 'Closed' && event.remoteAddr && event.remoteAddr !== 'unknown' && !/^https?:/.test(event.remoteAddr))) changed()
-    })
-    track(connection.closed().then(() => watcher.stop()))
+    const watcher = connection.watchPaths((error) => { if (!error) changed() })
+    track(connection.closed().then(async () => { changed(); await watcher.stop() }))
   }
   const ownInfo = () => ({ ticket: EndpointTicket.fromAddr(endpoint.addr()).toString(), ca: machine.ca, name })
   const hosted = did => {
@@ -292,7 +291,7 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
   }
   async function command(op, body = {}, signal) {
     if (op === 'status') return { id: machine.id, peers: Object.entries(machine.state.peers).map(([id, peer]) => ({
-      id, name: peer.name, state: [...connections].some(c => c.remoteId().toString() === id && isDirect(c)) ? 'Linked' : 'Unavailable',
+      id, name: peer.name, state: [...connections].some(c => c.remoteId().toString() === id && hasPayloadPath(c)) ? 'Linked' : 'Unavailable',
     })) }
     if (op === 'invite') {
       const invitation = { version: 1, ticket: ownInfo().ticket, name, secret: randomBytes(32).toString('hex'), expires: Date.now() + 10 * 60 * 1000 }
@@ -335,7 +334,7 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
       })])
     } catch (error) {
       if (machine.state.peers[id]) {
-        const state = [...connections].some(c => c.remoteId().toString() === id && isDirect(c)) ? 'Linked' : 'Unavailable'
+        const state = [...connections].some(c => c.remoteId().toString() === id && hasPayloadPath(c)) ? 'Linked' : 'Unavailable'
         throw Error(`${error.message} Approval retained; current status: ${state}.`)
       }
       throw error

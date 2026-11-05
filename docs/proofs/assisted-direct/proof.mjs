@@ -62,7 +62,7 @@ try {
  b=worker('server',bPort,pa.address().port,relayPort);const br=await b.wait(x=>x.event==='ready','server ready')
  a=worker('client',aPort,pb.address().port,relayPort);await a.wait(x=>x.event==='ready','client ready')
  await a.ask('connect',{peer:br.id,proxyPort:pb.address().port});await b.wait(x=>x.event==='connected','server connected')
- result.initial=(await a.ask('snapshot')).paths;assert(result.initial.some(p=>p.isSelected&&p.isRelay));result.checks.push('handshake on relay with UDP blocked')
+ result.initial=(await a.ask('snapshot')).paths;assert(result.initial.some(p=>p.isSelected&&p.isRelay));assert(mode==='strict' ? result.initial.every(p=>!p.applicationDataAllowed) : result.initial.some(p=>p.applicationDataAllowed));result.checks.push('handshake on relay with UDP blocked')
  let early
  if(mode==='strict') {
    early=a.ask('send',{size:16384,byte:17})
@@ -70,7 +70,8 @@ try {
  }
  gateOpen=true
  await Promise.all([a.ask('advertise',{address:`127.0.0.1:${pa.address().port}`}),b.ask('advertise',{address:`127.0.0.1:${pb.address().port}`})])
- await Promise.all([a.wait(x=>x.event==='paths'&&x.paths.some(p=>p.isSelected&&p.isIp),'client direct'),b.wait(x=>x.event==='paths'&&x.paths.some(p=>p.isSelected&&p.isIp),'server direct')])
+ await Promise.all([a.wait(x=>x.event==='paths'&&x.paths.some(p=>p.applicationDataAllowed),'client direct'),b.wait(x=>x.event==='paths'&&x.paths.some(p=>p.applicationDataAllowed),'server direct')])
+ assert((await a.ask('watchSnapshot')).some(p=>p.applicationDataAllowed),'late subscriber gets current readiness')
  result.checks.push('direct UDP selected through controlled proxy')
  if(early) {
    const sent=await early
@@ -99,7 +100,9 @@ try {
    if(holdMs) await new Promise(resolve=>setTimeout(resolve,holdMs))
    result.blocked={client:await a.ask('snapshot'),server:await b.ask('snapshot'),holdMs}
    assert.equal(result.blocked.server.received.length,baselineReceived,'no payload while only relay available')
-   assert.equal(result.blocked.client.closed,null,'relay control kept connection alive')
+   assert.equal(result.blocked.client.closed,null,'relay control kept connection alive');assert(result.blocked.client.paths.every(p=>!p.applicationDataAllowed))
+   assert((await a.ask('watchSnapshot')).every(p=>!p.applicationDataAllowed),'late subscriber recovers blocked snapshot')
+   assert(a.history.some(x=>x.event==='pathEvent'&&x.value.kind==='Selected'&&/^http/.test(x.value.remoteAddr)),'raw relay selection retained')
    result.checks.push('queued application payload stays blocked while relay control remains live')
    gateOpen=true
    await Promise.all([a.ask('advertise',{address:`127.0.0.1:${pa.address().port}`}),b.ask('advertise',{address:`127.0.0.1:${pb.address().port}`})])
@@ -112,8 +115,9 @@ try {
  if(mode==='strict') {
    const markerA=a.history.length, markerB=b.history.length
    await a.ask('disconnect')
+   assert((await a.ask('snapshot')).paths.every(p=>!p.applicationDataAllowed),'closed connection not ready')
    await a.ask('connect',{peer:br.id,proxyPort:pb.address().port})
-   await Promise.all([a.wait(x=>x.event==='paths'&&x.paths.some(p=>p.isSelected&&p.isIp),'client reconnect direct',markerA),b.wait(x=>x.event==='paths'&&x.paths.some(p=>p.isSelected&&p.isIp),'server reconnect direct',markerB)])
+   await Promise.all([a.wait(x=>x.event==='paths'&&x.paths.some(p=>p.applicationDataAllowed),'client reconnect direct',markerA),b.wait(x=>x.event==='paths'&&x.paths.some(p=>p.applicationDataAllowed),'server reconnect direct',markerB)])
    const sent=await a.ask('send',{size:16384,byte:99})
    await b.wait(x=>x.event==='received'&&x.sha256===sent.sha256,'reconnected receiver')
    result.checks.push('explicit reconnect retains strict policy and transfers directly')

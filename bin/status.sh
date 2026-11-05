@@ -80,4 +80,8 @@ if command -v codex >/dev/null 2>&1; then
 else
   printf '  %-16s %s\n' codex-appserver 'skipped (not installed)'
 fi
+if [ -f "$REPO/appview/dist/peerCli.mjs" ] && [ -f "$REPO/pds/.env" ]; then
+  echo "Private peers:"
+  node "$REPO/appview/dist/peerCli.mjs" status "$REPO" || echo "  unavailable (peer service not responding)"
+fi
 exit "$core_status"

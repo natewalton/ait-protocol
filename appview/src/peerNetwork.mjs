@@ -70,9 +70,9 @@ async function bridge(socket, stream) {
 export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localResolver, accountFile,
   bindAddress = '0.0.0.0:0', name = os.hostname(), assistanceRelay, directAddress }) {
   const builder = Endpoint.builder(); presetMinimal(builder)
-  const policyError = 'Private peer networking unavailable: this Iroh build cannot confirm direct-only application data.'
-  assert.equal(typeof builder.directApplicationDataOnly, 'function', policyError)
-  builder.directApplicationDataOnly()
+  const policyError = Object.assign(Error('Private peer networking unavailable: this Iroh build cannot confirm direct-only application data.'), { code: 'AIT_PEER_POLICY_UNAVAILABLE' })
+  if (typeof builder.directApplicationDataOnly !== 'function') throw policyError
+  try { builder.directApplicationDataOnly() } catch { throw policyError }
   const machine = loadState(directory), sources = new Map(), connections = new Set(), sockets = new Set(), tasks = new Set()
   const controlPath = path.join(directory, 'control.sock')
   if (fs.existsSync(controlPath)) {
@@ -92,7 +92,9 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
   builder.bindAddr(bindAddress); builder.relayMode(assistanceRelay ? RelayMode.customFromUrls([]) : RelayMode.disabled())
   const endpoint = await builder.bind()
   try {
-    assert.equal(endpoint.directApplicationDataOnly?.(), true, policyError)
+    try {
+      if (endpoint.directApplicationDataOnly?.() !== true) throw policyError
+    } catch { throw policyError }
     if (assistanceRelay) await endpoint.insertRelay({ url: assistanceRelay })
     if (directAddress) await endpoint.addExternalAddr(directAddress)
   } catch (error) { await endpoint.close(); throw error }
@@ -309,8 +311,12 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
     const timeout = setTimeout(() => attempt.abort(Error('Unavailable: could not establish a direct connection; no relay fallback.')), 30000)
     const operation = (async () => {
       connection = await endpoint.connect(invite.address, CONTROL)
+      // Native connect may outlive the caller; never start pairing afterward.
+      if (attempt.signal.aborted) {
+        connection.close(0n, [])
+        throw attempt.signal.reason
+      }
       rememberConnection(connection); checkDirect(connection, id)
-      attempt.signal.throwIfAborted()
       await waitDirect(connection, attempt.signal)
       const stream = await connection.openBi(); await writeJson(stream, { op: 'pair', secret: invite.secret, peer: ownInfo() })
       const response = await readJson(stream); validatePeer(response.peer, id)
@@ -337,7 +343,6 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
       clearTimeout(timeout); signal?.removeEventListener('abort', cancelled)
       attempt.signal.removeEventListener('abort', abort)
       connection?.close(0n, [])
-      await operation.catch(() => {})
       if (connection) { connection.close(0n, []); connections.delete(connection) }
     }
   }

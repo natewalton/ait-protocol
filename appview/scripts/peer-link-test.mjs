@@ -6,6 +6,7 @@ import path from 'node:path'
 import os from 'node:os'
 import http from 'node:http'
 import net from 'node:net'
+import dgram from 'node:dgram'
 import tls from 'node:tls'
 import { Duplex } from 'node:stream'
 import { once, EventEmitter } from 'node:events'
@@ -27,12 +28,12 @@ const { Database, PlcServer } = plcRequire('@did-plc/server')
 const { registerAitLexicons, localPdsFetch } = await import(pathToFileURL(path.join(repo, 'mcp/dist/atproto/aitClient.js')))
 const root = fs.mkdtempSync('/private/tmp/ait-link-'), instances = [], pgBin = '/opt/homebrew/opt/postgresql@17/bin'
 const pgData = path.join(root, 'postgres'), outcomes = []
-let postmasterPid, failure
+let postmasterPid, failure, relay, proxy, secondProxy, relayUrl, gateOpen = false
 const hash = value => createHash('sha256').update(value).digest('hex')
 const report = check => { outcomes.push(check); console.log(`PASS ${check}`) }
-const within = async (promise, label) => {
+const within = async (promise, label, ms = 20000) => {
   let timer
-  try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(Error(`timed out: ${label}`)), 20000) })]) }
+  try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(Error(`timed out: ${label}`)), ms) })]) }
   finally { clearTimeout(timer) }
 }
 async function freePort() {
@@ -65,6 +66,7 @@ async function fixture(name, pgPort) {
   }
   fs.symlinkSync(path.join(repo, 'appview/dist'), path.join(s.repo, 'appview/dist'))
   fs.copyFileSync(path.join(repo, 'ait'), path.join(s.repo, 'ait'))
+  fs.copyFileSync(path.join(repo, 'bin/run-appview.sh'), path.join(s.repo, 'bin/run-appview.sh'))
   const databaseUrl = `postgres://ait_fixture@127.0.0.1:${pgPort}/${name}`
   execFileSync(`${pgBin}/createdb`, ['-h', '127.0.0.1', '-p', String(pgPort), '-U', 'ait_fixture', name])
   const database = Database.postgres({ url: databaseUrl }); await database.migrateToLatestOrThrow()
@@ -122,11 +124,18 @@ async function startAppview(s) {
     APPVIEW_PORT: String(s.appviewPort), APPVIEW_PDS_URL: s.url, APPVIEW_PDS_WS_URL: s.url.replace('http:', 'ws:'),
     APPVIEW_PLC_URL: s.values.didPlcUrl }
   s.launchEnv = env
-  s.child = spawn(process.execPath, [path.join(repo, 'appview/dist/server.js')], { cwd: path.join(s.repo, 'appview'), env, stdio: ['ignore', 'pipe', 'pipe'] })
+  if (s.peerOptions) {
+    const profile = `(version 1)(allow default)(deny network*)(allow network-bind (local ip "localhost:*"))(allow network-inbound (local ip "localhost:*"))(allow network-outbound (remote tcp "localhost:*"))(allow network-outbound (remote udp "localhost:${s.proxyPort}"))(allow network-bind (local unix-socket (regex #"^${root}/")))(allow network-inbound (local unix-socket (regex #"^${root}/")))(allow network-outbound (remote unix-socket (regex #"^${root}/")))`
+    const source = `import {main} from ${JSON.stringify(pathToFileURL(path.join(repo, 'appview/dist/server.js')).href)}; await main(${JSON.stringify(s.peerOptions)})`
+    s.child = spawn('sandbox-exec', ['-p', profile, process.execPath, '--input-type=module', '-e', source], { cwd: path.join(s.repo, 'appview'), env, stdio: ['ignore', 'pipe', 'pipe'] })
+  } else {
+    // Exercise the real wrapper and the realpath direct-execution guard.
+    s.child = process.env.IROH_RELAY_BIN ? spawn('sandbox-exec', ['-f', path.join(repo,'appview/scripts/peer-loopback.sb'), '/bin/bash', path.join(s.repo, 'bin/run-appview.sh')], { cwd: s.repo, env, stdio: ['ignore', 'pipe', 'pipe'] }) : spawn('/bin/bash', [path.join(s.repo,'bin/run-appview.sh')], { cwd:s.repo,env,stdio:['ignore','pipe','pipe'] })
+  }
   s.output = ''
   const capture = chunk => { s.output += chunk; fs.appendFileSync(path.join(s.repo, 'appview-output.log'), chunk) }
   s.child.stdout.on('data', chunk => { capture(chunk); s.events.emit('output') })
-  s.child.stderr.on('data', capture)
+  s.child.stderr.on('data', chunk => { capture(chunk); s.events.emit('output') })
   await within(new Promise((resolve, reject) => {
     const ready = () => { if (s.output.includes('appview listening')) { s.events.off('output', ready); resolve() } }
     s.events.on('output', ready); ready(); s.child.once('exit', code => reject(Error(`AppView exited ${code}: ${s.output}`)))
@@ -136,12 +145,12 @@ async function startAppview(s) {
     encoding: 'application/json', headers: { 'atproto-proxy': `${s.values.bskyAppViewDid}#bsky_appview` },
   })
 }
-function notification(s, uri) {
+function notification(s, uri, ms = 20000) {
   return within(new Promise(resolve => {
     const found = s.push.find(n => n.uri === uri); if (found) return resolve(found)
     const listen = n => { if (n.uri === uri) { s.events.off('push', listen); resolve(n) } }
     s.events.on('push', listen)
-  }), `${s.name} notification ${uri}`)
+  }), `${s.name} notification ${uri}`, ms)
 }
 async function tool(s, name, args) {
   const script = `const{setIdentity}=await import(${JSON.stringify(pathToFileURL(path.join(repo, 'mcp/dist/session.js')).href)});setIdentity(JSON.parse(process.env.FIXTURE_ID));const m=await import(${JSON.stringify(pathToFileURL(path.join(repo, `mcp/dist/tools/${name}.js`)).href)});const r=await m[${JSON.stringify(`${name}Handler`)}](JSON.parse(process.env.FIXTURE_ARGS));console.log(JSON.stringify(r));`
@@ -154,12 +163,16 @@ async function tool(s, name, args) {
     child.once('exit', code => code === 0 ? resolve(JSON.parse(stdout.trim().split('\n').at(-1))) : reject(Error(`MCP ${name}: ${code}: ${stderr}`)))
   })
 }
-async function publicLink(s, invitation = '') {
-  const code = `set timeout 20\nspawn env -i PATH=$env(PATH) HOME=$env(FIXTURE_HOME) /bin/bash $env(FIXTURE_AIT) link $env(FIXTURE_INVITE)\n${invitation ? 'expect {\n  -exact {Link this computer? [y/N] } {send -- "yes\\r"}\n  eof {exit 91}\n  timeout {exit 90}\n}\n' : ''}expect eof\nset result [wait]\nexit [lindex $result 3]\n`
+async function publicLink(s, invitation = '', options = {}) {
+  const interrupt = options.interrupt ? 'expect -exact {Connecting directly…}\nsend -- "\\003"\n' : ''
+  const code = `set timeout 40\nspawn env -i PATH=$env(PATH) HOME=$env(FIXTURE_HOME) /bin/bash $env(FIXTURE_AIT) link $env(FIXTURE_INVITE)\n${invitation ? 'expect {\n  -exact {Link this computer? [y/N] } {send -- "yes\\r"}\n  eof {exit 91}\n  timeout {exit 90}\n}\n' : ''}${interrupt}expect eof\nset result [wait]\nexit [lindex $result 3]\n`
   const child = spawn('/usr/bin/expect', ['-c', code], { env: { PATH: process.env.PATH, FIXTURE_HOME: path.join(s.repo, 'home'), FIXTURE_AIT: path.join(s.repo, 'ait'), FIXTURE_INVITE: invitation }, stdio: ['ignore', 'pipe', 'pipe'] })
-  let output = ''; child.stdout.on('data', c => { output += c }); child.stderr.on('data', c => { output += c })
-  const [status] = await within(once(child, 'exit'), 'public ait link confirmation')
-  assert.equal(status, 0, output)
+  let output = ''
+  child.stdout.on('data', c => { output += c; if (options.openDirect && output.includes('Connecting directly…')) gateOpen = true })
+  child.stderr.on('data', c => { output += c })
+  const [status] = await within(once(child, 'exit'), 'public ait link confirmation', 45000)
+  assert.equal(status, options.status ?? 0, output)
+  if (options.status) { assert.match(output, options.interrupt ? /Link cancelled/ : /Unavailable: could not establish a direct connection/); return }
   if (invitation) assert.match(output, /"state":"Linked"/)
   else return /ait-link:[a-zA-Z0-9_-]+/.exec(output)[0]
 }
@@ -217,7 +230,36 @@ async function peerRequest(from, to, invitation, request) {
   } finally { secure?.destroy(); connection?.close(0n, []); await endpoint.close() }
 }
 
+async function policyRefusals() {
+    assert(process.env.IROH_STOCK_BINDING, 'explicit stock binding needed for refusal control')
+    for (const mode of ['stock', 'off']) {
+      const directory = path.join(root, `refusal-${mode}`)
+      fs.mkdirSync(directory, { recursive: true })
+      fs.writeFileSync(path.join(directory,'package.json'), JSON.stringify({type:'module'}))
+      fs.cpSync(path.join(repo,'appview/dist'),path.join(directory,'dist'),{recursive:true})
+      const modules = path.join(directory,'node_modules');fs.mkdirSync(modules)
+      for (const entry of fs.readdirSync(path.join(repo,'appview/node_modules'))) {
+        if (entry !== '@number0') fs.symlinkSync(path.join(repo,'appview/node_modules',entry),path.join(modules,entry))
+        else {
+          const scope=path.join(modules,entry);fs.mkdirSync(scope)
+          for (const name of fs.readdirSync(path.join(repo,'appview/node_modules',entry))) {
+            fs.symlinkSync(name==='iroh' && mode==='stock' ? path.dirname(process.env.IROH_STOCK_BINDING) : path.join(repo,'appview/node_modules',entry,name),path.join(scope,name))
+          }
+        }
+      }
+      const script = `import assert from 'node:assert/strict';import fs from 'node:fs';import {createRequire} from 'node:module';const require=createRequire(${JSON.stringify(path.join(directory,'package.json'))});const binding=require('@number0/iroh');if(${JSON.stringify(mode)}==='off') binding.EndpointBuilder.prototype.directApplicationDataOnly=function(){};const {startPeerNetwork}=await import(${JSON.stringify(pathToFileURL(path.join(directory,'dist/peerNetwork.mjs')).href)});await assert.rejects(startPeerNetwork({directory:${JSON.stringify(path.join(directory,'peers'))},bindAddress:'127.0.0.1:0'}),/cannot confirm direct-only application data/);assert(!fs.existsSync(${JSON.stringify(path.join(directory,'peers/control.sock'))}));assert(!process.getActiveResourcesInfo().some(x=>['UDPWrap','TCPServerWrap'].includes(x)));console.log('refused')`
+      const child = spawn('sandbox-exec', ['-f',path.join(repo,'appview/scripts/peer-loopback.sb'),process.execPath,'--input-type=module','-e',script], { env: { PATH: process.env.PATH, HOME: path.join(root,'refusal-home') }, stdio: ['ignore','pipe','pipe'] })
+      let output = '';child.stdout.on('data',c=>output+=c);child.stderr.on('data',c=>output+=c)
+      assert.equal((await within(once(child,'exit'),'native policy refusal'))[0],0,output)
+      assert.match(output,/refused/)
+    }
+    report('stock binding and fork-policy-off both refuse before peer startup; constructed endpoints close')
+  }
+
+
 try {
+  if (process.argv.includes('--policy-controls')) await policyRefusals()
+  else {
   execFileSync(`${pgBin}/initdb`, ['-D', pgData, '-U', 'ait_fixture', '--auth-local=trust', '--auth-host=trust', '--no-locale', '--encoding=UTF8'], { stdio: 'ignore' })
   const pgPort = await freePort()
   execFileSync(`${pgBin}/pg_ctl`, ['-D', pgData, '-l', path.join(root, 'postgres.log'), '-o', `-h 127.0.0.1 -p ${pgPort} -c unix_socket_directories=''`, '-w', 'start'], { stdio: 'ignore' })
@@ -238,13 +280,50 @@ try {
     await startAppview(s)
   }
   report('existing actors prepared idempotently; DIDs, repository bytes and old token audiences preserved; new private handles')
+  // Default main() was reached through run-appview.sh and left relays disabled.
+  assert.equal(EndpointTicket.fromString(JSON.parse(Buffer.from((await publicLink(a)).slice(9), 'base64url')).ticket).endpointAddr().relayUrl(), null)
+  report('real run-appview.sh starts via realpath guard with assistance off by default')
+  if (process.env.IROH_RELAY_BIN) {
+    const relayPort = await freePort(); relayUrl = `http://127.0.0.1:${relayPort}/`
+    const config = path.join(root, 'relay.toml')
+    fs.writeFileSync(config, `http_bind_addr = "127.0.0.1:${relayPort}"\nenable_quic_addr_discovery = false\nenable_metrics = false\n`)
+    relay = spawn('sandbox-exec', ['-f', path.join(repo,'appview/scripts/peer-loopback.sb'), process.env.IROH_RELAY_BIN, '--dev', '-c', config], { env: { ...process.env, RUST_LOG: 'info' }, stdio: ['ignore', 'pipe', 'pipe'] })
+    await within(new Promise((resolve, reject) => {
+      const ready = c => { fs.appendFileSync(path.join(root,'relay.log'),c); if (/relay: serving on/i.test(c.toString())) resolve() }
+      relay.stdout.on('data', ready); relay.stderr.on('data', ready); relay.once('exit', () => reject(Error('fixture relay exited')))
+    }), 'owned relay readiness')
+    proxy = dgram.createSocket('udp4'); proxy.bind(0, '127.0.0.1'); await once(proxy, 'listening')
+    secondProxy = dgram.createSocket('udp4'); secondProxy.bind(0, '127.0.0.1'); await once(secondProxy, 'listening')
+    for (const [incoming,outgoing,source,target] of [[secondProxy,proxy,a,b],[proxy,secondProxy,b,a]]) {
+      incoming.on('message',(bytes,from)=>{
+        if (from.address !== '127.0.0.1' || from.port !== source.appviewPort) return
+        if (gateOpen) outgoing.send(bytes,target.appviewPort,'127.0.0.1')
+      })
+    }
+    for (const s of [a,b]) {
+      const exited = once(s.child, 'exit'); s.child.kill('SIGTERM'); await within(exited, 'default AppView close')
+      s.proxyPort = (s === a ? secondProxy : proxy).address().port
+      s.peerOptions = { assistanceRelay: relayUrl, bindAddress: `127.0.0.1:${s.appviewPort}`, directAddress: `127.0.0.1:${(s === a ? proxy : secondProxy).address().port}` }
+      await startAppview(s)
+    }
+  }
   const invitation = await publicLink(a)
-  await unapprovedRead(invitation)
-  await publicLink(b, invitation)
+  if (relay && !process.argv.includes('--repeat-core')) {
+    const start = performance.now()
+    await publicLink(b, invitation, { status: 1 })
+    assert(performance.now() - start >= 29000, 'Link did not exercise the real deadline')
+    assert.equal((await localCommand(b.control, 'status')).peers.length, 0)
+    await publicLink(b, invitation, { interrupt: true, status: 130 })
+    assert.equal((await localCommand(b.control, 'status')).peers.length, 0)
+    report('relay-only Link fails at 30s; prompt-synchronized Ctrl-C cancels without approval')
+  }
+  if (!relay) await unapprovedRead(invitation)
+  await publicLink(b, invitation, { openDirect: !!relay })
   await Promise.all([notification(a, b.oldPost.uri), notification(b, a.oldPost.uri)])
   await assert.rejects(localCommand(b.control, 'link', { invitation }))
   report('public Link confirmation creates approved direct streams; old history replays and invitation reuse fails')
   let trapRequests = 0
+  if (!relay) { // Adversarial endpoints use the unchanged direct-only fixture run.
   const trap = http.createServer((req, res) => { trapRequests++; res.end('unreachable') })
   trap.listen(0, '127.0.0.1'); await once(trap, 'listening')
   const host = parse(fs.readFileSync(path.join(a.repo, 'pds/.env'))).PDS_HOSTNAME
@@ -262,6 +341,7 @@ try {
     for (const header of ['authorization', 'cookie', 'x-forwarded-for']) assert.equal(forwarded[header], undefined)
   } finally { await new Promise(resolve => trap.close(resolve)) }
   report('approved-peer malformed/absolute targets refuse without crash or SSRF; WSS strips peer credentials')
+  }
   const directory = await tool(a, 'searchActors', { query: 'bobby' })
   assert.match(directory.content[0].text, new RegExp(b.account.did)); assert(!directory.content[0].text.includes('.test'))
   const readsBefore = a.plcDocReads
@@ -280,6 +360,26 @@ try {
   await notification(a, replyUri)
   const thread = await tool(a, 'getPostThread', { post_uri: postUri })
   assert.match(thread.content[0].text, new RegExp(replyUri))
+  if (relay && !process.argv.includes('--repeat-core')) {
+    const outputStart = a.output.length
+    gateOpen = false
+    await within(new Promise(resolve => {
+      const ready = () => {
+        if (a.output.slice(outputStart).includes('Unavailable: direct connection lost')) {
+          a.events.off('output', ready); resolve()
+        }
+      }
+      a.events.on('output', ready); ready()
+    }), 'native direct-loss status event', 30000)
+    assert.equal((await localCommand(a.control, 'status')).peers[0].state, 'Unavailable')
+    const backlog = await tool(b, 'post', { text: '@alice local commit while direct connection is unavailable' })
+    const backlogUri = /URI: (\S+)/.exec(backlog.content[0].text)[1]
+    assert(!a.push.some(n => n.uri === backlogUri), 'unavailable peer must not have received the new record')
+    gateOpen = true
+    await notification(a, backlogUri, 90000)
+    assert.equal(a.push.filter(n => n.uri === backlogUri).length, 1)
+    report('Unavailable is visible while direct UDP is cut; local post survives and sync resumes without loss')
+  }
   const record = (await b.agent.com.atproto.repo.getRecord({ repo: a.account.did, collection: 'ait.feed.post', rkey: postUri.split('/').at(-1) })).data
   assert.equal(record.uri, postUri); assert.equal(record.value.facets[0].features[0].did, b.account.did)
   await assert.rejects(b.agent.com.atproto.repo.getRecord({ repo: a.account.did, collection: 'ait.feed.post', rkey: postUri.split('/').at(-1), cid: b.oldPost.cid }))
@@ -320,17 +420,23 @@ try {
   await notification(a, /URI: (\S+)/.exec(reverseBarrier.content[0].text)[1])
   assert.equal(a.push.length, before + 2)
   report('Unlink closes approved access; relink/replay does not duplicate notifications')
+  if (relay && !process.argv.includes('--repeat-core')) await policyRefusals()
+  }
 } catch (error) { failure = error; console.error(error) }
 finally {
+  gateOpen = false
   for (const s of instances) {
     if (s.child && s.child.exitCode === null) {
       s.child.kill('SIGTERM')
-      try { await within(once(s.child, 'exit'), 'owned AppView close') } catch (error) { failure ??= error }
+      try { await within(once(s.child, 'exit'), 'owned AppView close') } catch (error) { failure ??= error; const exited = once(s.child,'exit'); s.child.kill('SIGKILL'); await exited }
     }
     try { await stopPds(s); await s.plc?.destroy() } catch (error) { failure ??= error }
     if (s.callback) await new Promise(resolve => s.callback.close(resolve))
     if (failure) fs.writeFileSync(path.join(s.repo, 'appview-output.log'), s.output || '')
   }
+  if (proxy) { proxy.close(); proxy = undefined }
+  if (secondProxy) { secondProxy.close(); secondProxy = undefined }
+  if (relay && relay.exitCode === null) { const exited = once(relay, 'exit'); relay.kill('SIGTERM'); await within(exited, 'owned relay close') }
   if (postmasterPid) {
     assert.equal(Number(fs.readFileSync(path.join(pgData, 'postmaster.pid'), 'utf8').split('\n')[0]), postmasterPid)
     execFileSync(`${pgBin}/pg_ctl`, ['-D', pgData, '-m', 'fast', '-w', 'stop'], { stdio: 'ignore' })

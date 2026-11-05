@@ -6,9 +6,9 @@ import { createInterface } from 'node:readline/promises'
 import { parseInvitation, sharingScope } from './peerNetwork.mjs'
 import { installationPaths } from './peerPrepare.mjs'
 
-export function localCommand(socketPath, operation, body = {}) {
+export function localCommand(socketPath, operation, body = {}, signal) {
   return new Promise((resolve, reject) => {
-    const request = http.request({ socketPath, path: `/${operation}`, method: 'POST',
+    const request = http.request({ signal, socketPath, path: `/${operation}`, method: 'POST',
       headers: { 'content-type': 'application/json' } }, response => {
       const chunks = []
       response.on('data', value => chunks.push(value)); response.on('error', reject)
@@ -40,7 +40,12 @@ async function main() {
     try { answer = await prompt.question('Link this computer? [y/N] ') }
     finally { prompt.close() }
     if (!/^y(es)?$/i.test(answer.trim())) { console.log('Not linked'); return }
-    console.log(JSON.stringify(await localCommand(control, 'link', { invitation: value })))
+    console.log('Connecting directly…')
+    const cancelled = new AbortController()
+    const interrupt = () => cancelled.abort()
+    process.once('SIGINT', interrupt)
+    try { console.log(JSON.stringify(await localCommand(control, 'link', { invitation: value }, cancelled.signal))) }
+    finally { process.off('SIGINT', interrupt) }
   } else {
     const status = await localCommand(control, 'status')
     for (const peer of status.peers) console.log(`${peer.state} ${JSON.stringify(peer.name)} ${peer.id}`)
@@ -50,5 +55,5 @@ async function main() {
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
-  main().catch(error => { console.error(`Link failed: ${error.message}. Check ait status; no relay will be used.`); process.exitCode = 1 })
+  main().catch(error => { console.error(error.name === 'AbortError' ? 'Link cancelled; no relay fallback.' : `Link failed: ${error.message}. Check ait status; no relay will be used.`); process.exitCode = error.name === 'AbortError' ? 130 : 1 })
 }

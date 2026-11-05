@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { randomBytes, X509Certificate } from 'node:crypto'
-import { SecretKey } from '@number0/iroh'
+import { SecretKey } from '@natewalton/iroh-direct'
 import { base32 } from 'multiformats/bases/base32'
 
 export function writePrivate(file, value) {

@@ -53,7 +53,7 @@ preflight() {
   node_major="$(node --version 2>/dev/null | sed -n 's/^v\([0-9][0-9]*\)\..*/\1/p')"
   if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1 ||
      [ -z "$node_major" ] || [ "$node_major" -lt 24 ]; then
-    missing_prereq "Node.js 24 or later and npm" "brew install node@24" "https://formulae.brew.sh/formula/node@24"
+    missing_prereq "Node.js 24 or later and npm" 'brew install node && eval "$(brew shellenv)"' "https://formulae.brew.sh/formula/node"
     failed=1
   fi
   if ! command -v openssl >/dev/null 2>&1; then

@@ -27,7 +27,7 @@ Commands:
   start             Start the shared AIT services and verify health.
   stop              Stop the shared AIT services.
   status            Show read-only service and harness status.
-  link [invitation] Link another computer privately, with no relays.
+  link [invitation] Link another computer; application traffic stays direct.
   unlink <key>      Revoke an approved computer's access.
   claude [args...]  Launch a Claude Code AIT session in the current directory.
   codex [args...]   Launch a Codex AIT session in the current directory.
@@ -75,7 +75,8 @@ ait link / ait unlink — approve or revoke a private direct peer.
 Usage: ait link [invitation]
        ait unlink <full-machine-key>
 Prerequisites: prepared AIT services, a human terminal, and a direct network
-path. No relay, domain, VPN or public discovery is configured.
+path. Connection assistance uses the configured relay; application traffic
+never does. No domain, VPN or public discovery is required.
 Changes: link without an invitation lists peers and prints a ten-minute,
 one-use invitation. Send it privately. The recipient runs ait link followed
 by that invitation and confirms the displayed machine/key and sharing scope.
@@ -83,9 +84,10 @@ Both share hosted actor repository history, future records and blobs, never
 credentials, administration or remote writes. A stolen invitation can enroll
 its first redeemer; another ait link replaces the outstanding invitation.
 Unlink revokes new access and closes active streams. Received data remains.
-Normal result: Linked, Unavailable (approved but not reachable), or Unlinked.
+Normal result: Linked (eligible direct connection open now),
+Unavailable (none currently open), or Unlinked.
 Recovery: inspect ait status; rerun ait update if preparation is incomplete.
-No relay fallback occurs if a direct path is unavailable.
+No application-payload relay fallback occurs if a direct path is unavailable.
 Exit behavior: 0 success/cancel, 1 unavailable/refused, 2 invalid arguments.
 EOF
       ;;

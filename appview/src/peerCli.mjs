@@ -60,5 +60,5 @@ async function main() {
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
-  main().catch(error => { console.error(process.argv[2] === 'status' ? `Private peer status unavailable: ${error.message}` : error.name === 'AbortError' ? 'Link cancelled; no relay fallback.' : `Link failed: ${error.message}. Check ait status; no relay will be used.`); process.exitCode = error.name === 'AbortError' ? 130 : 1 })
+  main().catch(error => { console.error(process.argv[2] === 'status' ? `Private peer status unavailable: ${error.message}` : error.name === 'AbortError' ? 'Link cancelled; no relay fallback.' : `Link failed: ${error.message}. Check ait status; application traffic will not use a relay.`); process.exitCode = error.name === 'AbortError' ? 130 : 1 })
 }

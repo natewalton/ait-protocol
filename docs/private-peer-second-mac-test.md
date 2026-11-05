@@ -34,16 +34,41 @@ If needed, install Homebrew using its [official instructions](https://brew.sh/),
 including Command Line Tools and its printed shell setup. Then run:
 
 ```bash
-eval "$(/opt/homebrew/bin/brew shellenv)"
-brew install git node@24 openssl
-export PATH="/opt/homebrew/opt/node@24/bin:$PATH"
+brew install git openssl
 uname -m
 node --version
 ```
 
-Expect `arm64` and Node `v24...` or newer. On Apple Silicon, an `x86_64` Terminal
-is running under Rosetta: reopen it without Rosetta. Repeat the `eval` and
-`export` commands in each new test Terminal window.
+Expect `arm64` and Node **24 or newer**. Keep an existing working Node 24+
+installation; do not switch Node major versions just for this test. In
+particular, do not prepend keg-only `node@24` to PATH if your default is Node 25:
+SQLite native modules must be built with the same Node major that your next
+Terminal and background services will run.
+
+If Node is absent or older than 24, install Homebrew's current default Node:
+
+```bash
+brew install node
+eval "$(/opt/homebrew/bin/brew shellenv)"
+node --version
+```
+
+Then close and reopen Terminal and compare both runtimes:
+
+```bash
+node --version
+/opt/homebrew/bin/node --version
+```
+
+For an existing Node installation, compare these two versions too. Both must be
+24 or newer and have the same major version. Use this default
+Node, not a temporary PATH override, for the whole test. If a version manager
+makes Terminal and `/opt/homebrew/bin/node` use different majors, stop and ask
+the coordinator to align them before rebuilding. After any future Node-major
+change, rebuild AIT's dependencies with that runtime before starting services.
+
+On Apple Silicon, an `x86_64` Terminal is running under Rosetta: reopen it without
+Rosetta before continuing.
 
 Have at least one signed-in harness: [Claude Code](https://code.claude.com/docs/en/quickstart)
 or [Codex](https://developers.openai.com/codex/cli/). Model usage uses that Mac's
@@ -84,6 +109,9 @@ in place. An unrelated launchd configuration is refused.
   for service in plc pds appview codex-appserver; do
     if launchctl print "gui/$(id -u)/com.ait.$service" >/dev/null 2>&1; then
       AIT_JOB="$HOME/Library/LaunchAgents/com.ait.$service.plist"
+      test -f "$AIT_JOB" || {
+        echo "STOP: loaded com.ait.$service has no matching plist. Ask the coordinator."; exit 1;
+      }
       AIT_JOB_SCRIPT="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$AIT_JOB")"
       test "$AIT_JOB_SCRIPT" = "$AIT_TEST_DIR/bin/run-$service.sh" || {
         echo "STOP: com.ait.$service belongs to another setup."; exit 1;
@@ -114,8 +142,9 @@ The backup branch preserves old code only; it is not a database or identity
 rollback. Do not reset code after a failed preparation without asking the
 coordinator.
 
-This recipe starts services for the current boot. If launchd jobs were unloaded,
-auto-start remains paused. After the test, you may restore it with
+This recipe starts services manually. `bootout` unloads jobs for this login;
+the retained plists can load again at the **next login**. It does not permanently
+disable auto-start. After the test, you may reload them now with
 `/bin/bash "$HOME/.local/share/ait-protocol/bin/install-services.sh"` during a
 separate pause with harness sessions closed. That command reloads the jobs and
 restarts services; it is not part of the connection test.

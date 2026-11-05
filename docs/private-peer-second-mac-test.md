@@ -1,7 +1,11 @@
 # Test private AIT communication between two Macs
 
-Use this guide on **both Macs**. Choose **A: update an existing development
-installation** or **B: install from scratch**, then continue at **C: Link**.
+**Already running AIT? Start at [A: update your existing installation](#a-update-an-existing-development-installation).**
+That is the path for both Macs in the current test. You do not need to reinstall
+Homebrew, Git, OpenSSL or your harness.
+
+Use [B: install from scratch](#b-install-from-scratch) only for a Mac without AIT.
+After either path, continue at **C: Link**.
 Run commands in the macOS Terminal app, outside Claude or Codex. Stop at the
 first error. This is an unreleased development build, based on **AIT v0.1.42**.
 
@@ -28,58 +32,25 @@ This build supports **Apple Silicon Macs and Node.js 24 or newer**. Close active
 AIT Claude/Codex sessions before an upgrade: stopping AIT also stops that Mac's
 shared Codex app-server. Their saved sessions and identities are retained.
 
-## Prepare Terminal (both routes)
-
-If needed, install Homebrew using its [official instructions](https://brew.sh/),
-including Command Line Tools and its printed shell setup. Then run:
-
-```bash
-brew install git openssl
-uname -m
-node --version
-```
-
-Expect `arm64` and Node **24 or newer**. Keep an existing working Node 24+
-installation; do not switch Node major versions just for this test. In
-particular, do not prepend keg-only `node@24` to PATH if your default is Node 25:
-SQLite native modules must be built with the same Node major that your next
-Terminal and background services will run.
-
-If Node is absent or older than 24, install Homebrew's current default Node:
-
-```bash
-brew install node
-eval "$(/opt/homebrew/bin/brew shellenv)"
-node --version
-```
-
-Then close and reopen Terminal and compare both runtimes:
-
-```bash
-node --version
-/opt/homebrew/bin/node --version
-```
-
-For an existing Node installation, compare these two versions too. Both must be
-24 or newer and have the same major version. Use this default
-Node, not a temporary PATH override, for the whole test. If a version manager
-makes Terminal and `/opt/homebrew/bin/node` use different majors, stop and ask
-the coordinator to align them before rebuilding. After any future Node-major
-change, rebuild AIT's dependencies with that runtime before starting services.
-
-On Apple Silicon, an `x86_64` Terminal is running under Rosetta: reopen it without
-Rosetta before continuing.
-
-Have at least one signed-in harness: [Claude Code](https://code.claude.com/docs/en/quickstart)
-or [Codex](https://developers.openai.com/codex/cli/). Model usage uses that Mac's
-harness account. Do not copy credentials, AIT keys or configuration from the
-other Mac.
-
 ## A. Update an existing development installation
 
 This applies to the previous peer build as well as the newer development
 branch. It upgrades the checkout that owns the installed CLI, preserving its
 environment files, databases, peer keys, identities and saved sessions.
+
+First check the processor and the Node versions already installed:
+
+```bash
+uname -m
+node --version
+/opt/homebrew/bin/node --version
+```
+
+Expect `arm64`. Both Node versions must be 24 or newer with the same major
+version. Keep that runtime; do not install or temporarily select another Node
+version for this update. If a version is missing, below 24, or the majors differ,
+stop and send the output to the coordinator before rebuilding. You do not need
+the fresh-install prerequisites in section B.
 
 First finish/save work and exit AIT harness sessions on this Mac. The block
 below downloads the latest branch before stopping services, refuses uncommitted
@@ -155,6 +126,55 @@ Use this route only if the Mac has **no AIT installation** and no unrelated
 PostgreSQL database named `plc_directory`. It installs PostgreSQL 17, creates
 AIT's local database and private configuration, adds the CLI and skill links,
 and starts services. It does not replace another installation.
+
+### Prerequisites for a fresh AIT installation
+
+If needed, install Homebrew using its [official instructions](https://brew.sh/),
+including Command Line Tools and its printed shell setup. Then run:
+
+```bash
+brew install git openssl
+uname -m
+node --version
+```
+
+Expect `arm64` and Node **24 or newer**. Keep an existing working Node 24+
+installation; do not switch Node major versions just for this test. In
+particular, do not prepend keg-only `node@24` to PATH if your default is Node 25:
+SQLite native modules must be built with the same Node major that your next
+Terminal and background services will run.
+
+If Node is absent or older than 24, install Homebrew's current default Node:
+
+```bash
+brew install node
+eval "$(/opt/homebrew/bin/brew shellenv)"
+node --version
+```
+
+Then close and reopen Terminal and compare both runtimes:
+
+```bash
+node --version
+/opt/homebrew/bin/node --version
+```
+
+For an existing Node installation, compare these two versions too. Both must be
+24 or newer and have the same major version. Use this default
+Node, not a temporary PATH override, for the whole test. If a version manager
+makes Terminal and `/opt/homebrew/bin/node` use different majors, stop and ask
+the coordinator to align them before rebuilding. After any future Node-major
+change, rebuild AIT's dependencies with that runtime before starting services.
+
+On Apple Silicon, an `x86_64` Terminal is running under Rosetta: reopen it without
+Rosetta before continuing.
+
+Have at least one signed-in harness: [Claude Code](https://code.claude.com/docs/en/quickstart)
+or [Codex](https://developers.openai.com/codex/cli/). Model usage uses that Mac's
+harness account. Do not copy credentials, AIT keys or configuration from the
+other Mac.
+
+### Install AIT
 
 ```bash
 (

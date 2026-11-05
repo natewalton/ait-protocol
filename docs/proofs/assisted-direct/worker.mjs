@@ -1,8 +1,10 @@
+import assert from 'node:assert/strict'
 import readline from 'node:readline'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 const pkg = createRequire(import.meta.url)(process.env.IROH_BINDING)
 const { Endpoint, EndpointId, EndpointAddr, RelayMode, presetMinimal } = pkg
+if (process.env.IROH_AUDIT_DEBUG) pkg.setLogLevel(pkg.LogLevel.Debug)
 const [role, bindPort, relayUrl] = process.argv.slice(2)
 const out = value => process.stdout.write(JSON.stringify(value) + '\n')
 const builder = Endpoint.builder(); presetMinimal(builder)
@@ -15,14 +17,17 @@ if (typeof endpoint.directApplicationDataOnly !== 'function' ||
     endpoint.directApplicationDataOnly() !== (process.env.IROH_POLICY === 'strict')) {
   await endpoint.close(); throw Error('effective native payload policy mismatch')
 }
-let connection, watcher
+let connection, watcher, eventWatcher
 const received = []
 function connected(c) {
   connection = c
-  watcher = c.watchPaths((...args) => {
-    const paths = args.find(Array.isArray)
-    if (paths) out({ event: 'paths', connectionId: c.stableId(), paths })
-    else out({ event: 'watchError', args })
+  watcher = c.watchPaths((error, paths) => {
+    assert.equal(error, null); assert(Array.isArray(paths))
+    out({ event: 'paths', connectionId: c.stableId(), paths })
+  })
+  eventWatcher = c.watchPathEvents((error, value) => {
+    assert.equal(error, null)
+    out({event:'pathEvent',connectionId:c.stableId(),value})
   })
   out({ event: 'connected', connectionId: c.stableId(), paths: c.paths() })
   void (async () => {
@@ -73,6 +78,7 @@ lines.on('line', line => { void (async () => {
     else if (request.command === 'removeRelay') value = await endpoint.removeRelay(relayUrl)
     else if (request.command === 'disconnect') {
       if (watcher) await watcher.stop()
+      if (eventWatcher) await eventWatcher.stop()
       connection.close(0n, []); await connection.closed(); value = true
     }
     else if (request.command === 'send') {
@@ -90,9 +96,16 @@ lines.on('line', line => { void (async () => {
       const echoed = Buffer.from(await stream.recv.readToEnd(32768))
       if (!echoed.equals(data)) throw Error('bidirectional echo mismatch')
       value = { length: echoed.length, sha256: createHash('sha256').update(echoed).digest('hex') }
+     } else if (request.command === 'watchSnapshot') {
+      let handle
+      value = await new Promise((resolve,reject)=> {
+        handle = connection.watchPaths((error, paths)=> error ? reject(error) : resolve(paths))
+      })
+      await handle.stop()
     } else if (request.command === 'snapshot') value = { connectionId: connection?.stableId(), closed: connection?.closeReason(), strict: endpoint.directApplicationDataOnly(), paths: connection?.paths(), stats: endpoint.stats(), received }
     else if (request.command === 'close') {
       if (watcher) await watcher.stop()
+      if (eventWatcher) await eventWatcher.stop()
       if (connection) connection.close(0n, [])
       await endpoint.close(); lines.close(); value = { closed: endpoint.isClosed() }
     } else throw Error('unknown command')

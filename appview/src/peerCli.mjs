@@ -25,6 +25,11 @@ export function localCommand(socketPath, operation, body = {}, signal) {
 async function main() {
   const [operation, repo, value] = process.argv.slice(2)
   const { directory } = installationPaths(repo), control = path.join(directory, 'control.sock')
+  if (operation === 'status') {
+    const status = await localCommand(control, 'status', {}, AbortSignal.timeout(3000))
+    for (const peer of status.peers) console.log(`${peer.state} ${JSON.stringify(peer.name)} ${peer.id}`)
+    return
+  }
   if (operation === 'unlink') {
     if (!value) throw Error('use ait unlink <full machine key>')
     console.log(JSON.stringify(await localCommand(control, 'unlink', { id: value }))); return
@@ -55,5 +60,5 @@ async function main() {
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
-  main().catch(error => { console.error(error.name === 'AbortError' ? 'Link cancelled; no relay fallback.' : `Link failed: ${error.message}. Check ait status; no relay will be used.`); process.exitCode = error.name === 'AbortError' ? 130 : 1 })
+  main().catch(error => { console.error(process.argv[2] === 'status' ? `Private peer status unavailable: ${error.message}` : error.name === 'AbortError' ? 'Link cancelled; no relay fallback.' : `Link failed: ${error.message}. Check ait status; no relay will be used.`); process.exitCode = error.name === 'AbortError' ? 130 : 1 })
 }

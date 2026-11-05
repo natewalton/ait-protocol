@@ -16,7 +16,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 import { randomBytes, randomUUID, createHash } from 'node:crypto'
 import { parse } from 'dotenv'
 import { AtpAgent } from '@atproto/api'
-import { Endpoint, EndpointTicket, RelayMode, presetMinimal } from '@number0/iroh'
+import { Endpoint, EndpointTicket, RelayMode, presetMinimal } from '@natewalton/iroh-direct'
 import { prepareInstallation, needsPreparation, installationPaths } from '../dist/peerPrepare.mjs'
 import { localCommand } from '../dist/peerCli.mjs'
 
@@ -122,13 +122,14 @@ async function writeOldPost(s, target) {
 async function startAppview(s) {
   const env = { PATH: process.env.PATH, HOME: path.join(s.repo, 'home'), LOG_ENABLED: 'false',
     APPVIEW_PORT: String(s.appviewPort), APPVIEW_PDS_URL: s.url, APPVIEW_PDS_WS_URL: s.url.replace('http:', 'ws:'),
-    APPVIEW_PLC_URL: s.values.didPlcUrl }
+    APPVIEW_PLC_URL: s.values.didPlcUrl, APPVIEW_PEER_RELAY: s.peerOptions?.assistanceRelay ?? '' }
   s.launchEnv = env
   if (s.peerOptions) {
     const profile = `(version 1)(allow default)(deny network*)(allow network-bind (local ip "localhost:*"))(allow network-inbound (local ip "localhost:*"))(allow network-outbound (remote tcp "localhost:*"))(allow network-outbound (remote udp "localhost:${s.proxyPort}"))(allow network-bind (local unix-socket (regex #"^${root}/")))(allow network-inbound (local unix-socket (regex #"^${root}/")))(allow network-outbound (remote unix-socket (regex #"^${root}/")))`
     const serverFile = s.serverFile ?? path.join(repo,'appview/dist/server.js')
-    const setup = s.policyOff ? `import {createRequire} from 'node:module';createRequire(${JSON.stringify(serverFile)})('@number0/iroh').EndpointBuilder.prototype.directApplicationDataOnly=function(){};` : ''
-    const source = `${setup}const {main}=await import(${JSON.stringify(pathToFileURL(serverFile).href)}); await main(${JSON.stringify(s.peerOptions)})`
+    const setup = s.policyOff ? `import {createRequire} from 'node:module';createRequire(${JSON.stringify(serverFile)})('@natewalton/iroh-direct').EndpointBuilder.prototype.directApplicationDataOnly=function(){};` : ''
+    const { assistanceRelay, ...options } = s.peerOptions
+    const source = `${setup}const {main}=await import(${JSON.stringify(pathToFileURL(serverFile).href)}); await main(${JSON.stringify(options)})`
     s.child = spawn('sandbox-exec', ['-p', profile, process.execPath, '--input-type=module', '-e', source], { cwd: path.join(s.repo, 'appview'), env, stdio: ['ignore', 'pipe', 'pipe'] })
   } else {
     // Exercise the real wrapper and the realpath direct-execution guard.
@@ -245,15 +246,15 @@ async function policyRefusals(local) {
       fs.cpSync(path.join(repo,'appview/dist'),path.join(directory,'dist'),{recursive:true})
       const modules = path.join(directory,'node_modules');fs.mkdirSync(modules)
       for (const entry of fs.readdirSync(path.join(repo,'appview/node_modules'))) {
-        if (entry !== '@number0') fs.symlinkSync(path.join(repo,'appview/node_modules',entry),path.join(modules,entry))
+        if (entry !== '@natewalton') fs.symlinkSync(path.join(repo,'appview/node_modules',entry),path.join(modules,entry))
         else {
           const scope=path.join(modules,entry);fs.mkdirSync(scope)
           for (const name of fs.readdirSync(path.join(repo,'appview/node_modules',entry))) {
-            fs.symlinkSync(name==='iroh' && mode==='stock' ? path.dirname(process.env.IROH_STOCK_BINDING) : path.join(repo,'appview/node_modules',entry,name),path.join(scope,name))
+            fs.symlinkSync(name==='iroh-direct' && mode==='stock' ? path.dirname(process.env.IROH_STOCK_BINDING) : path.join(repo,'appview/node_modules',entry,name),path.join(scope,name))
           }
         }
       }
-      const script = `import assert from 'node:assert/strict';import fs from 'node:fs';import {createRequire} from 'node:module';const require=createRequire(${JSON.stringify(path.join(directory,'package.json'))});const binding=require('@number0/iroh');if(${JSON.stringify(mode)}==='off') binding.EndpointBuilder.prototype.directApplicationDataOnly=function(){};const {startPeerNetwork}=await import(${JSON.stringify(pathToFileURL(path.join(directory,'dist/peerNetwork.mjs')).href)});await assert.rejects(startPeerNetwork({directory:${JSON.stringify(path.join(directory,'peers'))},bindAddress:'127.0.0.1:0'}),/cannot confirm direct-only application data/);assert(!fs.existsSync(${JSON.stringify(path.join(directory,'peers/control.sock'))}));assert(!process.getActiveResourcesInfo().some(x=>['UDPWrap','TCPServerWrap'].includes(x)));console.log('refused')`
+      const script = `import assert from 'node:assert/strict';import fs from 'node:fs';import {createRequire} from 'node:module';const require=createRequire(${JSON.stringify(path.join(directory,'package.json'))});const binding=require('@natewalton/iroh-direct');if(${JSON.stringify(mode)}==='off') binding.EndpointBuilder.prototype.directApplicationDataOnly=function(){};const {startPeerNetwork}=await import(${JSON.stringify(pathToFileURL(path.join(directory,'dist/peerNetwork.mjs')).href)});await assert.rejects(startPeerNetwork({directory:${JSON.stringify(path.join(directory,'peers'))},bindAddress:'127.0.0.1:0'}),/cannot confirm direct-only application data/);assert(!fs.existsSync(${JSON.stringify(path.join(directory,'peers/control.sock'))}));assert(!process.getActiveResourcesInfo().some(x=>['UDPWrap','TCPServerWrap'].includes(x)));console.log('refused')`
       const child = spawn('sandbox-exec', ['-f',path.join(repo,'appview/scripts/peer-loopback.sb'),process.execPath,'--input-type=module','-e',script], { env: { PATH: process.env.PATH, HOME: path.join(root,'refusal-home') }, stdio: ['ignore','pipe','pipe'] })
       let output = '';child.stdout.on('data',c=>output+=c);child.stderr.on('data',c=>output+=c)
       assert.equal((await within(once(child,'exit'),'native policy refusal'))[0],0,output)
@@ -343,9 +344,9 @@ try {
     await policyRefusals(a)
   } else {
   report('existing actors prepared idempotently; DIDs, repository bytes and old token audiences preserved; new private handles')
-  // Default main() was reached through run-appview.sh and left relays disabled.
+  // Real wrapper was reached with assistance explicitly disabled in the fixture.
   assert.equal(EndpointTicket.fromString(JSON.parse(Buffer.from((await publicLink(a)).slice(9), 'base64url')).ticket).endpointAddr().relayUrl(), null)
-  report('real run-appview.sh starts via realpath guard with assistance off by default')
+  report('real run-appview.sh starts via realpath guard with fixture assistance explicitly disabled')
   if (process.env.IROH_RELAY_BIN) {
     const relayPort = await freePort(); relayUrl = `http://127.0.0.1:${relayPort}/`
     const config = path.join(root, 'relay.toml')

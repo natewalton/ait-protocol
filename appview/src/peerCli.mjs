@@ -36,7 +36,7 @@ async function main() {
   }
   if (operation !== 'link') throw Error('expected link or unlink')
   console.log(sharingScope)
-  console.log('Direct connections only; no relay fallback. A stolen invitation can enroll its first redeemer.')
+  console.log('Direct application traffic only; connection assistance may use the configured relay. No relay payload fallback. A stolen invitation can enroll its first redeemer.')
   if (value) {
     const invitation = parseInvitation(value)
     console.log(`Machine: ${JSON.stringify(invitation.name)}\nKey: ${invitation.address.id().toString()}`)

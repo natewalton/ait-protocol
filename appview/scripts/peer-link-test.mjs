@@ -126,7 +126,9 @@ async function startAppview(s) {
   s.launchEnv = env
   if (s.peerOptions) {
     const profile = `(version 1)(allow default)(deny network*)(allow network-bind (local ip "localhost:*"))(allow network-inbound (local ip "localhost:*"))(allow network-outbound (remote tcp "localhost:*"))(allow network-outbound (remote udp "localhost:${s.proxyPort}"))(allow network-bind (local unix-socket (regex #"^${root}/")))(allow network-inbound (local unix-socket (regex #"^${root}/")))(allow network-outbound (remote unix-socket (regex #"^${root}/")))`
-    const source = `import {main} from ${JSON.stringify(pathToFileURL(path.join(repo, 'appview/dist/server.js')).href)}; await main(${JSON.stringify(s.peerOptions)})`
+    const serverFile = s.serverFile ?? path.join(repo,'appview/dist/server.js')
+    const setup = s.policyOff ? `import {createRequire} from 'node:module';createRequire(${JSON.stringify(serverFile)})('@number0/iroh').EndpointBuilder.prototype.directApplicationDataOnly=function(){};` : ''
+    const source = `${setup}const {main}=await import(${JSON.stringify(pathToFileURL(serverFile).href)}); await main(${JSON.stringify(s.peerOptions)})`
     s.child = spawn('sandbox-exec', ['-p', profile, process.execPath, '--input-type=module', '-e', source], { cwd: path.join(s.repo, 'appview'), env, stdio: ['ignore', 'pipe', 'pipe'] })
   } else {
     // Exercise the real wrapper and the realpath direct-execution guard.
@@ -230,7 +232,11 @@ async function peerRequest(from, to, invitation, request) {
   } finally { secure?.destroy(); connection?.close(0n, []); await endpoint.close() }
 }
 
-async function policyRefusals() {
+async function policyRefusals(local) {
+    if (!fs.existsSync(path.join(root,'lexicons'))) fs.symlinkSync(path.join(repo,'lexicons'),path.join(root,'lexicons'))
+    if (local) {
+      const exited=once(local.child,'exit');local.child.kill('SIGTERM');await within(exited,'normal peer server stop')
+    }
     assert(process.env.IROH_STOCK_BINDING, 'explicit stock binding needed for refusal control')
     for (const mode of ['stock', 'off']) {
       const directory = path.join(root, `refusal-${mode}`)
@@ -252,13 +258,66 @@ async function policyRefusals() {
       let output = '';child.stdout.on('data',c=>output+=c);child.stderr.on('data',c=>output+=c)
       assert.equal((await within(once(child,'exit'),'native policy refusal'))[0],0,output)
       assert.match(output,/refused/)
+      if (local) {
+        local.serverFile = path.join(directory,'dist/server.js')
+        local.policyOff = mode === 'off'
+        await startAppview(local)
+        assert.match(local.output,/cannot confirm direct-only application data/)
+        await assert.rejects(localCommand(local.control,'status'))
+        assert.match((await tool(local,'getProfile',{actor:local.account.did})).content[0].text,new RegExp(local.name))
+        assert.match((await tool(local,'getAuthorFeed',{actor:local.account.did})).content[0].text,/old alice history/)
+        assert(!(await tool(local,'getTimeline',{})).isError)
+        const localPost=await tool(local,'post',{text:`local-only post with ${mode} peer policy unavailable`})
+        assert.match(localPost.content[0].text,/URI: at:\/\//)
+        const exited=once(local.child,'exit');local.child.kill('SIGTERM');await within(exited,'local-only server stop')
+      }
     }
-    report('stock binding and fork-policy-off both refuse before peer startup; constructed endpoints close')
+    report(local ? 'stock and policy-off refuse peer startup while real AppView serves authenticated local reads/writes' : 'stock binding and fork-policy-off both refuse before peer startup; constructed endpoints close')
   }
+
+
+
+async function connectBound() {
+  const { startPeerNetwork } = await import('../dist/peerNetwork.mjs')
+  const { IdResolver } = await import('@atproto/identity')
+  const { default: Sqlite } = await import('better-sqlite3')
+  const db = new Sqlite(':memory:')
+  const directory = path.join(root,'connect-bound')
+  const network = await startPeerNetwork({ directory,db,pdsUrl:'http://127.0.0.1:9',plcUrl:'http://127.0.0.1:9',
+    localResolver:new IdResolver({plcUrl:'http://127.0.0.1:9'}),accountFile:path.join(root,'no-account'),bindAddress:'127.0.0.1:0' })
+  const builder=Endpoint.builder();presetMinimal(builder);builder.directApplicationDataOnly()
+  const alpn=[...Buffer.from('ait-link/1')];builder.alpns([alpn]);builder.bindAddr('127.0.0.1:0')
+  const target=await builder.bind(), original=Endpoint.prototype.connect
+  const invitation=`ait-link:${Buffer.from(JSON.stringify({version:1,ticket:EndpointTicket.fromAddr(target.addr()).toString(),name:'late native connect',secret:randomBytes(32).toString('hex'),expires:Date.now()+600000})).toString('base64url')}`
+  try {
+    for (const cancel of [true,false]) {
+      const [hidden,remote]=await Promise.all([original.call(network.endpoint,target.addr(),alpn),
+        (async()=>await (await (await target.acceptNext()).accept()).connect())()])
+      const noPairingBytes=remote.acceptBi().then(()=>{throw Error('late connect started pairing')},()=>{})
+      let release
+      Endpoint.prototype.connect=function(){return new Promise(resolve=>{release=resolve})}
+      try {
+        const abort=new AbortController(), start=performance.now()
+        const command=network.command('link',{invitation},abort.signal)
+        if(cancel) abort.abort()
+        await assert.rejects(within(command,'pending native connect bound',cancel?1000:35000),cancel?/Link cancelled/:/Unavailable: could not establish a direct connection/)
+        if(!cancel) assert(performance.now()-start>=29000,'deadline was not exercised')
+        assert.equal((await network.command('status')).peers.length,0)
+        release(hidden)
+        await within(hidden.closed(),'late native connection closes',2000)
+        await within(noPairingBytes,'late connect sends no pairing stream',2000)
+      } finally {
+        Endpoint.prototype.connect=original;release?.(hidden);hidden.close(0n,[]);remote.close(0n,[])
+      }
+    }
+    report('pending native connect cannot hold cancellation/deadline; late real connections close without pairing')
+  } finally { Endpoint.prototype.connect=original;await target.close();await network.close();db.close() }
+}
 
 
 try {
   if (process.argv.includes('--policy-controls')) await policyRefusals()
+  else if (process.argv.includes('--connect-bound')) await connectBound()
   else {
   execFileSync(`${pgBin}/initdb`, ['-D', pgData, '-U', 'ait_fixture', '--auth-local=trust', '--auth-host=trust', '--no-locale', '--encoding=UTF8'], { stdio: 'ignore' })
   const pgPort = await freePort()
@@ -279,6 +338,10 @@ try {
     assert.equal(hash(Buffer.from((await s.agent.com.atproto.sync.getRepo({ did: s.account.did })).data)), s.carHash)
     await startAppview(s)
   }
+  if (process.argv.includes('--server-policy')) {
+    a.peerOptions={bindAddress:`127.0.0.1:${a.appviewPort}`};a.proxyPort=await freePort()
+    await policyRefusals(a)
+  } else {
   report('existing actors prepared idempotently; DIDs, repository bytes and old token audiences preserved; new private handles')
   // Default main() was reached through run-appview.sh and left relays disabled.
   assert.equal(EndpointTicket.fromString(JSON.parse(Buffer.from((await publicLink(a)).slice(9), 'base64url')).ticket).endpointAddr().relayUrl(), null)
@@ -420,7 +483,8 @@ try {
   await notification(a, /URI: (\S+)/.exec(reverseBarrier.content[0].text)[1])
   assert.equal(a.push.length, before + 2)
   report('Unlink closes approved access; relink/replay does not duplicate notifications')
-  if (relay && !process.argv.includes('--repeat-core')) await policyRefusals()
+  if (relay && !process.argv.includes('--repeat-core')) { await policyRefusals(a); await connectBound() }
+  }
   }
 } catch (error) { failure = error; console.error(error) }
 finally {

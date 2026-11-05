@@ -3,6 +3,8 @@ import { IdResolver, MemoryCache } from '@atproto/identity'
 import { schemas } from '@atproto/api'
 import { safeFetchWrap } from '@atproto-labs/fetch-node'
 import path from 'node:path'
+import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import {
   AuthRequiredError,
   InvalidRequestError,
@@ -44,7 +46,7 @@ if (!APPVIEW_DID) {
 // self-only for every caller, which is the safe default for a fresh instance.
 const OPERATOR = process.env.APPVIEW_OPERATOR
 
-async function main() {
+export async function main(peerOptions: { assistanceRelay?: string; bindAddress?: string; directAddress?: string } = {}) {
   const db = openDb(DB_PATH)
 
   // ADR-0038: handle hydration moves from a maintained `actors.handle`
@@ -68,7 +70,9 @@ async function main() {
     pdsUrl: PDS_URL, plcUrl: PLC_URL, localResolver, accountFile: installationPaths(repo).accountFile,
     // Reuse AppView's configured port for UDP, so approved direct addresses
     // survive an ordinary restart without a discovery service or new setting.
-    bindAddress: `0.0.0.0:${PORT}`,
+    bindAddress: peerOptions.bindAddress ?? `0.0.0.0:${PORT}`,
+    assistanceRelay: peerOptions.assistanceRelay,
+    directAddress: peerOptions.directAddress,
   })
   const idResolver = peers.resolver as IdResolver
   // Service-auth JWTs come from this installation's PDS. Reuse its existing
@@ -387,7 +391,7 @@ async function main() {
   process.on('SIGINT', shutdown)
 }
 
-main().catch((err) => {
+if (process.argv[1] && fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(process.argv[1])) main().catch((err) => {
   console.error('appview failed to start:', err)
   process.exit(1)
 })

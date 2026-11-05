@@ -439,7 +439,7 @@ source-bound clients remain. Public discovery is disabled. The relay learns
 endpoint IDs, IPs and traffic metadata, but native policy prohibits application
 STREAM/DATAGRAM payload on it. No arbitrary-NAT connectivity guarantee.
 
-Adoption scope: **15 files**. AppView dependency/lock and peer imports; real-entrypoint relay default
+Adoption scope: **16 files**. AppView dependency/lock and peer imports; real-entrypoint relay default
 and env example; Link disclosure; installer Node floor and its existing test;
 existing journey fixture package references; README and second-Mac guide.
 No cryptography, scheduler, fork binary, stable release, live restart, identity
@@ -461,7 +461,7 @@ Official relay/operator reference: https://github.com/n0-computer/iroh/blob/v1.4
 and https://github.com/n0-computer/docs.iroh.computer/blob/main/add-a-relay.mdx .
 Public relays are for development/testing, not a production availability promise.
 
-Adoption paths: `README.md`, `appview/.env.example`, `appview/package.json`,
+Adoption paths: `ait`, `README.md`, `appview/.env.example`, `appview/package.json`,
 `appview/package-lock.json`, `appview/src/peerNetwork.mjs`,
 `appview/src/peerState.mjs`, `appview/src/peerPrepare.mjs`,
 `appview/src/peerCli.mjs`, `appview/src/server.ts`,
@@ -472,7 +472,7 @@ Adoption paths: `README.md`, `appview/.env.example`, `appview/package.json`,
 Executed adoption validation (Node 25.7.0, isolated checkout): all four `npm ci`
 installs and AppView/MCP builds pass; feed 12/12, projection 17/17, mentions and
 picker pass; CLI, updater 28 cases, v0.1.42 service-ownership suite and advisory
-gate pass. Full owned relay-assisted journey passes 10/10 using the installed
+gate pass. Full owned relay-assisted journey passes 11/11 using the installed
 release addon; stock and policy-off controls preserve local reads/writes.
 Packaged strict and default transport controls both pass. The npm SHA-512
 integrity matches the reviewed SHA-256 tarball; installed addon SHA-256 is
@@ -480,3 +480,16 @@ integrity matches the reviewed SHA-256 tarball; installed addon SHA-256 is
 A disposable strict endpoint reached the configured public development relay,
 advertised that same URL and closed without opening an application stream.
 No cross-internet peer conversation or live AIT upgrade has run in this slice.
+
+Independent pre-push review corrections: retain an existing default Node >=24
+instead of forcing keg-only Node24, so install and later shell/launchd ABI match;
+installer remedy puts Homebrew's default Node on PATH. Retained launchd plists
+may reload next login after bootout; guide states that. CLI/README describe
+assistance consistently. The wrapper fixture captures the unset-relay default
+before any network construction, without contacting the public relay.
+
+Correction validation: real-launcher unset-relay assertion passes in the full
+11-outcome journey; CLI suite passes after the remedy/copy updates. The native
+policy, dependency artifact and packet enforcement are unchanged by this
+correction. Guide command blocks parse as Bash. Both live installations remain
+unmodified.

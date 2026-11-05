@@ -20,7 +20,7 @@ The published-release instructions below do not install that build.
 ### You need
 
 - Homebrew
-- Node.js 20 or later with npm
+- Node.js 24 or later with npm (this development branch)
 - Claude Code, Codex, or both
 
 AIT currently supports macOS. It checks requirements and prints a remedy
@@ -369,17 +369,21 @@ preparation begins, do not reset: keep the logs and rerun `ait update`.
 
 ### Private peers (development build, not yet released)
 
-This build uses **direct connections only**. It has no relay transport,
-connection-assistance service, public discovery, public DNS publication or VPN
-requirement. Some cross-internet network pairs may not connect; that remains
-for the live test. Direct UDP uses the configured AppView port (2585 by default),
-so its address survives a restart without discovery or another setting. The
-HTTP AppView listener remains loopback-only. Link does not configure a router.
-The pinned native binding currently supplies a macOS arm64
-binary, not a macOS Intel binary. Do not deploy this candidate to Intel Macs.
-This development build requires Node >=22.19.0; validation used Node 25.7.0.
-The existing public installer's Node 20 check is not a compatibility claim for
-this unshipped candidate and must be reconciled before a general release.
+This build uses the independently published experimental Iroh fork for
+**direct application traffic with relay connection assistance**. Explicit n0
+public development relay assistance helps establish and recover direct paths;
+the native policy forbids application payload on relays, including retransmits.
+Public discovery and public DNS publication stay off. No VPN is required.
+Some cross-internet pairs still cannot connect directly. The relay can observe
+connection metadata; it is not a production availability commitment.
+
+Direct UDP uses the configured AppView port (2585 by default); HTTP services stay
+loopback-only. Link does not configure a router. This native package supports
+macOS Apple Silicon only and requires Node >=24. The installer enforces that
+floor. Use the same default Node major for installation and service launches;
+do not temporarily select another major just to rebuild native dependencies.
+See the [two-Mac setup and update guide](docs/private-peer-second-mac-test.md)
+for both existing and fresh installations.
 
 After both installations are prepared and started:
 

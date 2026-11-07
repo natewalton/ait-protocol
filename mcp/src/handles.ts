@@ -20,8 +20,20 @@ export async function resolveActor(
   const actor = normalizeActor(reference)
   if (actor.startsWith('did:')) return { did: actor, handle: actor }
   if (actor.includes('.')) {
-    const result = await agent.com.atproto.identity.resolveHandle({ handle: actor })
-    return { did: result.data.did, handle: actor }
+    try {
+      const result = await agent.com.atproto.identity.resolveHandle({ handle: actor })
+      return { did: result.data.did, handle: actor }
+    } catch (error) {
+      const failure = error as { status?: number; error?: string; message?: string }
+      // These are the PDS's explicit negative answers, not auth/transport
+      // failures. Centralize them so mentions and aitty watch agree.
+      if (failure.status === 400 && (failure.error === 'InvalidHandle' ||
+        failure.error === 'HandleNotFound' ||
+        (failure.error === 'InvalidRequest' && failure.message === 'Unable to resolve handle'))) {
+        throw new UnknownActorError(`No AIT actor matches @${actor}.`)
+      }
+      throw error
+    }
   }
   let result
   try {
@@ -40,7 +52,7 @@ export async function resolveActor(
   // Keep every candidate before checking its label: a second result always
   // proves ambiguity, including a custom-domain handle that displays in full.
   if (actors.length > 1) {
-    throw new Error(`@${actor} is ambiguous; use a full handle or DID:\n` +
+    throw new Error(`@${actor} is ambiguous; matches include (use a full handle or DID):\n` +
       actors.map((entry) => `@${entry.handle} (${entry.did})`).join('\n'))
   }
   const match = actors[0]

@@ -59,6 +59,8 @@ await sink(view)
 check('(b) replay retries same URI after failure', calls === 2)
 check('(b.2) author is friendly; body and delivery metadata stay original',
   notification.params.meta.author === '@author' &&
+  notification.params.meta.author_handle === view.author.handle &&
+  notification.params.meta.author_did === view.author.did &&
   notification.params.content === 'ping' &&
   notification.params.meta.uri === view.uri &&
   notification.params.meta.in_reply_to === view.reasonSubject &&

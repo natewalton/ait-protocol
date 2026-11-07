@@ -235,6 +235,8 @@ function formatChannelMeta(n: NotificationView): Record<string, string> {
   const meta: Record<string, string> = {
     reason: n.reason,
     author: n.author.handle ? `@${displayHandle(n.author.handle)}` : n.author.did,
+    author_handle: n.author.handle,
+    author_did: n.author.did,
     indexed_at: n.indexedAt,
     uri: n.uri,
   }

@@ -1,9 +1,10 @@
 // Isolated naming journeys through real MCP/aitty consumers, with fake agents.
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
 const root = mkdtempSync(join(tmpdir(), 'ait-handles-'))
 process.env.XDG_DATA_HOME = root
 process.env.AIT_MCP_TEST_SESSION_ID = randomUUID()
@@ -18,6 +19,9 @@ try {
   const actor = { did, handle: canonical, live: false }
   let actors = [actor]
   let directoryFailure = null
+  let resolverFailure = null
+  let active = 0
+  let peak = 0
   const calls = []
   const writes = []
   const deleted = []
@@ -28,9 +32,15 @@ try {
     calls.push({ nsid, params, data })
     if (nsid === 'ait.actor.searchActors') {
       if (directoryFailure) throw directoryFailure
+      active++; peak = Math.max(peak, active)
+      await new Promise((resolve) => setImmediate(resolve))
+      active--
       return { data: { actors: actors.filter((entry) => entry.handle.startsWith(params.q)).slice(0, params.limit ?? 100) } }
     }
-    if (nsid === 'com.atproto.identity.resolveHandle') return { data: { did } }
+    if (nsid === 'com.atproto.identity.resolveHandle') {
+      if (resolverFailure) throw resolverFailure
+      return { data: { did } }
+    }
     if (nsid === 'ait.actor.getProfile') return { data: profile }
     if (nsid === 'ait.feed.getAuthorFeed') return { data: { feed: [] } }
     if (nsid === 'com.atproto.repo.createRecord') { writes.push(data); return { data: { uri, cid } } }
@@ -108,6 +118,32 @@ try {
     assert.equal(writes.length, before)
   }
   actors = [actor]; directoryFailure = null
+  // Actual @atproto/pds 0.4.226 negative shape, shared with explicit actor inputs.
+  resolverFailure = Object.assign(new Error('Unable to resolve handle'), { status: 400, error: 'InvalidRequest' })
+  await assert.rejects(resolveActor(agent, 'unknown.test'), UnknownActorError)
+  await postHandler({ text: 'Keep @unknown.test as text' })
+  assert.equal(writes.at(-1).record.text, 'Keep @unknown.test as text')
+  assert.equal(writes.at(-1).record.facets, undefined)
+  resolverFailure = Object.assign(new Error('invalid syntax'), { status: 400, error: 'InvalidHandle' })
+  await assert.rejects(resolveActor(agent, 'invalid.test'), UnknownActorError)
+  resolverFailure = Object.assign(new Error('expired'), { status: 400, error: 'ExpiredToken' })
+  await assert.rejects(resolveActor(agent, canonical), (error) => error === resolverFailure)
+  resolverFailure = Object.assign(new Error('upstream unavailable'), { status: 503, error: 'UpstreamFailure' })
+  const beforeFailure = writes.length
+  await assert.rejects(postHandler({ text: '@braze-pm.test' }), /upstream unavailable/)
+  await assert.rejects(replyHandler({ text: '@braze-pm.test', parent_uri: uri }), /upstream unavailable/)
+  assert.equal(writes.length, beforeFailure)
+  const beforeProse = calls.length
+  await postHandler({ text: 'Email us at @support.example or install @types/node.' })
+  assert.equal(calls.slice(beforeProse).filter((call) => /resolveHandle|searchActors/.test(call.nsid)).length, 0)
+  resolverFailure = null
+  await postHandler({ text: 'Stray `\nNotify @braze-pm\n```js\n@braze-pm.test\n' })
+  assert.equal(writes.at(-1).record.facets.length, 1, 'unclosed fence hides code; stray backtick does not hide next line')
+  actors = [actor, { did: 'did:plc:another', handle: 'another.test' }]
+  peak = 0
+  await postHandler({ text: '@braze-pm @another @braze-pm' })
+  assert.equal(peak, 1, 'unique directory lookups are serialized')
+  actors = [actor]
 
   const { actionFollow, actionUnfollow, actionRetire } = await import('../dist/aitty/commands.js')
   const identity = { did: ownDid, handle: 'watcher.test', password: 'fake', createdAt: new Date().toISOString(), follows: {} }
@@ -149,6 +185,23 @@ try {
   editor.results = [actor]; editor.line = '@bra'; editor.cursor = 4
   editor.accept()
   assert.equal(editor.line, '@braze-pm ')
+  // Run the actual watch entry point with a fixture-only agent and terminal.
+  const fixture = join(root, 'watch-agent.mjs')
+  writeFileSync(fixture, `
+import { AtpAgent } from ${JSON.stringify(new URL('../node_modules/@atproto/api/dist/index.js', import.meta.url).href)}
+Object.defineProperty(process.stdin, 'isTTY', { value: true })
+Object.defineProperty(process.stdout, 'isTTY', { value: true })
+AtpAgent.prototype.login = async () => ({ success: true })
+AtpAgent.prototype.call = async (nsid) => {
+  if (nsid !== 'com.atproto.identity.resolveHandle') throw new Error('unexpected network action: ' + nsid)
+  throw Object.assign(new Error('Unable to resolve handle'), { status: 400, error: 'InvalidRequest' })
+}
+`)
+  const env = { ...process.env }
+  for (const key of ['CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SESSION_ID', 'CODEX_THREAD_ID', 'AIT_SESSION_ID', 'AI_AGENT']) delete env[key]
+  const watched = spawnSync(process.execPath, ['--import', fixture, new URL('../dist/aitty/main.js', import.meta.url).pathname, 'watch', 'unknown.test'], { env, encoding: 'utf8', timeout: 5000 })
+  assert.equal(watched.status, 0, watched.stderr)
+  assert.match(watched.stderr, /none of those handles resolved: unknown.test/)
   console.log('all friendly handle consumer checks passed')
 } finally {
   rmSync(root, { recursive: true, force: true })

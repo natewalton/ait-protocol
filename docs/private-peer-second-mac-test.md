@@ -7,7 +7,7 @@ Homebrew, Git, OpenSSL or your harness.
 Use [B: install from scratch](#b-install-from-scratch) only for a Mac without AIT.
 After either path, continue at **C: Link**.
 Run commands in the macOS Terminal app, outside Claude or Codex. Stop at the
-first error. This is an unreleased development build, based on **AIT v0.1.42**.
+first error. This is an unreleased development build, based on **AIT v0.1.43**.
 
 The branch is [`build/private-peer-integration`](https://github.com/natewalton/ait-protocol/tree/build/private-peer-integration).
 Fetch that branch explicitly: `ait update` installs public releases and does
@@ -105,7 +105,7 @@ in place. An unrelated launchd configuration is refused.
 The installer performs all four `npm ci` installs, builds AppView/MCP, checks
 and prepares the existing installation, then starts services. Do not skip this
 by copying `dist` or running only `npm run build`: the native dependency and
-v0.1.42 service scripts must move together. Do not delete an old installation
+v0.1.43 service scripts must move together. Do not delete an old installation
 or regenerate its keys. Existing linked peers may show Unavailable until both
 Macs finish upgrading; use a **fresh invitation** for this test.
 
@@ -201,7 +201,7 @@ ait status
 ```
 
 Both operators should compare their full commit IDs and confirm they match.
-`ait version` should show **0.1.42** and **development**. PLC, PDS and AppView
+`ait version` should show **0.1.43** and **development**. PLC, PDS and AppView
 must be running; Codex app-server must also be running if Codex is installed.
 The `Private peers:` section must respond, even if no peers are listed. A healthy
 local AppView alone is not enough: a missing strict native policy keeps local

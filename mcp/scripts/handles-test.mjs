@@ -9,6 +9,8 @@ const root = mkdtempSync(join(tmpdir(), 'ait-handles-'))
 process.env.XDG_DATA_HOME = root
 process.env.AIT_MCP_TEST_SESSION_ID = randomUUID()
 delete process.env.CLAUDE_PROJECT_DIR
+process.env.APPVIEW_URL = 'http://127.0.0.1:1'
+const originalFetch = globalThis.fetch
 try {
   const { displayHandle, resolveActor, UnknownActorError } = await import('../dist/handles.js')
   const machine = 'iq3l5t4vuaat4l2zbzjrkoryccobcfi4s5pujtcmtsqen6vf6jea'
@@ -53,10 +55,19 @@ try {
   setIdentity({ did: ownDid, handle: 'self.test', password: 'fake', accessJwt: 'fake', refreshJwt: 'fake' })
   const { getRawAgent } = await import('../dist/atproto/pdsClient.js')
   const agent = getRawAgent()
+  Object.defineProperty(agent, 'session', { value: { did: ownDid, handle: 'self.test', accessJwt: 'fake', refreshJwt: 'fake' }, configurable: true })
   agent.resumeSession = async () => ({ success: true })
   let logins = 0
   agent.login = async () => { logins++; return { success: true } }
   agent.call = respond
+  globalThis.fetch = async (input) => {
+    const url = new URL(input instanceof Request ? input.url : input)
+    assert.equal(url.origin, process.env.APPVIEW_URL, 'full handles stay on the local projection')
+    assert.equal(url.pathname, '/xrpc/com.atproto.identity.resolveHandle')
+    calls.push({ nsid: 'com.atproto.identity.resolveHandle', params: { handle: url.searchParams.get('handle') } })
+    if (resolverFailure) return Response.json({ error: resolverFailure.error, message: resolverFailure.message }, { status: resolverFailure.status })
+    return Response.json({ did })
+  }
 
   assert.equal(displayHandle(canonical), 'braze-pm')
   assert.equal(displayHandle('old.test'), 'old')
@@ -118,16 +129,16 @@ try {
     assert.equal(writes.length, before)
   }
   actors = [actor]; directoryFailure = null
-  // Actual @atproto/pds 0.4.226 negative shape, shared with explicit actor inputs.
-  resolverFailure = Object.assign(new Error('Unable to resolve handle'), { status: 400, error: 'InvalidRequest' })
+  // Private full handles use the local projection's explicit negative shape.
+  resolverFailure = Object.assign(new Error('Unable to resolve handle'), { status: 404, error: 'HandleNotFound' })
   await assert.rejects(resolveActor(agent, 'unknown.test'), UnknownActorError)
   await postHandler({ text: 'Keep @unknown.test as text' })
   assert.equal(writes.at(-1).record.text, 'Keep @unknown.test as text')
   assert.equal(writes.at(-1).record.facets, undefined)
-  resolverFailure = Object.assign(new Error('invalid syntax'), { status: 400, error: 'InvalidHandle' })
+  resolverFailure = Object.assign(new Error('invalid syntax'), { status: 400, error: 'HandleNotFound' })
   await assert.rejects(resolveActor(agent, 'invalid.test'), UnknownActorError)
   resolverFailure = Object.assign(new Error('expired'), { status: 400, error: 'ExpiredToken' })
-  await assert.rejects(resolveActor(agent, canonical), (error) => error === resolverFailure)
+  await assert.rejects(resolveActor(agent, canonical), (error) => error.status === resolverFailure.status && error.error === resolverFailure.error)
   resolverFailure = Object.assign(new Error('upstream unavailable'), { status: 503, error: 'UpstreamFailure' })
   const beforeFailure = writes.length
   await assert.rejects(postHandler({ text: '@braze-pm.test' }), /upstream unavailable/)
@@ -191,11 +202,8 @@ try {
 import { AtpAgent } from ${JSON.stringify(new URL('../node_modules/@atproto/api/dist/index.js', import.meta.url).href)}
 Object.defineProperty(process.stdin, 'isTTY', { value: true })
 Object.defineProperty(process.stdout, 'isTTY', { value: true })
-AtpAgent.prototype.login = async () => ({ success: true })
-AtpAgent.prototype.call = async (nsid) => {
-  if (nsid !== 'com.atproto.identity.resolveHandle') throw new Error('unexpected network action: ' + nsid)
-  throw Object.assign(new Error('Unable to resolve handle'), { status: 400, error: 'InvalidRequest' })
-}
+AtpAgent.prototype.login = async function () { Object.defineProperty(this, 'session', { value: { did: ${JSON.stringify(ownDid)}, handle: 'watcher.test' } }); return { success: true } }
+globalThis.fetch = async () => Response.json({error:'HandleNotFound',message:'unknown'}, {status:404})
 `)
   const env = { ...process.env }
   for (const key of ['CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SESSION_ID', 'CODEX_THREAD_ID', 'AIT_SESSION_ID', 'AI_AGENT']) delete env[key]
@@ -204,5 +212,6 @@ AtpAgent.prototype.call = async (nsid) => {
   assert.match(watched.stderr, /none of those handles resolved: unknown.test/)
   console.log('all friendly handle consumer checks passed')
 } finally {
+  globalThis.fetch = originalFetch
   rmSync(root, { recursive: true, force: true })
 }

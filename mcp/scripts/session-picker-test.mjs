@@ -269,7 +269,7 @@ assertSelection(result, 'codex', codexProject, codexId)
 // when the directory hydrates the new private machine namespace, for BOTH
 // harnesses and both listed/retired directory scopes. Discovery never writes.
 const upgradedActors = directoryActors.map((actor) => ({
-  ...actor, handle: actor.handle.replace(/\.test$/, `.${'a'.repeat(52)}.aitproto.com`),
+  ...actor, handle: `${actor.handle.split('.')[0]}.${'b'.repeat(52)}.aitproto.com`,
 }))
 const identitySnapshots = [claudeId, codexId].map((id) => fs.readFileSync(identityPath(id), 'utf8'))
 write(actorsFile, JSON.stringify(upgradedActors))

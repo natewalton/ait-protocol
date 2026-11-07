@@ -1,4 +1,5 @@
 import type { AtpAgent } from '@atproto/api'
+import { ensureValidDid } from '@atproto/syntax'
 
 // Convenience labels never replace canonical handles in identities or records.
 export function displayHandle(handle: string): string {
@@ -18,22 +19,17 @@ export async function resolveActor(
   retiredOnly = false,
 ): Promise<{ did: string; handle: string }> {
   const actor = normalizeActor(reference)
-  if (actor.startsWith('did:')) return { did: actor, handle: actor }
+  if (actor.startsWith('did:')) {
+    ensureValidDid(actor)
+    return { did: actor, handle: actor }
+  }
   if (actor.includes('.')) {
-    try {
-      const result = await agent.com.atproto.identity.resolveHandle({ handle: actor })
-      return { did: result.data.did, handle: actor }
-    } catch (error) {
-      const failure = error as { status?: number; error?: string; message?: string }
-      // These are the PDS's explicit negative answers, not auth/transport
-      // failures. Centralize them so mentions and aitty watch agree.
-      if (failure.status === 400 && (failure.error === 'InvalidHandle' ||
-        failure.error === 'HandleNotFound' ||
-        (failure.error === 'InvalidRequest' && failure.message === 'Unable to resolve handle'))) {
-        throw new UnknownActorError(`No AIT actor matches @${actor}.`)
-      }
-      throw error
-    }
+    // Private peers resolve only through the local verified projection. A PDS
+    // or public resolver must not turn a peer label into a different identity.
+    const { resolveActorDid } = await import('./atproto/actorLookup.js')
+    const did = await resolveActorDid(actor)
+    if (!did) throw new UnknownActorError(`No AIT actor matches @${actor}.`)
+    return { did, handle: actor }
   }
   let result
   try {
@@ -59,5 +55,6 @@ export async function resolveActor(
   if (!match || displayHandle(match.handle).toLowerCase() !== actor) {
     throw new UnknownActorError(`No AIT actor matches @${actor}. Use a full handle or DID.`)
   }
+  ensureValidDid(match.did)
   return match
 }

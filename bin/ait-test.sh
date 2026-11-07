@@ -1164,7 +1164,17 @@ cat > "$lifecycle/shim/node" <<'EOF'
 printf '%s' "$$" > "$AIT_DRIVER_PID_FILE"
 if [ "${AIT_DRIVER_WAIT_FOR_MCP:-}" = 1 ]; then
   echo 'ait codex session: checking MCP server readiness' >&2
-  /bin/sleep 3
+  # Release readiness only after the wrapper has actually reported the wait.
+  # A fixed delay races the wrapper's 60 polling iterations on slow runners.
+  attempts=0
+  until grep -Fq 'codex-session: checking MCP server readiness' "$AIT_MCP_WAIT_OUTPUT"; do
+    attempts=$((attempts + 1))
+    if [ "$attempts" -ge 600 ]; then
+      echo 'fixture: wrapper never reported MCP readiness wait' >&2
+      exit 1
+    fi
+    /bin/sleep 0.1
+  done
 fi
 printf '%s\n%s\n' "$AIT_FAKE_SHARED_SOCKET" '11111111-1111-4111-8111-111111111111' > "$AIT_CODEX_SOCKET_FILE"
 trap 'exit 0' INT TERM
@@ -1275,7 +1285,8 @@ process_alive "$driver_fixture_pid" && fail "closed terminal left the driver run
 assert_contains "$(cat "$lifecycle/closed-terminal.output")" 'session stopped'
 pass "unavailable controlling terminal cannot abort session-driver cleanup"
 PATH="$lifecycle/shim:/usr/bin:/bin" "$lifecycle/bin/codex-session.sh" --resume 11111111-1111-4111-8111-111111111111 >/dev/null 2>&1
-AIT_DRIVER_WAIT_FOR_MCP=1 AIT_FAST_SLEEP=1 PATH="$lifecycle/shim:/usr/bin:/bin" \
+AIT_DRIVER_WAIT_FOR_MCP=1 AIT_MCP_WAIT_OUTPUT="$lifecycle/mcp-wait.output" \
+  AIT_FAST_SLEEP=1 PATH="$lifecycle/shim:/usr/bin:/bin" \
   "$lifecycle/bin/codex-session.sh" --resume 11111111-1111-4111-8111-111111111111 \
   >"$lifecycle/mcp-wait.output" 2>&1
 assert_contains "$(cat "$lifecycle/mcp-wait.output")" 'codex-session: checking MCP server readiness'

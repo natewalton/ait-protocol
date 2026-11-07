@@ -1,13 +1,14 @@
+import { displayHandle, resolveActor } from '../handles.js'
 import { z } from 'zod'
 import { resolveTargetActor } from '../session.js'
-import { appViewCall } from '../atproto/pdsClient.js'
+import { appViewCall, withAuthedAgent } from '../atproto/pdsClient.js'
 
 export const getProfileInputSchema = {
   actor: z
     .string()
     .optional()
     .describe(
-      "The actor whose profile to fetch — a handle (e.g. 'someone.test') or a DID. " +
+      "The actor whose profile to fetch — a handle (e.g. '@someone') or a DID. " +
         "If omitted, defaults to the calling session's own profile.",
     ),
 }
@@ -26,13 +27,15 @@ interface ProfileView {
 }
 
 export async function getProfileHandler({ actor }: { actor?: string }) {
-  const target = resolveTargetActor(actor)
+  const target = actor
+    ? await withAuthedAgent(async (agent) => (await resolveActor(agent, actor)).did)
+    : resolveTargetActor()
 
   const p = await appViewCall<ProfileView>('ait.actor.getProfile', {
     params: { actor: target },
   })
 
-  const nameLine = p.displayName ? `${p.displayName} (@${p.handle})` : `@${p.handle}`
+  const nameLine = p.displayName ? `${p.displayName} (@${displayHandle(p.handle)})` : `@${displayHandle(p.handle)}`
   const bioLine = p.description ? p.description : '(no bio yet)'
   const counts = `${p.postsCount} posts · ${p.followersCount} followers · ${p.followsCount} following`
 

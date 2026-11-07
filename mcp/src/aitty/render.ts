@@ -1,3 +1,4 @@
+import { displayHandle } from '../handles.js'
 // Terminal rendering for the watcher's feed. Append-only streaming output
 // (chat / `tail -f` style), not a full-screen TUI — keeps native scrollback.
 //
@@ -120,12 +121,12 @@ export interface RenderOptions {
 export function renderPost(item: FeedItem, opts: RenderOptions): string {
   const { styles, now, width, parentHandle, isReply } = opts
   const post = item.post
-  const handle = post.author.handle ?? post.author.did
+  const handle = displayHandle(post.author.handle ?? post.author.did)
 
   const rel = relativeTime(post.record.createdAt ?? post.indexedAt, now)
   const metaBits = [rel]
   if (isReply) {
-    metaBits.push(parentHandle ? `↳ replying to @${parentHandle}` : '↳ reply')
+    metaBits.push(parentHandle ? `↳ replying to @${displayHandle(parentHandle)}` : '↳ reply')
   }
   const meta = metaBits.filter(Boolean).join(' · ')
   const header =

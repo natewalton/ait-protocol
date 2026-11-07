@@ -20,6 +20,7 @@ import {
   type StrongRef,
 } from '../atproto/aitClient.js'
 import { buildMentionFacets, type MentionFacet } from '../atproto/mentions.js'
+import { resolveActor } from '../handles.js'
 
 export type { StrongRef }
 
@@ -82,9 +83,7 @@ export async function resolveHandleToDid(
   agent: AtpAgent,
   handle: string,
 ): Promise<string> {
-  if (handle.startsWith('did:')) return handle
-  const res = await agent.com.atproto.identity.resolveHandle({ handle })
-  return res.data.did
+  return (await resolveActor(agent, handle)).did
 }
 
 export async function followAccount(
@@ -165,7 +164,7 @@ export async function fetchHandleForDid(
 //
 // User-owned record writes go through AtpAgent's bundled com.atproto.repo.*
 // namespace directly (those lexicons ship in @atproto/api), not the AppView
-// proxy. @handle.test mentions resolve to facets via buildMentionFacets
+// proxy. @name mentions resolve to facets via buildMentionFacets
 // (session-free). Record shapes mirror mcp/src/tools/{post,reply}.ts.
 
 export interface WriteResult {
@@ -252,7 +251,7 @@ export async function fetchAuthorFeed(
   limit: number,
 ): Promise<FeedItem[]> {
   const data = await proxyCall<TimelineResponse>(agent, 'ait.feed.getAuthorFeed', {
-    actor,
+    actor: (await resolveActor(agent, actor)).did,
     limit,
   })
   return data.feed
@@ -275,7 +274,9 @@ export async function fetchProfile(
   agent: AtpAgent,
   actor: string,
 ): Promise<ProfileView> {
-  return proxyCall<ProfileView>(agent, 'ait.actor.getProfile', { actor })
+  return proxyCall<ProfileView>(agent, 'ait.actor.getProfile', {
+    actor: (await resolveActor(agent, actor)).did,
+  })
 }
 
 // Directory search backing the @-mention picker (ait.actor.searchActors):

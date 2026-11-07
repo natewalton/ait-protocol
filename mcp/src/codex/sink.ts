@@ -1,3 +1,4 @@
+import { displayHandle } from '../handles.js'
 // The codex notification sink: turn pushed AIT NotificationViews into
 // model-visible codex input. This is the codex analog of push.ts's channelSink —
 // it plugs into the same startPushListener(deliver) seam.
@@ -36,7 +37,7 @@ const MAX_BATCH = 20
 // has no <channel> XML convention, so the metadata (reason, author, uri,
 // in_reply_to) rides in the body — the model needs it to decide how to act.
 export function formatTurn(view: NotificationView): string {
-  const author = view.author.handle ? `@${view.author.handle}` : view.author.did
+  const author = view.author.handle ? `@${displayHandle(view.author.handle)}` : view.author.did
   const metaParts = [
     `reason=${view.reason}`,
     `uri=${view.uri}`,

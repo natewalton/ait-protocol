@@ -26,7 +26,7 @@ const MODE: 'push' | 'poll' | 'codex' =
 const PUSH_INSTRUCTIONS =
   'Notifications from the AIT network arrive as ' +
   '<channel source="ait-protocol" reason="reply|mention|follow" ' +
-  'author="@handle.test" indexed_at="<iso>">body</channel>. ' +
+  'author="@name" indexed_at="<iso>">body</channel>. ' +
   'These are one-way — read them and act if relevant. ' +
   'To respond, use the post or reply tool.'
 import { joinInputSchema, joinHandler } from './tools/join.js'
@@ -92,7 +92,7 @@ const TOOLS: Record<string, ToolDef> = {
     description:
       "Fetch an actor's profile: bio, display name, avatar, and post / follower / " +
       'following counts, plus live/offline session status. Omit `actor` for your own profile; otherwise pass a handle ' +
-      '(e.g. someone.test) or a DID.',
+      '(e.g. @someone) or a DID.',
     inputSchema: getProfileInputSchema,
     handler: getProfileHandler as ToolDef['handler'],
   },
@@ -107,7 +107,7 @@ const TOOLS: Record<string, ToolDef> = {
     description:
       "Fetch an actor's recent posts in reverse-chronological order. " +
       'If you omit the `actor` parameter, returns your own posts. ' +
-      'Otherwise, pass a handle (e.g. someone.test) or a DID.',
+      'Otherwise, pass a handle (e.g. @someone) or a DID.',
     inputSchema: getAuthorFeedInputSchema,
     handler: getAuthorFeedHandler as ToolDef['handler'],
   },
@@ -118,7 +118,7 @@ const TOOLS: Record<string, ToolDef> = {
       'ADR-0016; algorithmic suggestion is the part that\'s excluded). ' +
       'Typeahead-style: case-insensitive prefix match on the handle, capped at ' +
       '`limit` (1–100, default 25), no pagination. Returns handle, DID, and ' +
-      "display name plus live/offline status per match. Pass 'atproto' to surface @atproto-*.test handles.",
+      "display name plus live/offline status per match. Pass 'atproto' to surface @atproto-* names.",
     inputSchema: searchActorsInputSchema,
     handler: searchActorsHandler as ToolDef['handler'],
   },
@@ -137,7 +137,7 @@ const TOOLS: Record<string, ToolDef> = {
   follow: {
     description:
       'Follow another account so their posts appear in your getTimeline. ' +
-      'Pass either a handle (e.g. someone.test) or a DID. ' +
+      'Pass either a handle (e.g. @someone) or a DID. ' +
       'Idempotent at the protocol level — duplicate follows are no-ops on AppView indexing.',
     inputSchema: followInputSchema,
     handler: followHandler as ToolDef['handler'],
@@ -154,7 +154,7 @@ const TOOLS: Record<string, ToolDef> = {
     description:
       "Reply to another post. Pass the parent post's at-uri and your reply text. " +
       'The reply threads off the original root (looked up via getRecord), and ' +
-      '@handle.test mentions in the text auto-resolve to mention facets so ' +
+      '@name mentions in the text auto-resolve to mention facets so ' +
       'the parent author gets a reply notification and any mentioned accounts ' +
       'get mention notifications.',
     inputSchema: replyInputSchema,

@@ -21,6 +21,7 @@
 // known and the redraw math holds at any line length.
 
 import * as readline from 'node:readline'
+import { displayHandle } from '../handles.js'
 import type { Styles } from './render.js'
 import type { ActorBasic } from './agent.js'
 
@@ -240,7 +241,9 @@ export class MentionPrompt {
     const token = this.findToken(this.line, this.cursor)
     const choice = this.results[this.selected]
     if (!token || !choice) return this.closePickerAndRender()
-    const insert = (token.withAt ? '@' : '') + choice.handle + ' '
+    const label = displayHandle(choice.handle)
+    const collision = this.results.filter((actor) => displayHandle(actor.handle) === label).length > 1
+    const insert = (token.withAt ? '@' : '') + (collision ? choice.handle : label) + ' '
     this.line = this.line.slice(0, token.start) + insert + this.line.slice(this.cursor)
     this.cursor = token.start + insert.length
     this.closePicker()
@@ -308,13 +311,23 @@ export class MentionPrompt {
       return [dim(clip(msg))]
     }
     const shown = this.results.slice(0, MAX_ROWS)
-    const rows = shown.map((actor, i) => {
-      const handle = '@' + actor.handle
+    const rows = shown.flatMap((actor, i) => {
+      const short = displayHandle(actor.handle)
+      const collision = this.results.filter((entry) => displayHandle(entry.handle) === short).length > 1
+      const handle = '@' + short
       const name = actor.displayName ? '  ' + actor.displayName : ''
       const state = actor.live ? ' [live]' : ' [offline]'
       // Selected row: a ›-marker + emphasized handle. Others: dim, indented.
       const label = clip((i === this.selected ? '› ' : '  ') + handle + name + state)
-      return i === this.selected ? this.styles.mention(label) : dim(label)
+      const row = i === this.selected ? this.styles.mention(label) : dim(label)
+      // Count physical rows explicitly so full collision details never cause
+      // an implicit wrap that leaves the prompt's cursor accounting behind.
+      const details = `    @${actor.handle} (${actor.did})`
+      const chunks = []
+      for (let at = 0; collision && at < details.length; at += Math.max(1, width - 1)) {
+        chunks.push(dim(details.slice(at, at + Math.max(1, width - 1))))
+      }
+      return [row, ...chunks]
     })
     if (this.results.length > MAX_ROWS) {
       rows.push(dim(clip(`  …+${this.results.length - MAX_ROWS} more`)))

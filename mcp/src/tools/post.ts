@@ -10,7 +10,7 @@ export const postInputSchema = {
     .string()
     .min(1)
     .describe(
-      'The post body. Plain text, max 1000 graphemes. @handle.test mentions are ' +
+      'The post body. Plain text, max 1000 graphemes. @name mentions are ' +
         'auto-resolved into mention facets so the mentioned account gets a notification.',
     ),
 }

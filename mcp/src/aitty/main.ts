@@ -25,7 +25,6 @@ import {
   makeAgent,
   createWatcherAccount,
   loginWatcher,
-  resolveHandleToDid,
   followAccount,
   HandleTakenError,
   type FeedItem,
@@ -34,6 +33,7 @@ import { makeStyles, supportsColor, feedWidth } from './render.js'
 import { renderFeedItem } from './feed.js'
 import { runInteractive } from './interactive.js'
 import { emitBacklog, pollFeed, BACKLOG, SEEN_CAP } from './stream.js'
+import { displayHandle, resolveActor, UnknownActorError } from '../handles.js'
 import {
   actionPost,
   actionReply,
@@ -171,7 +171,8 @@ Options (before the subcommand):
   --password <pw>     pin the account password at creation (default: random)
   -h, --help          this message
 
-Handles may be written @name, name, name.test, or a did:….
+Handles may be written @name, name, a full handle, or a did:….
+Ambiguous names require the full handle or DID shown in the error.
 aitty logs in to one persistent handle (stored 0600 under
 $XDG_DATA_HOME/ait-watcher/) and uses only end-client affordances — the same
 surface a human at bsky.app has (ADR-0006); realtime is polling (ADR-0010).
@@ -270,10 +271,16 @@ async function ensureFollows(
     // Resolve to a DID; if resolve hiccups but we already follow this handle,
     // reuse the stored DID so a transient failure doesn't hide its posts.
     let did: string | undefined
+    let key = handle
     try {
-      did = await resolveHandleToDid(agent, handle)
-    } catch {
-      did = identity.follows[handle]?.did
+      const actor = await resolveActor(agent, handle)
+      did = actor.did
+      key = actor.handle
+    } catch (error) {
+      // Only an explicit stored identifier can safely use the old cached DID.
+      // A bare name must never bypass a directory ambiguity or outage.
+      if (handle.includes('.') || handle.startsWith('did:')) did = identity.follows[handle]?.did
+      if (!did && !(error instanceof UnknownActorError)) throw error
     }
     if (!did) {
       unresolved.push(handle)
@@ -283,10 +290,10 @@ async function ensureFollows(
     if (desiredDids.has(did)) continue // same account given twice
     desiredDids.add(did)
 
-    if (!identity.follows[handle]) {
+    if (!Object.values(identity.follows).some((entry) => entry.did === did)) {
       try {
         const followUri = await followAccount(agent, identity.did, did)
-        identity.follows[handle] = { did, followUri }
+        identity.follows[key] = { did, followUri }
         saveIdentity(identity)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -325,7 +332,7 @@ async function runWatch(
   }
   process.stderr.write(
     `watching ${desiredDids.size} handle${desiredDids.size === 1 ? '' : 's'} as ` +
-      `@${identity.handle} (every ${flags.intervalSecs}s). Ctrl-C to stop.\n`,
+      `@${displayHandle(identity.handle)} (every ${flags.intervalSecs}s). Ctrl-C to stop.\n`,
   )
   if (unresolved.length > 0) {
     process.stderr.write(`not found yet (will pick up on a later run): ${unresolved.join(', ')}\n`)
@@ -363,7 +370,7 @@ function runLogout(): void {
     return
   }
   process.stderr.write(
-    `logged out${id ? ` @${id.handle}` : ''} — removed ${identityFilePath()}.\n` +
+    `logged out${id ? ` @${displayHandle(id.handle)}` : ''} — removed ${identityFilePath()}.\n` +
       `The handle can never be re-minted (ADR-0014); a new run creates a new one.\n`,
   )
 }

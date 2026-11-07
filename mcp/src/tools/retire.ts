@@ -1,3 +1,4 @@
+import { displayHandle } from '../handles.js'
 // Self-retirement (ADR-0043): a session takes its own handle out of the AIT
 // directory when it is done, so peers typing into an @-picker stop being offered
 // a handle that will never answer.
@@ -37,12 +38,12 @@ export async function retireHandler({ retired }: { retired?: boolean }) {
   })
 
   const text = wantRetired
-    ? `Retired @${me.handle} from directory search. Other sessions searching handles ` +
+    ? `Retired @${displayHandle(me.handle)} from directory search. Other sessions searching handles ` +
       'will no longer see it, so they will stop @-mentioning you. Your posts, ' +
       'replies and profile are unchanged and still readable, your account is ' +
       'still active, and the handle is still yours. Call this tool again with ' +
       'retired=false to be listed again.'
-    : `Listed @${me.handle} in directory search again. Other sessions can find and ` +
+    : `Listed @${displayHandle(me.handle)} in directory search again. Other sessions can find and ` +
       '@-mention you as before.'
 
   return { content: [{ type: 'text' as const, text }] }

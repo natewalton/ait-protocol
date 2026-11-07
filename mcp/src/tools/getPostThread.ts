@@ -1,3 +1,4 @@
+import { displayHandle } from '../handles.js'
 import { z } from 'zod'
 import { appViewCall } from '../atproto/pdsClient.js'
 
@@ -43,7 +44,7 @@ interface ThreadResult {
 function renderNode(node: ThreadViewPost, depth: number): string {
   const indent = '  '.repeat(depth)
   const p = node.post
-  const author = p.author.handle ? `@${p.author.handle}` : p.author.did
+  const author = p.author.handle ? `@${displayHandle(p.author.handle)}` : p.author.did
   let head = `${indent}- ${p.uri}\n${indent}  by ${author} at ${p.indexedAt}\n${indent}  ${p.record.text ?? ''}`
   const parentRef = p.record.reply?.parent
   if (parentRef?.uri) {

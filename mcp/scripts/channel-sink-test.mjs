@@ -28,15 +28,17 @@ storage.compareAndSwapNotificationCursor(null, 'cursor-0')
 
 let calls = 0
 let fail = true
+let notification
 const sink = channelSink({
-  async notification() {
+  async notification(value) {
+    notification = value
     calls++
     if (fail) throw new Error('synthetic channel failure')
   },
 })
 const view = {
   uri: 'at://one', cid: 'cid',
-  author: { did: 'did:plc:author', handle: 'author.test' },
+  author: { did: 'did:plc:author', handle: 'author.iq3l5t4vuaat4l2zbzjrkoryccobcfi4s5pujtcmtsqen6vf6jea.aitproto.com' },
   reason: 'mention', reasonSubject: 'at://one', record: { text: 'ping' },
   indexedAt: '2026-07-16T00:00:00.000Z', cursor: 'cursor-1',
 }
@@ -55,6 +57,12 @@ check(
 fail = false
 await sink(view)
 check('(b) replay retries same URI after failure', calls === 2)
+check('(b.2) author is friendly; body and delivery metadata stay original',
+  notification.params.meta.author === '@author' &&
+  notification.params.content === 'ping' &&
+  notification.params.meta.uri === view.uri &&
+  notification.params.meta.in_reply_to === view.reasonSubject &&
+  notification.params.meta.indexed_at === view.indexedAt)
 check(
   '(c) successful channel commits opaque cursor',
   storage.getNotificationRegistrationCheckpoint().value === 'cursor-1',

@@ -8,6 +8,7 @@ import { SERVER_OVERLOADED, type ThreadReadResponse } from './codex/appServerTyp
 import { sharedAppServerSocketPath } from './codex/paths.js'
 import { readThreadSessionId } from './codex/threadMap.js'
 import { canonicalUuid, readPublicIdentity, STORAGE_DIR } from './storage.js'
+import { displayHandle } from './handles.js'
 
 // A Codex thread id is a filename component, read back verbatim from
 // codex-thread-<id>.json, so it is shape-checked without being re-cased. A
@@ -253,6 +254,7 @@ function exactMatches(sessions: ResumableSession[], query: string): ResumableSes
   return sessions.filter(
     (session) =>
       session.handle?.toLocaleLowerCase() === value ||
+      (session.handle !== null && displayHandle(session.handle).toLocaleLowerCase() === value) ||
       session.identifier.toLocaleLowerCase() === value,
   )
 }
@@ -272,7 +274,7 @@ function render(
   })
   const rows = sessions.map((session, index) => ({
     number: `${index + 1}.`,
-    handle: session.handle === null ? '(not joined)' : `@${session.handle}`,
+    handle: session.handle === null ? '(not joined)' : `@${displayHandle(session.handle)}`,
     harness: session.harness,
     project: session.project,
     modified: dateFormat.format(new Date(session.modifiedAt)),
@@ -286,11 +288,14 @@ function render(
     `${'#'.padEnd(numberWidth)}  ${'SESSION'.padEnd(handleWidth)}  ` +
     `${'HARNESS'.padEnd(harnessWidth)}  ${'PROJECT'.padEnd(projectWidth)}  LAST USED\n`,
   )
-  rows.forEach((row) => {
+  rows.forEach((row, index) => {
     output.write(
       `${row.number.padEnd(numberWidth)}  ${row.handle.padEnd(handleWidth)}  ` +
       `${row.harness.padEnd(harnessWidth)}  ${row.project.padEnd(projectWidth)}  ${row.modified}\n`,
     )
+    if (sessions[index].handle !== null && rows.filter((other) => other.handle === row.handle).length > 1) {
+      output.write(`    @${sessions[index].handle} — ${sessions[index].identifier}\n`)
+    }
   })
   if (hiddenLive > 0) {
     output.write(`${hiddenLive} live session${hiddenLive === 1 ? '' : 's'} hidden\n`)
@@ -379,7 +384,7 @@ async function confirmLiveResume(
       }
     })
     output.write(
-      `@${session.handle} checked in within the last five minutes and may still be open.\n` +
+      `@${displayHandle(session.handle!)} checked in within the last five minutes and may still be open.\n` +
         'Resume it anyway? [y/N] ',
     )
   })

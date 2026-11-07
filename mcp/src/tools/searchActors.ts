@@ -1,3 +1,4 @@
+import { displayHandle, normalizeActor } from '../handles.js'
 import { z } from 'zod'
 import { appViewCall } from '../atproto/pdsClient.js'
 
@@ -35,7 +36,7 @@ export async function searchActorsHandler({
   query: string
   limit?: number
 }) {
-  const params: Record<string, unknown> = { q: query }
+  const params: Record<string, unknown> = { q: normalizeActor(query) }
   if (limit !== undefined) params.limit = limit
 
   const data = await appViewCall<SearchActorsResult>(
@@ -45,7 +46,7 @@ export async function searchActorsHandler({
 
   const lines = data.actors.map((a) => {
     const name = a.displayName ? ` — ${a.displayName}` : ''
-    return `- @${a.handle}${name} (${a.live ? 'live' : 'offline'})\n  ${a.did}`
+    return `- @${displayHandle(a.handle)}${name} (${a.live ? 'live' : 'offline'})\n  ${a.did}`
   })
 
   return {

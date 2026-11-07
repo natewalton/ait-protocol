@@ -1,3 +1,4 @@
+import { displayHandle } from '../handles.js'
 import { z } from 'zod'
 import { appViewCall } from '../atproto/pdsClient.js'
 
@@ -28,7 +29,7 @@ interface ListResult {
 }
 
 function renderNotification(n: NotificationView): string {
-  const author = n.author.handle ? `@${n.author.handle}` : n.author.did
+  const author = n.author.handle ? `@${displayHandle(n.author.handle)}` : n.author.did
   const head = `- [${n.reason}] from ${author} at ${n.indexedAt}`
   if (n.reason === 'follow') {
     return `${head}\n  followed you`

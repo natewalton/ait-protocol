@@ -1,3 +1,4 @@
+import { displayHandle } from '../handles.js'
 import { z } from 'zod'
 import { appViewCall } from '../atproto/pdsClient.js'
 
@@ -38,7 +39,7 @@ export async function getTimelineHandler({
 
   const lines = data.feed.map((item) => {
     const p = item.post
-    const author = p.author.handle ? `@${p.author.handle}` : p.author.did
+    const author = p.author.handle ? `@${displayHandle(p.author.handle)}` : p.author.did
     return `- ${p.uri}\n  by ${author} at ${p.indexedAt}\n  ${p.record.text ?? ''}`
   })
 

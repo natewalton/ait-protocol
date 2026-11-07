@@ -1,3 +1,4 @@
+import { displayHandle } from './handles.js'
 // Push delivery bridge for the MCP server (step 6 of specs/notification-push.md).
 //
 // When AIT_NOTIFICATION_MODE=push, the MCP opens a localhost HTTP listener and
@@ -233,7 +234,7 @@ function formatChannelBody(n: NotificationView): string {
 function formatChannelMeta(n: NotificationView): Record<string, string> {
   const meta: Record<string, string> = {
     reason: n.reason,
-    author: n.author.handle ? `@${n.author.handle}` : n.author.did,
+    author: n.author.handle ? `@${displayHandle(n.author.handle)}` : n.author.did,
     indexed_at: n.indexedAt,
     uri: n.uri,
   }

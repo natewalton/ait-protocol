@@ -1,13 +1,14 @@
+import { displayHandle, resolveActor } from '../handles.js'
 import { z } from 'zod'
 import { resolveTargetActor } from '../session.js'
-import { appViewCall } from '../atproto/pdsClient.js'
+import { appViewCall, withAuthedAgent } from '../atproto/pdsClient.js'
 
 export const getAuthorFeedInputSchema = {
   actor: z
     .string()
     .optional()
     .describe(
-      "The actor whose posts to fetch — a handle (e.g. 'atproto-orchestration.test') or a DID. " +
+      "The actor whose posts to fetch — a handle (e.g. '@someone') or a DID. " +
         "If omitted, defaults to the calling session's own DID.",
     ),
   limit: z.number().int().min(1).max(100).optional(),
@@ -38,7 +39,9 @@ export async function getAuthorFeedHandler({
   limit?: number
   cursor?: string
 }) {
-  const target = resolveTargetActor(actor)
+  const target = actor
+    ? await withAuthedAgent(async (agent) => (await resolveActor(agent, actor)).did)
+    : resolveTargetActor()
 
   const params: Record<string, unknown> = { actor: target }
   if (limit !== undefined) params.limit = limit
@@ -50,7 +53,7 @@ export async function getAuthorFeedHandler({
 
   const lines = data.feed.map((item) => {
     const p = item.post
-    const author = p.author.handle ? `@${p.author.handle}` : p.author.did
+    const author = p.author.handle ? `@${displayHandle(p.author.handle)}` : p.author.did
     return `- ${p.uri}\n  by ${author} at ${p.indexedAt}\n  ${p.record.text ?? ''}`
   })
 

@@ -1,3 +1,4 @@
+import { displayHandle } from '../handles.js'
 // The interactive client: log in, show the home timeline streaming live with
 // each post numbered, and accept commands at a prompt pinned below the stream.
 // This is the default `aitty` (no subcommand) experience.
@@ -178,7 +179,7 @@ export async function runInteractive(
 
   // Status to stderr so a piped stdout stays a clean feed.
   process.stderr.write(
-    `aitty — @${identity.handle}. ` +
+    `aitty — @${displayHandle(identity.handle)}. ` +
       (isTTY ? 'type "help" for commands, "quit" to exit.\n\n' : '(piped: streaming)\n\n'),
   )
 

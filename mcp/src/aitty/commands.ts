@@ -25,16 +25,15 @@ import {
 } from './agent.js'
 import { saveIdentity, type WatcherIdentity } from './identity.js'
 import { relativeTime, renderPost, type Styles } from './render.js'
+import { displayHandle, normalizeActor, resolveActor } from '../handles.js'
 
-// @foo → foo.test ; foo → foo.test ; foo.test → foo.test ; did:… passes through.
+// Strip presentation syntax; bare names are resolved through the directory.
 export function stripAt(s: string): string {
   return s.replace(/^@/, '').toLowerCase()
 }
 
 export function normalizeHandle(raw: string): string {
-  const s = stripAt(raw)
-  if (s.startsWith('did:')) return s
-  return s.includes('.') ? s : `${s}.test`
+  return normalizeActor(raw)
 }
 
 // --- Writes -----------------------------------------------------------------
@@ -66,14 +65,15 @@ export async function actionFollow(
   id: WatcherIdentity,
   target: string,
 ): Promise<string> {
-  const key = normalizeHandle(target)
-  if (id.follows[key]) return `already following ${key}`
-  const did = await resolveHandleToDid(agent, key)
+  const { handle: key, did } = await resolveActor(agent, target)
+  if (Object.values(id.follows).some((entry) => entry.did === did)) {
+    return `already following ${displayHandle(key)}`
+  }
   if (did === id.did) return `that's you — can't follow yourself`
   const followUri = await followAccount(agent, id.did, did)
   id.follows[key] = { did, followUri }
   saveIdentity(id)
-  return `followed ${key}`
+  return `followed ${displayHandle(key)}`
 }
 
 export async function actionUnfollow(
@@ -81,13 +81,26 @@ export async function actionUnfollow(
   id: WatcherIdentity,
   target: string,
 ): Promise<string> {
-  const key = normalizeHandle(target)
-  const entry = id.follows[key]
-  if (!entry) return `not following ${key} (no local follow to undo)`
+  const reference = normalizeActor(target)
+  const stored = Object.entries(id.follows)
+  const exact = stored.filter(([key, entry]) => key === reference || entry.did === reference)
+  const candidates = exact.length ? exact : stored.filter(([key]) => displayHandle(key) === reference)
+  if (candidates.length > 1) {
+    throw new Error(`@${reference} is ambiguous; use a full handle or DID:\n` +
+      candidates.map(([key, entry]) => `@${key} (${entry.did})`).join('\n'))
+  }
+  // Existing follows are sufficient to undo a known record even when its
+  // actor retired or the directory is unavailable; no alias state is stored.
+  const actor = candidates.length ? { did: candidates[0][1].did, handle: candidates[0][0] }
+    : await resolveActor(agent, target)
+  const { did, handle } = actor
+  const existing = stored.find(([, entry]) => entry.did === did)
+  if (!existing) return `not following ${displayHandle(handle)} (no local follow to undo)`
+  const [key, entry] = existing
   await unfollowAccount(agent, id.did, entry.followUri)
   delete id.follows[key]
   saveIdentity(id)
-  return `unfollowed ${key}`
+  return `unfollowed ${displayHandle(handle)}`
 }
 
 // Retire a handle from directory search, or list it again (ADR-0043). Aimed at
@@ -102,8 +115,9 @@ export async function actionRetire(
   target: string,
   retired: boolean,
 ): Promise<string> {
-  const key = normalizeHandle(target)
-  await setActorRetired(agent, key, retired)
+  const actor = await resolveActor(agent, target, !retired)
+  const key = displayHandle(actor.handle)
+  await setActorRetired(agent, actor.did, retired)
   return retired
     ? `retired ${key} — it no longer shows up when anyone searches handles. Its posts are untouched.`
     : `restored ${key} — it shows up in handle search again.`
@@ -122,7 +136,7 @@ export async function actionProfile(
   styles: Styles,
   width: number,
 ): Promise<string> {
-  const key = normalizeHandle(actor)
+  const key = await resolveHandleToDid(agent, actor)
   const [profile, recent] = await Promise.all([
     fetchProfile(agent, key),
     fetchAuthorFeed(agent, key, 5).catch(() => [] as FeedItem[]),
@@ -147,7 +161,7 @@ function renderNotifications(notes: NotificationView[], styles: Styles): string 
   const now = Date.now()
   return notes
     .map((n) => {
-      const who = styles.handle('@' + (n.author.handle || n.author.did))
+      const who = styles.handle('@' + displayHandle(n.author.handle || n.author.did))
       const when = styles.dim('· ' + relativeTime(n.indexedAt, now))
       if (n.reason === 'follow') return `${who} followed you ${when}`
       const verb = n.reason === 'reply' ? 'replied' : 'mentioned you'
@@ -164,8 +178,8 @@ function renderProfile(
   width: number,
 ): string {
   const nameLine = p.displayName
-    ? `${p.displayName} (${styles.handle('@' + p.handle)})`
-    : styles.handle('@' + p.handle)
+    ? `${p.displayName} (${styles.handle('@' + displayHandle(p.handle))})`
+    : styles.handle('@' + displayHandle(p.handle))
   const bio = p.description ? p.description : styles.dim('(no bio yet)')
   const counts = styles.dim(
     `${p.postsCount} posts · ${p.followersCount} followers · ${p.followsCount} following`,

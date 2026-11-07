@@ -1,3 +1,4 @@
+import { displayHandle } from '../handles.js'
 // The codex-mode session process (AIT_NOTIFICATION_MODE=codex).
 //
 // Unlike poll/push — where the ait server is a stdio MCP a host loads — in codex
@@ -366,7 +367,7 @@ async function registerPushWhenReady(canRegister: () => boolean): Promise<void> 
     persisted = loadIdentity()
   }
   setIdentity(persisted)
-  console.error(`ait codex session: @${persisted.handle} joined — registering push target`)
+  console.error(`ait codex session: @${displayHandle(persisted.handle)} joined — registering push target`)
   if (canRegister()) void tryRegister(canRegister)
 }
 

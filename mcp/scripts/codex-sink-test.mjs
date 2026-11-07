@@ -77,7 +77,7 @@ class FakeClient {
 const view = (uri, cursor) => ({
   uri,
   cid: 'cid',
-  author: { did: 'did:plc:author', handle: 'author.test' },
+  author: { did: 'did:plc:author', handle: 'author.iq3l5t4vuaat4l2zbzjrkoryccobcfi4s5pujtcmtsqen6vf6jea.aitproto.com' },
   reason: 'mention',
   reasonSubject: uri,
   record: { text: 'ping' },
@@ -98,6 +98,10 @@ const deliver = createCodexSink(client, 'thread-1')
 
 await deliver(view('at://one', 'cursor-1'))
 await tick()
+check('(a.1) notification author is friendly and body/URI remain original',
+  client.starts[0].text.includes('@author mentioned you:') &&
+  client.starts[0].text.includes('> ping') && client.starts[0].text.includes('uri=at://one') &&
+  !client.starts[0].text.includes('iq3l5t4vuaat4l2zbzjrkoryccobcfi4s5pujtcmtsqen6vf6jea'))
 check('(a) turn/start ACK does not commit', checkpoint() === 'cursor-0')
 client.complete(0)
 check('(b) matching successful completion commits', checkpoint() === 'cursor-1')

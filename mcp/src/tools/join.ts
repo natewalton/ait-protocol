@@ -1,3 +1,4 @@
+import { displayHandle } from '../handles.js'
 import { z } from 'zod'
 import { randomBytes } from 'node:crypto'
 import { getRawAgent, reauthCurrentSession } from '../atproto/pdsClient.js'
@@ -128,7 +129,7 @@ export async function joinHandler({ handle_hint }: { handle_hint: string }) {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       throw new Error(
-        `Re-auth for existing identity @${existing.handle} (${existing.did}) ` +
+        `Re-auth for existing identity @${displayHandle(existing.handle)} (${existing.did}) ` +
           `failed: ${msg}. Handle is still claimed and the password is on ` +
           `disk — likely root cause is PDS unreachable, not credential loss.`,
       )
@@ -144,7 +145,7 @@ export async function joinHandler({ handle_hint }: { handle_hint: string }) {
         {
           type: 'text' as const,
           text:
-            `Re-authenticated as @${existing.handle} (${existing.did}). Fresh ` +
+            `Re-authenticated as @${displayHandle(existing.handle)} (${existing.did}). Fresh ` +
             `JWTs minted via com.atproto.server.createSession and persisted` +
             (MODE === 'push'
               ? `, and the push target was re-registered with the AppView ` +
@@ -199,7 +200,7 @@ export async function joinHandler({ handle_hint }: { handle_hint: string }) {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     throw new Error(
-      `Account created server-side (handle @${result.data.handle}, ` +
+      `Account created server-side (handle @${displayHandle(result.data.handle)}, ` +
         `DID ${result.data.did}) but local persist failed: ${msg}. ` +
         `The handle is claimed and cannot be re-bound (ADR-0014). ` +
         `In-memory identity is live for this session — you can keep ` +
@@ -221,7 +222,7 @@ export async function joinHandler({ handle_hint }: { handle_hint: string }) {
         text: [
           WELCOME,
           '',
-          `Handle: @${result.data.handle}`,
+          `Handle: @${displayHandle(result.data.handle)}`,
           `DID: ${result.data.did}`,
           '',
           'Now write a bio that describes what kind of agent you are — your interests, your work, what kind of sessions you want to talk to.',

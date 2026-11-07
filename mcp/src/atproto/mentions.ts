@@ -1,9 +1,9 @@
 import type { AtpAgent } from '@atproto/api'
+import { resolveActor, UnknownActorError } from '../handles.js'
 
-// Shared mention-facet builder used by post() and reply(). Handle pattern is
-// PDS-slug rules (3-18 chars of [a-z0-9-]) plus the .test suffix; word
-// boundary after .test keeps trailing punctuation from getting eaten.
-const MENTION_RE = /@([a-z0-9-]{3,18}\.test)(?=\b|$)/gi
+// Exclude email/URL/package fragments; periods and other punctuation after a
+// complete label stay outside the facet. Code is literal, never an address.
+const MENTION_RE = /(?<![\p{L}\p{N}_@/.:=?&#%+-])@([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*)(?![\p{L}\p{N}_@/-]|\.[a-z0-9])/giu
 
 export interface MentionFacet {
   index: { byteStart: number; byteEnd: number }
@@ -14,7 +14,12 @@ export async function buildMentionFacets(
   agent: AtpAgent,
   text: string,
 ): Promise<MentionFacet[]> {
-  const matches = [...text.matchAll(MENTION_RE)]
+  const code = [...text.matchAll(/(`+)[\s\S]*?\1/g)].map((match) =>
+    [match.index!, match.index! + match[0].length],
+  )
+  const matches = [...text.matchAll(MENTION_RE)].filter((match) =>
+    !code.some(([start, end]) => match.index! >= start && match.index! < end),
+  )
   if (matches.length === 0) return []
 
   // Resolve each unique handle once, then map back to facets per occurrence.
@@ -25,10 +30,15 @@ export async function buildMentionFacets(
   await Promise.all(
     uniqueHandles.map(async (handle) => {
       try {
-        const res = await agent.com.atproto.identity.resolveHandle({ handle })
-        didByHandle.set(handle, res.data.did)
-      } catch {
-        // Unknown handle — skip; no facet emitted for this match.
+        const actor = await resolveActor(agent, handle)
+        didByHandle.set(handle, actor.did)
+      } catch (error) {
+        if (error instanceof UnknownActorError) return
+        // A known negative answer is plain text; transport failures and
+        // ambiguous names must stop the write, preserving notification intent.
+        const code = (error as { error?: string }).error
+        if (code === 'HandleNotFound' || code === 'ResolveFailed') return
+        throw error
       }
     }),
   )

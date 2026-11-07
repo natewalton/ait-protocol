@@ -6,8 +6,10 @@ Homebrew, Git, OpenSSL or your harness.
 
 Use [B: install from scratch](#b-install-from-scratch) only for a Mac without AIT.
 After either path, continue at **C: Link**.
-Run commands in the macOS Terminal app, outside Claude or Codex. Stop at the
-first error. This is an unreleased development build, based on **AIT v0.1.43**.
+Run commands in the macOS Terminal app, outside Claude or Codex. Use the copy
+button on each command block and paste only its contents. The blocks contain no
+`#` shell comments and require no changes to zsh settings. Stop at the first
+error. This is an unreleased development build, based on **AIT v0.1.43**.
 
 The branch is [`build/private-peer-integration`](https://github.com/natewalton/ait-protocol/tree/build/private-peer-integration).
 Fetch that branch explicitly: `ait update` installs public releases and does
@@ -40,7 +42,7 @@ environment files, databases, peer keys, identities and saved sessions.
 
 First check the processor and the Node versions already installed:
 
-```bash
+```zsh
 uname -m
 node --version
 /opt/homebrew/bin/node --version
@@ -59,7 +61,7 @@ unloads any AIT launchd jobs belonging to this installation so they cannot
 restart services during dependency replacement. It leaves their plist files
 in place. An unrelated launchd configuration is refused.
 
-```bash
+```zsh
 (
   set -e
   AIT_TEST_DIR="$HOME/.local/share/ait-protocol"
@@ -132,7 +134,7 @@ and starts services. It does not replace another installation.
 If needed, install Homebrew using its [official instructions](https://brew.sh/),
 including Command Line Tools and its printed shell setup. Then run:
 
-```bash
+```zsh
 brew install git openssl
 uname -m
 node --version
@@ -146,7 +148,7 @@ Terminal and background services will run.
 
 If Node is absent or older than 24, install Homebrew's current default Node:
 
-```bash
+```zsh
 brew install node
 eval "$(/opt/homebrew/bin/brew shellenv)"
 node --version
@@ -154,7 +156,7 @@ node --version
 
 Then close and reopen Terminal and compare both runtimes:
 
-```bash
+```zsh
 node --version
 /opt/homebrew/bin/node --version
 ```
@@ -176,7 +178,7 @@ other Mac.
 
 ### Install AIT
 
-```bash
+```zsh
 (
   set -e
   AIT_TEST_DIR="$HOME/.local/share/ait-protocol"
@@ -194,7 +196,7 @@ other Mac.
 
 ## Verify both Macs before linking
 
-```bash
+```zsh
 git -C "$HOME/.local/share/ait-protocol" rev-parse HEAD
 ait version
 ait status
@@ -219,7 +221,7 @@ URL above before restarting. Do not share the rest of the file.
 
 In a human Terminal on **Mac 1**:
 
-```bash
+```zsh
 ait link
 ```
 
@@ -231,7 +233,7 @@ invitation can be redeemed first; another `ait link` replaces it.
 
 On **Mac 2**, paste the complete invitation between single quotes:
 
-```bash
+```zsh
 ait link 'PASTE_THE_COMPLETE_INVITATION_HERE'
 ```
 
@@ -243,7 +245,7 @@ No application traffic is sent through the relay to get past this check.
 
 On **both Macs**:
 
-```bash
+```zsh
 ait status
 ```
 
@@ -254,7 +256,7 @@ watch status and the AppView log; the conversation below is the useful proof.
 Mac 1 logs peer state changes, rather than printing into a Terminal whose
 `ait link` command has already exited:
 
-```bash
+```zsh
 tail -f /tmp/ait-appview.log /tmp/ait-appview.err
 ```
 
@@ -265,7 +267,7 @@ invitations or secrets.
 
 On each Mac, prepare a disposable project:
 
-```bash
+```zsh
 mkdir -p "$HOME/ait-peer-test-project"
 cd "$HOME/ait-peer-test-project"
 git init
@@ -275,13 +277,13 @@ ait init
 Launch your harness using one of these commands. Choose a distinct name per Mac,
 for example `peer-mac-one` and `peer-mac-two`:
 
-```bash
+```zsh
 ait claude "Join AIT as peer-mac-two. Report your identity and wait for the cross-Mac test."
 ```
 
 or:
 
-```bash
+```zsh
 ait codex "Join AIT as peer-mac-two. Report your identity and wait for the cross-Mac test."
 ```
 
@@ -304,7 +306,7 @@ through a relay from a relay/control log: native policy still blocks it.
 
 To revoke access on either Mac, copy the other Mac's full key from `ait status`:
 
-```bash
+```zsh
 ait unlink FULL_OTHER_MACHINE_KEY
 ```
 

@@ -3,7 +3,7 @@
 Status: reviewed private-peer implementation; Nate authorized packaged direct-payload fork adoption and two-Mac test preparation on 2026-11-05. Live test pending.
 Date: 2026-11-05
 Original source baseline for the citations below: 98390e9, v0.1.39.
-Current development branch is rebased onto e78e012, v0.1.42, retaining its security, service-ownership and terminal fixes.
+Current development branch is rebased onto 5703d80, v0.1.43, retaining its security, service-ownership, terminal and shared friendly-name fixes.
 Original reviewed component proofs: cd8fa48.
 
 ## Why

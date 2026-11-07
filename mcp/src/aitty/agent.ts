@@ -17,6 +17,8 @@ import {
   appviewProxyHeaders,
   parseAtUri,
   buildReplyRef,
+  newAccountHandle,
+  localPdsFetch,
   type StrongRef,
 } from '../atproto/aitClient.js'
 import { buildMentionFacets, type MentionFacet } from '../atproto/mentions.js'
@@ -46,7 +48,7 @@ interface TimelineResponse {
 }
 
 export function makeAgent(): AtpAgent {
-  const agent = new AtpAgent({ service: PDS_URL })
+  const agent = new AtpAgent({ service: PDS_URL, fetch: localPdsFetch })
   registerAitLexicons(agent) // shared with the MCP server (aitClient.ts)
   return agent
 }
@@ -55,10 +57,11 @@ export class HandleTakenError extends Error {}
 
 export async function createWatcherAccount(
   agent: AtpAgent,
-  handle: string,
+  slug: string,
   password: string,
 ): Promise<{ did: string; handle: string }> {
-  const email = `${handle.replace(/\.test$/, '')}@test.local`
+  const handle = await newAccountHandle(agent, slug)
+  const email = `${slug}@test.local`
   try {
     const res = await agent.com.atproto.server.createAccount({ handle, password, email })
     return { did: res.data.did, handle: res.data.handle }
@@ -314,7 +317,7 @@ export async function setActorRetired(
   subject: string,
   retired: boolean,
 ): Promise<void> {
-  await proxyCall(agent, 'ait.actor.setRetired', {}, { subject, retired })
+  await proxyCall(agent, 'ait.actor.setRetired', {}, { subject: (await resolveActor(agent, subject)).did, retired })
 }
 
 // A post and the replies beneath it, as a tree. The AppView may also include

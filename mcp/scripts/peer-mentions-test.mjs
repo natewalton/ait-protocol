@@ -79,6 +79,19 @@ const hooks = registerHooks({
   },
 })
 
+agent.call = async (nsid, params) => {
+  assert.equal(nsid, 'ait.actor.searchActors')
+  const label = params.q.slice(0, -1)
+  try { ensureValidHandle(`${label}.aitproto.com`) } catch { return {data:{actors:[]}} }
+  const url = new URL('/xrpc/com.atproto.identity.resolveHandle', process.env.APPVIEW_URL)
+  url.searchParams.set('handle', `${label}.aitproto.com`)
+  const response = await fetch(url, {redirect:'error'}), body = await response.json()
+  if (response.ok) return { data: { actors: [{did:body.did,handle:`${label}${domain}`}] } }
+  if ([400,404].includes(response.status) && body.error === 'HandleNotFound') return {data:{actors:[]}}
+  if (body.error === 'AmbiguousHandle') return {data:{actors:[{did:A,handle:`${label}${domain}`},{did:B,handle:`${label}.${'b'.repeat(52)}.aitproto.com`}]}}
+  throw Object.assign(new Error(body.message ?? body.error), {status:response.status,error:body.error})
+}
+
 let lunaAmbiguous = false
 let logicalPds = 'https://pds.localhost'
 const pdsRequests = []
@@ -248,7 +261,8 @@ try {
   })
 
   const { buildMentionFacets } = await import('../src/atproto/mentions.ts')
-  const { resolveActorDid, displayActorHandle } = await import('../src/atproto/actorLookup.ts')
+  const { resolveActorDid } = await import('../src/atproto/actorLookup.ts')
+  const { displayHandle } = await import('../src/handles.ts')
   const { postHandler } = await import('../src/tools/post.ts')
   const { replyHandler } = await import('../src/tools/reply.ts')
   const { followHandler } = await import('../src/tools/follow.ts')
@@ -256,9 +270,8 @@ try {
     facet.index.byteStart, facet.index.byteEnd,
   ).toString('utf8')
   const isAmbiguous = (error) => {
-    assert.match(error.message, /AmbiguousHandle/)
+    assert.match(error.message, /AmbiguousHandle|ambiguous/)
     assert.ok(error.message.includes(A) && error.message.includes(B))
-    assert.ok(error.message.includes('@{did:...}'))
     return true
   }
   const rejectsWithoutWrite = async (run, expected) => {
@@ -305,7 +318,7 @@ try {
   await rejectsWithoutWrite(() => postHandler({ text: '@twin' }), isAmbiguous)
   await rejectsWithoutWrite(() => replyHandler({ parent_uri: parentUri, text: '@twin.test' }), isAmbiguous)
   await rejectsWithoutWrite(() => followHandler({ target: 'twin' }), isAmbiguous)
-  await rejectsWithoutWrite(() => followHandler({ target: 'missing' }), /No actor found/)
+  await rejectsWithoutWrite(() => followHandler({ target: 'missing' }), /No AIT actor matches/)
   await rejectsWithoutWrite(() => followHandler({ target: SELF }), /Cannot follow yourself/)
 
   // No cross-call alias cache: a formerly unique label can become ambiguous.
@@ -327,10 +340,10 @@ try {
   assert.equal(await resolveActorDid('missing'), null)
 
   for (const [input, expected] of [
-    [wireHandle, 'luna'], ['luna.aitproto.com', 'luna'], ['luna.test', 'luna'],
+    [wireHandle, 'luna'], ['luna.aitproto.com', 'luna.aitproto.com'], ['luna.test', 'luna'],
     ['luna.test.example', 'luna.test.example'], ['luna.example.com', 'luna.example.com'],
-    [`luna.test${domain}`, 'luna.test'], ['did:web:someone.test', 'did:web:someone.test'],
-  ]) assert.equal(displayActorHandle(input), expected)
+    [`luna.test${domain}`, `luna.test${domain}`], ['did:web:someone.test', 'did:web:someone.test'],
+  ]) assert.equal(displayHandle(input), expected)
   assert.equal(await resolveActorDid(wireHandle), A)
   assert.equal(requests.at(-1), wireHandle, 'machine-qualified inputs remain exact')
   assert.equal(await resolveActorDid(`LUNA${domain}`), A)
@@ -480,10 +493,10 @@ try {
     picker.selected = 1
     picker.render = () => {}
     const rows = picker.dropdownRows(200).join('\n')
-    assert.ok(rows.includes(A) && rows.includes(B), 'duplicate labels show candidate DIDs')
-    assert.ok(!rows.includes(machine))
+    assert.ok(rows.includes(actors[0].handle) && rows.includes(actors[1].handle), 'duplicate labels show canonical candidates')
+    assert.ok(rows.includes(machine), 'ambiguous rows retain canonical identity detail')
     picker.accept()
-    assert.equal(picker.line, (withAt ? `@{${B}}` : B) + ' ')
+    assert.equal(picker.line, (withAt ? `@${actors[1].handle}` : actors[1].handle) + ' ')
     assert.equal(actors[1].handle, `luna.${'b'.repeat(52)}.aitproto.com`)
   }
   console.log('PASS: real AtpAgent createAccount/login/resume -> logical PDS dispatch -> local GET/POST; body/auth/query/signal preserved; denied hosts never fetch; redirects blocked; private namespace; mentions/display/picker/actor boundaries; domain discovery; DID reauth')

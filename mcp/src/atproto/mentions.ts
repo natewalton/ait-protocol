@@ -3,7 +3,7 @@ import { displayHandle, resolveActor, UnknownActorError } from '../handles.js'
 
 // Exclude email/URL/package fragments; periods and other punctuation after a
 // complete label stay outside the facet. Code is literal, never an address.
-const MENTION_RE = /(?<![\p{L}\p{N}_@/.:=?&#%+-])@([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*)(?![\p{L}\p{N}_@/-]|\.[a-z0-9])/giu
+const MENTION_RE = /(?<![\p{L}\p{N}_@/.:=?&#%+-])@(\{did:[^{}\s]+\}|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*)(?![\p{L}\p{N}_@/-]|\.[a-z0-9])/giu
 
 export interface MentionFacet {
   index: { byteStart: number; byteEnd: number }
@@ -34,14 +34,15 @@ export async function buildMentionFacets(
   }
   const matches = [...text.matchAll(MENTION_RE)].filter((match) =>
     !code.some(([start, end]) => match.index! >= start && match.index! < end) &&
-    (!match[1].includes('.') || displayHandle(match[1]) !== match[1]),
+    (match[1].startsWith('{did:') || !match[1].includes('.') || displayHandle(match[1]) !== match[1]),
   )
   if (matches.length === 0) return []
 
   // Resolve each unique handle once, then map back to facets per occurrence.
   // Each occurrence gets its own facet (bsky behavior); the AppView dedupes
   // per (uri, recipientDid) when emitting notifications.
-  const uniqueHandles = [...new Set(matches.map((m) => m[1].toLowerCase()))]
+  const handles = matches.map((m) => m[1].startsWith('{') ? m[1].slice(1, -1) : m[1].toLowerCase())
+  const uniqueHandles = [...new Set(handles)]
   const didByHandle = new Map<string, string>()
   for (const handle of uniqueHandles) {
     try {
@@ -57,8 +58,8 @@ export async function buildMentionFacets(
 
   const encoder = new TextEncoder()
   const facets: MentionFacet[] = []
-  for (const m of matches) {
-    const handle = m[1].toLowerCase()
+  for (const [i, m] of matches.entries()) {
+    const handle = handles[i]
     const did = didByHandle.get(handle)
     if (!did) continue
     const charStart = m.index ?? 0

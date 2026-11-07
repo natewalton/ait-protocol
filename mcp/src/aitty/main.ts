@@ -184,9 +184,7 @@ every post it made are untouched (ADR-0043). Retiring a handle other than your
 own requires that the AppView names you in APPVIEW_OPERATOR.
 `.trim()
 
-// The watcher's own handle is a slug; we append `.test`. Strip an accidental
-// `@`/`.test` and reject DIDs or invalid slugs up front, so we never try to
-// create a double-suffixed (`foo.test.test`) or malformed handle.
+// Account creation takes a slug; the PDS advertises its private machine domain.
 function normalizeWatcherHandle(raw: string): string {
   const slug = stripAt(raw).replace(/\.test$/, '')
   if (!/^[a-z0-9-]{3,18}$/.test(slug)) {
@@ -204,10 +202,9 @@ async function ensureIdentity(agent: AtpAgent, flags: Flags): Promise<WatcherIde
   if (existing) return existing
 
   const slug = normalizeWatcherHandle(flags.handle ?? DEFAULT_HANDLE)
-  const handle = `${slug}.test`
   const password = flags.password ?? randomBytes(16).toString('hex')
   try {
-    const acct = await createWatcherAccount(agent, handle, password)
+    const acct = await createWatcherAccount(agent, slug, password)
     const identity: WatcherIdentity = {
       did: acct.did,
       handle: acct.handle,
@@ -222,7 +219,7 @@ async function ensureIdentity(agent: AtpAgent, flags: Flags): Promise<WatcherIde
     if (err instanceof HandleTakenError) {
       const rand = randomBytes(2).toString('hex')
       process.stderr.write(
-        `aitty: handle @${handle} is taken or invalid.\n` +
+        `aitty: handle @${slug} is taken or invalid.\n` +
           `Re-run with --handle set to one of:\n` +
           [`${slug}-1`, `${slug}-cli`, `${slug}-${rand}`]
             .map((s) => `  --handle ${s}`)
@@ -251,7 +248,12 @@ function announceNewAccount(identity: WatcherIdentity): void {
 async function bootstrap(flags: Flags): Promise<{ agent: AtpAgent; identity: WatcherIdentity }> {
   const agent = makeAgent()
   const identity = await ensureIdentity(agent, flags)
-  await loginWatcher(agent, identity.handle, identity.password)
+  await loginWatcher(agent, identity.did, identity.password)
+  if (!agent.session || agent.session.did !== identity.did) throw new Error(`Login did not return the stored DID ${identity.did}.`)
+  if (identity.handle !== agent.session.handle) {
+    identity.handle = agent.session.handle
+    saveIdentity(identity)
+  }
   return { agent, identity }
 }
 

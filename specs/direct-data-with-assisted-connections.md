@@ -493,3 +493,28 @@ Correction validation: real-launcher unset-relay assertion passes in the full
 policy, dependency artifact and packet enforcement are unchanged by this
 correction. Guide command blocks parse as Bash. Both live installations remain
 unmodified.
+
+## Friendly-name release integration, 2026-11-07
+
+Rebase the development branch onto v0.1.43 (`5703d80`). Released shared
+`handles.ts` supplies formatting and bare-name lookup to MCP and aitty; its
+serial parser keeps code/URL/email boundaries. Keep the peer branch's private
+full-handle projection lookup, explicit DID mentions, advertised enrollment
+domain, DID-based token refresh and presence joins. The old formatter is removed; all display consumers use the released helper.
+Bare-name lookup retains the released directory/retired scope and ambiguity
+rule. Full private lookups stay on the local verified projection without public
+DNS or PDS resolver fallback. No new persisted state or transport change.
+
+Conflicts affect MCP naming/enrollment, README and fixtures, not the native
+package or relay policy. Isolated naming/mentions/picker, channel and Codex sink
+checks plus the owned two-install conversation must pass before independent
+review and branch push. Neither live install is updated by a main release or
+this rebase; use the existing-install recipe after humans pause their sessions.
+
+Executed integration checks: MCP/AppView builds; shared handles, peer mentions,
+picker, Claude channel and Codex sink checks; feed12/projection17; CLI; updater28;
+full isolated assisted peer journey11/11. Existing manifests/lockfiles and
+AppView transport code are byte-identical to the previous reviewed branch.
+The fixture uses a freshly installed stock Iroh1.2.0 comparison package; the
+first run's missing old temporary package was a fixture setup failure after
+the nine consumer outcomes, not a policy pass. No live operation ran.

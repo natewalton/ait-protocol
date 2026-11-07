@@ -82,6 +82,7 @@ const server = createServer((request, response) => {
   const retiredOnly = url.searchParams.get('retiredOnly') === 'true'
   const actors = JSON.parse(readFileSync(actorsFile, 'utf8'))
     .filter((actor) => actor.handle.startsWith(query) && retired.has(actor.handle) === retiredOnly)
+    .slice(0, Number(url.searchParams.get('limit') ?? 100))
     .map((actor) => ({ ...actor, live: live.has(actor.handle) }))
   setTimeout(() => {
     response.setHeader('content-type', 'application/json')
@@ -272,7 +273,10 @@ const upgradedActors = directoryActors.map((actor) => ({
   ...actor, handle: `${actor.handle.split('.')[0]}.${'b'.repeat(52)}.aitproto.com`,
 }))
 const identitySnapshots = [claudeId, codexId].map((id) => fs.readFileSync(identityPath(id), 'utf8'))
-write(actorsFile, JSON.stringify(upgradedActors))
+write(actorsFile, JSON.stringify([
+  ...Array.from({ length: 101 }, (_, i) => ({did: 'did:plc:prefixneighbor', handle: `codex-session-extra-${i}.test`})),
+  ...upgradedActors,
+]))
 write(liveFile, JSON.stringify(upgradedActors.map((actor) => actor.handle)))
 for (const retired of [[], upgradedActors.map((actor) => actor.handle)]) {
   write(retiredFile, JSON.stringify(retired))

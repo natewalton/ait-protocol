@@ -241,7 +241,7 @@ export async function discoverSessions(signal?: AbortSignal): Promise<SessionDis
   const joined = new Map(sessions.flatMap((session) =>
     session.did === null || session.handle === null
       ? []
-      : [[session.did, session.handle.split('.')[0].toLocaleLowerCase()] as const],
+      : [[session.did, session.handle.split('.')[0].toLocaleLowerCase() + '.'] as const],
   ))
   for (const [did, query] of joined) {
     // Search the label prefix across old/new namespaces, then join by DID.

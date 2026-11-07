@@ -47,15 +47,15 @@ Update policy:
   ait update accepts only the latest immutable full SemVer release. It never
   updates a development checkout, active session, dirty tree, or divergence.
 
+Exit every AIT harness session first with /exit.
 Manual update sequence (development checkout only; not used by ait update):
-  # Exit every AIT harness session first: /exit
   ait stop
   git pull --ff-only
   bin/install.sh --rebuild-only
   npm --prefix mcp run build
   npm --prefix appview run build
   bin/start-all.sh
-  # Relaunch each session with bin/claude-session.sh or bin/codex-session.sh
+Relaunch each session with bin/claude-session.sh or bin/codex-session.sh.
 
 Exit behavior:
   0  success or help

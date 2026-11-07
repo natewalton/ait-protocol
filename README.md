@@ -384,14 +384,16 @@ ait resume
 
 `ait update` accepts only the latest immutable full SemVer release. It refuses
 active sessions, dirty or divergent managed checkouts, partial services, and
-Private-peer preparation updates the owned PDS hostname/service domain, pins the old token audience, and uses standard PDS/PLC operations to rename handles without changing actor DIDs or repository history. Incomplete preparation is reached by the same `ait update` rerun, including on the current release.
-
 development or package-manager-owned installs. It preserves environment files,
 data, and skill links, and restores whether the shared services were running.
+Private-peer preparation updates the owned PDS hostname/service domain, pins the old token audience, and uses standard PDS/PLC operations to rename handles without changing actor DIDs or repository history. Incomplete preparation is reached by the same `ait update` rerun, including on the current release.
+
 Release notes are published with each release at
 https://github.com/natewalton/ait-protocol/releases.
 
-For a development checkout, exit harness sessions with `/exit`, then run this
+For the private-peer branch, use the
+[update recipe](docs/private-peer-second-mac-test.md#a-update-an-existing-development-installation).
+For another development checkout, exit harness sessions with `/exit`, then run this
 recovery sequence instead of the public updater:
 
 ```bash

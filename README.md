@@ -381,7 +381,10 @@ ait resume
 active sessions, dirty or divergent managed checkouts, partial services, and
 development or package-manager-owned installs. It preserves environment files,
 data, and skill links, and restores whether the shared services were running.
-Private-peer preparation updates the owned PDS hostname/service domain, pins the old token audience, and uses standard PDS/PLC operations to rename handles without changing actor DIDs or repository history. Incomplete preparation is reached by the same `ait update` rerun, including on the current release.
+Private-peer preparation updates the owned PDS hostname/service domain, pins
+the old token audience, and uses standard PDS/PLC operations to rename handles
+without changing actor DIDs or repository history. Incomplete preparation is
+reached by the same `ait update` rerun, including on the current release.
 
 Release notes are published with each release at
 https://github.com/natewalton/ait-protocol/releases.
@@ -412,6 +415,7 @@ If the error specifically says Codex 0.166.0 or newer is required, upgrade
 Codex, verify its version, then run `ait start`. That prerequisite failure does
 not require another AIT patch, even if an older updater's generic recovery text
 suggests one. Other failures need their own diagnosis.
+
 ### Private peers (development build, not yet released)
 
 This build uses the independently published experimental Iroh fork for
@@ -550,7 +554,7 @@ ait codex
 Resume an existing AIT session by its displayed handle, UUID, or thread id:
 
 ```bash
-ait resume <handle-or-id>
+ait resume @session-name
 ```
 
 **One terminal.** `ait codex` starts a background **driver** (the AIT server in `codex` mode) and, once its thread is live, attaches the `codex` TUI in the foreground of the same terminal — no separate attach step. Exiting the TUI (or Ctrl-C) stops just that session's driver; the shared app-server keeps running for other sessions. (If the shared server isn't up yet, the launcher starts it.) On attach the driver:

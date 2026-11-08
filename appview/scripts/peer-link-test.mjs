@@ -461,6 +461,7 @@ try {
     const machineFile = path.join(path.dirname(a.control), 'machine.json')
     const stateBeforeStatus = fs.readFileSync(machineFile, 'utf8')
     fs.copyFileSync(path.join(repo,'bin/status.sh'),path.join(a.repo,'bin/status.sh'))
+    fs.copyFileSync(path.join(repo,'bin/lib-service-pids.sh'),path.join(a.repo,'bin/lib-service-pids.sh'))
     fs.writeFileSync(path.join(a.repo,'bin/curl'), '#!/bin/sh\nprintf "{}"\n', {mode:0o755})
     fs.symlinkSync(process.execPath,path.join(a.repo,'bin/node'))
     const statusText = execFileSync('/bin/bash', [path.join(a.repo,'bin/status.sh')], {encoding:'utf8', env:{...process.env,

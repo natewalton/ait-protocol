@@ -379,8 +379,8 @@ ait resume
 
 `ait update` accepts only the latest immutable full SemVer release. It refuses
 active sessions, dirty or divergent managed checkouts, partial services, and
-development or package-manager-owned installs. It preserves environment files,
-data, and skill links, and restores whether the shared services were running.
+development or package-manager-owned installs. It preserves data and skill
+links and restores whether the shared services were running.
 Private-peer preparation updates the owned PDS hostname/service domain, pins
 the old token audience, and uses standard PDS/PLC operations to rename handles
 without changing actor DIDs or repository history. Incomplete preparation is
@@ -411,6 +411,8 @@ ait resume
 If an update fails before identity preparation or a service start attempt, `ait update` prints the
 old commit reset and rebuild commands. After identity preparation or a start attempt, do not reset:
 persisted data may have advanced. Keep the logs and address the reported error.
+Once identity preparation begins, keep the logs and rerun `ait update` to
+complete preparation; do not reset the code.
 If the error specifically says Codex 0.166.0 or newer is required, upgrade
 Codex, verify its version, then run `ait start`. That prerequisite failure does
 not require another AIT patch, even if an older updater's generic recovery text

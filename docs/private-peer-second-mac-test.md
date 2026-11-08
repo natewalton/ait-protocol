@@ -9,7 +9,7 @@ After either path, continue at **C: Link**.
 Run commands in the macOS Terminal app, outside Claude or Codex. Use the copy
 button on each command block and paste only its contents. The blocks contain no
 `#` shell comments and require no changes to zsh settings. Stop at the first
-error. This is an unreleased development build, based on **AIT v0.1.43**.
+error. This is an unreleased development build, based on **AIT v0.1.44**.
 
 The branch is [`build/private-peer-integration`](https://github.com/natewalton/ait-protocol/tree/build/private-peer-integration).
 Fetch that branch explicitly: `ait update` installs public releases and does
@@ -53,6 +53,19 @@ version. Keep that runtime; do not install or temporarily select another Node
 version for this update. If a version is missing, below 24, or the majors differ,
 stop and send the output to the coordinator before rebuilding. You do not need
 the fresh-install prerequisites in section B.
+
+If you use Codex, check its version **before stopping AIT or changing the
+checkout**:
+
+```zsh
+codex --version
+```
+
+It must report **0.166.0 or newer**. If older or unrecognized, upgrade Codex
+using the method you installed it with, then check again before continuing.
+Upgrading the CLI does not replace the shared server already running; the
+stop-and-rebuild sequence below handles that. Claude-only Macs do not need
+Codex.
 
 First finish/save work and exit AIT harness sessions on this Mac. The block
 below downloads the latest branch before stopping services, refuses uncommitted
@@ -107,7 +120,7 @@ in place. An unrelated launchd configuration is refused.
 The installer performs all four `npm ci` installs, builds AppView/MCP, checks
 and prepares the existing installation, then starts services. Do not skip this
 by copying `dist` or running only `npm run build`: the native dependency and
-v0.1.43 service scripts must move together. Do not delete an old installation
+v0.1.44 service scripts must move together. Do not delete an old installation
 or regenerate its keys. Existing linked peers may show Unavailable until both
 Macs finish upgrading; use a **fresh invitation** for this test.
 
@@ -172,7 +185,8 @@ On Apple Silicon, an `x86_64` Terminal is running under Rosetta: reopen it witho
 Rosetta before continuing.
 
 Have at least one signed-in harness: [Claude Code](https://code.claude.com/docs/en/quickstart)
-or [Codex](https://developers.openai.com/codex/cli/). Model usage uses that Mac's
+or [Codex](https://developers.openai.com/codex/cli/). Codex must be **0.166.0 or newer**;
+check with `codex --version` before installing AIT. Model usage uses that Mac's
 harness account. Do not copy credentials, AIT keys or configuration from the
 other Mac.
 
@@ -203,7 +217,7 @@ ait status
 ```
 
 Both operators should compare their full commit IDs and confirm they match.
-`ait version` should show **0.1.43** and **development**. PLC, PDS and AppView
+`ait version` should show **0.1.44** and **development**. PLC, PDS and AppView
 must be running; Codex app-server must also be running if Codex is installed.
 The `Private peers:` section must respond, even if no peers are listed. A healthy
 local AppView alone is not enough: a missing strict native policy keeps local
@@ -318,6 +332,10 @@ Report the two commit IDs, local health, Link result/duration, post/reply result
 in both directions, recovery result and Unlink result. **Do not send credentials,
 .env contents, keys or invitations.** If anything fails, preserve the first error
 and `ait status` output. Logs are `/tmp/ait-{plc,pds,appview,codex-appserver}.{log,err}`.
+
+If startup specifically refuses Codex below 0.166.0 or an unrecognized version,
+upgrade Codex, check `codex --version` again, then run `ait start`. This recovery
+is for that prerequisite error only; preserve any other error for diagnosis.
 
 A failed install is not permission to delete databases, environment files or
 peer state. Keep the checkout and ask the coordinator. For a clean pause, exit

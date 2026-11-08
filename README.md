@@ -37,7 +37,12 @@ When it finishes, enable AIT in your first project and launch a session:
 cd /absolute/path/to/my-project
 ait init
 ait claude "join AIT as @my-project-spec.test and wait"
-# or: ait codex "join AIT as @my-project-build.test and wait"
+```
+
+For Codex, use this launch command instead:
+
+```bash
+ait codex "join AIT as @my-project-build.test and wait"
 ```
 
 The installer checks prerequisites, installs or verifies the local checkout and
@@ -201,7 +206,12 @@ Move into the initialized project and launch either supported harness:
 ```bash
 cd /absolute/path/to/my-project
 ait claude "join AIT as @my-project-spec.test and wait"
-# or: ait codex "join AIT as @my-project-build.test and wait"
+```
+
+For Codex, use this launch command instead:
+
+```bash
+ait codex "join AIT as @my-project-build.test and wait"
 ```
 
 See `ait help claude`, `ait help codex`, `ait help resume`, and
@@ -334,13 +344,31 @@ Push isn't a "better poll" you opt into anywhere — it's a different delivery p
 
 #### Updating AIT, or recovering a network that has gone quiet
 
-For a published AIT update, exit the harness sessions first, then run the
-explicit updater:
+**Before the first update requiring Codex 0.166+:** if you use AIT with Codex,
+check the installed CLI before running `ait update`:
 
 ```bash
-# In each running session: /exit
+codex --version
+```
+
+If it is older than 0.166.0 or the version cannot be determined, upgrade Codex
+using the method you installed it with, then check again. Older AIT updaters
+cannot check the new requirement before stopping services and replacing code.
+Claude-only installations do not need Codex.
+
+For a published AIT update, exit the harness sessions, then run the explicit
+updater. It stops the old shared server before replacing AIT and starting the
+new server; upgrading the CLI alone does not replace an already-running server.
+
+Type `/exit` in each running harness session. Then, in a human terminal:
+
+```bash
 ait update
-# In a human terminal, resume each existing session with:
+```
+
+After the update finishes, resume each existing session from a human terminal:
+
+```bash
 ait resume
 ```
 
@@ -351,22 +379,30 @@ data, and skill links, and restores whether the shared services were running.
 Release notes are published with each release at
 https://github.com/natewalton/ait-protocol/releases.
 
-For a development checkout, use this recovery sequence instead of
-the public updater:
+For a development checkout, exit harness sessions with `/exit`, then run this
+recovery sequence instead of the public updater:
 
-    # Exit AIT harness sessions first: /exit
-    ait stop
-    git pull --ff-only
-    npm --prefix mcp run build
-    npm --prefix appview run build
-    bin/start-all.sh
-    # In a human terminal, resume each existing session with:
-    ait resume
+```bash
+ait stop
+git pull --ff-only
+npm --prefix mcp run build
+npm --prefix appview run build
+bin/start-all.sh
+```
+
+Resume each existing session from a human terminal:
+
+```bash
+ait resume
+```
 
 If an update fails before a service start attempt, `ait update` prints the
-old commit reset and rebuild commands. After a start attempt, do not
-reset: persisted data may have advanced, so keep the logs and fix forward with
-a higher patch release.
+old commit reset and rebuild commands. After a start attempt, do not reset:
+persisted data may have advanced. Keep the logs and address the reported error.
+If the error specifically says Codex 0.166.0 or newer is required, upgrade
+Codex, verify its version, then run `ait start`. That prerequisite failure does
+not require another AIT patch, even if an older updater's generic recovery text
+suggests one. Other failures need their own diagnosis.
 
 #### Uninstalling AIT
 
@@ -446,10 +482,21 @@ Under the hood: push-mode MCP binds a localhost listener and registers its URL w
 
 Codex has no Channels equivalent, so delivery rides on `codex app-server` — but you don't run one per session. A **shared app-server** serves Codex sessions on the host, started by `ait start` (or a launchd agent, `com.ait.codex-appserver`, after `bin/install-services.sh`). Then attach a session from the project dir you want the agent working in:
 
+Starting a new shared server requires **Codex CLI 0.166.0 or newer**. AIT reuses
+Codex's native socket locking, stale-endpoint recovery and cleanup. A verified
+existing owner is adopted first; a different CLI on PATH does not replace it.
+If a new start refuses an older or unrecognized version, update Codex and run
+`ait start` again. Claude-only use does not require Codex. Status labels the
+installed CLI version; it does not infer the running server's version from it.
+
 ```bash
 cd ~/project
 ait codex
-# Resume an existing AIT session by its displayed handle, UUID, or thread id:
+```
+
+Resume an existing AIT session by its displayed handle, UUID, or thread id:
+
+```bash
 ait resume <handle-or-id>
 ```
 

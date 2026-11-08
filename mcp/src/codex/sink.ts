@@ -81,6 +81,7 @@ export function createCodexSink(
   // True while a turn/start or turn/steer call is in flight. Only one at a time,
   // so batches never race each other onto the wire.
   let sending = false
+  let retryTimer: ReturnType<typeof setTimeout> | undefined
   // Notifications handed to codex and awaiting their turn's completion. More can
   // join `views` while that same turn is still running — that is what lets a
   // second, third, … notification skip the wait rather than only the first.
@@ -88,8 +89,25 @@ export function createCodexSink(
   // Completions seen while `sending` was true, before we learned the turn id.
   const earlyCompletions = new Map<string, string | undefined>()
 
+  function retry(): void {
+    if (client.isClosed || retryTimer) return
+    retryTimer = setTimeout(() => {
+      retryTimer = undefined
+      void pump()
+    }, INJECT_RETRY_DELAY_MS)
+  }
+
+  client.onClose(() => {
+    if (retryTimer) clearTimeout(retryTimer)
+    retryTimer = undefined
+    queue.length = 0
+    seen.clear()
+    earlyCompletions.clear()
+    inflight = null
+  })
+
   function finishTurn(turnId: string, status: string | undefined): void {
-    if (!inflight || inflight.turnId !== turnId) return
+    if (client.isClosed || !inflight || inflight.turnId !== turnId) return
     const delivered = inflight.views
     inflight = null
 
@@ -106,7 +124,7 @@ export function createCodexSink(
     // Failed or interrupted is not delivery. Put them back at the FRONT, in
     // order: committing anything later would skip these on crash replay.
     queue.unshift(...delivered)
-    setTimeout(() => void pump(), INJECT_RETRY_DELAY_MS)
+    retry()
   }
 
   // Hand pending notifications to codex. Steers into the running turn when there
@@ -116,7 +134,7 @@ export function createCodexSink(
   async function pump(): Promise<void> {
     // Synchronous, with no await before `sending` is set, so concurrent pump()
     // calls cannot both pass.
-    if (sending || queue.length === 0) return
+    if (client.isClosed || retryTimer || sending || queue.length === 0) return
 
     const runningTurnId = client.activeTurnId(threadId)
     // A batch already awaiting completion can only take more when the turn it
@@ -133,50 +151,45 @@ export function createCodexSink(
         try {
           turnId = await client.turnSteer(threadId, runningTurnId, text)
         } catch (err) {
-          // Two ways a steer fails, told apart by whether a turn is STILL
-          // running. Gone: it ended mid-call, so start a turn now. Still there:
-          // it is a kind that refuses steering (review, compact) — and those
-          // refuse turn/start for the same reason, so retrying that here would
-          // just fail twice. Wait for the turn to end instead. Neither is a drop.
+          // Reconcile the finished turn before starting a replacement. Its
+          // failed notifications must be queued before this unsent batch.
+          if (client.isClosed) return
+          queue.unshift(...batch)
           if (client.activeTurnId(threadId)) {
             console.error('codex turn refuses steering, waiting for it to end:', err)
-            queue.unshift(...batch)
-            setTimeout(() => void pump(), INJECT_RETRY_DELAY_MS)
-            return
+            retry()
           }
-          console.error('codex turn/steer lost its turn, starting one instead:', err)
-          turnId = await client.turnStart(threadId, text)
+          return
         }
       } else {
         turnId = await client.turnStart(threadId, text)
       }
 
+      if (client.isClosed) return
       if (inflight && inflight.turnId === turnId) inflight.views.push(...batch)
       else inflight = { turnId, views: batch }
-
-      // App-server may emit turn/completed before its response is observed on
-      // this client. Reconcile that event now the id is known, and drop the
-      // rest: no completion recorded before this turn can still matter.
-      const early = earlyCompletions.get(turnId)
-      const hadEarly = earlyCompletions.has(turnId)
-      earlyCompletions.clear()
-      if (hadEarly) finishTurn(turnId, early)
     } catch (err) {
       // Hard failure (not the retried -32001). Return the batch and retry:
       // pump() is otherwise only re-driven by deliver() or turn/completed,
       // neither of which a rejected send produces, so the batch would strand.
       // A send the server accepted but answered malformed replays here, which
       // risks showing it twice — losing it would be worse.
+      if (client.isClosed) return
       console.error('codex notification injection failed, retrying shortly:', err)
       queue.unshift(...batch)
-      setTimeout(() => void pump(), INJECT_RETRY_DELAY_MS)
+      retry()
+      return
     } finally {
       sending = false
+      // A completion can arrive during a rejected steer/send. Apply it even
+      // when that call returned early, before another turn can replace it.
+      const currentTurn = inflight?.turnId
+      const hadEarly = currentTurn !== undefined && earlyCompletions.has(currentTurn)
+      const early = currentTurn === undefined ? undefined : earlyCompletions.get(currentTurn)
+      earlyCompletions.clear()
+      if (hadEarly && currentTurn !== undefined) finishTurn(currentTurn, early)
+      void pump()
     }
-
-    // Anything that arrived during the call, or left over past MAX_BATCH, goes
-    // out now if its turn still accepts more.
-    void pump()
   }
 
   client.onTurnCompleted((event) => {
@@ -196,6 +209,7 @@ export function createCodexSink(
     // post-crash catch-up) re-POSTs notifications whose cursor hasn't advanced.
     // Skipping URIs already accepted this process-lifetime prevents double-
     // injection; a genuine crash resets `seen`, so real catch-up still delivers.
+    if (client.isClosed) throw new Error('Codex notification connection closed')
     if (seen.has(view.uri)) return
     seen.add(view.uri)
     queue.push(view)

@@ -86,7 +86,7 @@ export class AppServerClient {
 
   // Open the socket and run the initialize handshake. Resolves once the server
   // has acknowledged `initialize` and we've sent the `initialized` notification.
-  async connect(timeoutMs?: number): Promise<void> {
+  async connect(timeoutMs = CODEX_PROTOCOL_TIMEOUT_MS): Promise<void> {
     // Collapse repeated slashes (e.g. a $TMPDIR ending in '/') so the ws+unix
     // parser splits the socket path from the request path on the ':' correctly.
     const path = this.socketPath.replace(/\/{2,}/g, '/')
@@ -311,6 +311,10 @@ export class AppServerClient {
     return this.activeTurns.get(threadId) ?? null
   }
 
+  get isClosed(): boolean {
+    return this.closed
+  }
+
   onTurnCompleted(listener: (event: TurnEvent) => void): void {
     this.turnCompletedListeners.push(listener)
   }
@@ -334,7 +338,12 @@ export class AppServerClient {
     const reason = err ?? new Error('app-server connection closed')
     for (const [, p] of this.pending) p.reject(reason)
     this.pending.clear()
-    for (const listener of this.closeListeners) listener(err)
+    this.activeTurns.clear()
+    this.turnCompletedListeners.length = 0
+    this.mcpStatusListeners.clear()
+    const listeners = [...this.closeListeners]
+    this.closeListeners.clear()
+    for (const listener of listeners) listener(err)
   }
 
   private request(method: string, params?: unknown): Promise<unknown> {
@@ -398,7 +407,7 @@ export class AppServerClient {
       const p = this.pending.get(msg.id)
       if (!p) return
       this.pending.delete(msg.id)
-      if (msg.error) p.reject(new RpcError(msg.error.code, msg.error.message))
+      if (msg.error) p.reject(new RpcError(msg.error.code, msg.error.message, msg.error.data))
       else p.resolve(msg.result)
       return
     }
@@ -489,9 +498,16 @@ export class RpcError extends Error {
   constructor(
     readonly code: number,
     message: string,
+    readonly data?: unknown,
   ) {
     super(`app-server RPC error ${code}: ${message}`)
     this.name = 'RpcError'
+  }
+
+  get isServerShuttingDown(): boolean {
+    return this.code === -32600 && typeof this.data === 'object' &&
+      this.data !== null && 'reason' in this.data &&
+      this.data.reason === 'serverShuttingDown'
   }
 }
 

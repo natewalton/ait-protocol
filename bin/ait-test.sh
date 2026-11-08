@@ -5,6 +5,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 REAL_CURL="$(command -v curl)"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/ait-test.XXXXXX")"
+TMP_ROOT="$(cd "$TMP_ROOT" && pwd -P)"
 cleanup_fixture_processes() {
   local pid_file pid
   set +e
@@ -489,7 +490,9 @@ assert_contains "$status_output" "codex-appserver"
 assert_contains "$status_output" "immediate cleanup requires Codex 0.154+"
 sed -i '' 's/codex-cli 0\.152\.0/codex-cli 0.154.0/' "$status_fixture/shim/codex"
 status_output="$("$status_fixture/bin/status.sh")"
-assert_contains "$status_output" "exited-session cleanup immediate"
+assert_contains "$status_output" "zero-delay cleanup supported"
+assert_contains "$status_output" "running version not inferred"
+sed -i '' 's/codex-cli 0\.154\.0/codex-cli 0.166.0/' "$status_fixture/shim/codex"
 codex_launch_capture="$TMP_ROOT/codex-launch.args"
 AIT_CODEX_CAPTURE="$codex_launch_capture" \
 AIT_CODEX_SHARED_SOCKET="$TMP_ROOT/codex-launch.sock" \
@@ -957,6 +960,7 @@ while :; do sleep 1; done
 EOF
 cat > "$codex_start_fixture/shim/codex" <<'EOF'
 #!/bin/bash
+if [ "${1:-}" = --version ]; then echo "codex-cli ${AIT_FAKE_CLI_VERSION:-0.167.0}"; fi
 exit 0
 EOF
 chmod +x "$codex_start_fixture/shim/"* "$codex_start_fixture/bin/run-codex-appserver.sh"
@@ -996,6 +1000,35 @@ seed_codex_core_state() {
   local service pid=101
   for service in plc pds appview; do printf '%s' "$pid" > "$codex_start_state/$service"; pid=$((pid + 1)); done
 }
+
+# Exercise the actual public entry points: version refusal must be synchronous,
+# not hidden in a background log while the driver waits forever.
+: > "$codex_start_fixture/mcp/dist/server.js"
+for version in 0.165.0 unparseable; do
+  seed_codex_core_state
+  export AIT_FAKE_CLI_VERSION="$version"
+  expected_version="$version"
+  [ "$version" != unparseable ] || expected_version=unknown
+  floor_message="Codex 0.166.0 or newer is required to start AIT's shared server (found $expected_version). Update Codex, then run ait start."
+  set +e
+  floor_start_output="$("$codex_start_fixture/ait" start 2>&1)"
+  floor_start_status=$?
+  floor_launch_output="$(env -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_ENTRYPOINT \
+    -u CODEX_SESSION_ID -u CODEX_THREAD_ID -u AIT_SESSION_ID -u AI_AGENT \
+    AIT_TEST_PUBLIC_CLI="$codex_start_fixture/ait" /usr/bin/script -q /dev/null /bin/bash -c \
+    '"$AIT_TEST_PUBLIC_CLI" codex; result=$?; printf "PUBLIC_CHILD_STATUS=%s\n" "$result"; exit "$result"' 2>&1)"
+  floor_launch_status=$?
+  set -e
+  [ "$floor_start_status" -eq 1 ] || fail "public start did not refuse unsupported version: $floor_start_output"
+  [ "$floor_launch_status" -ne 0 ] || fail "public codex did not refuse unsupported version: $floor_launch_output"
+  assert_contains "$floor_start_output" "$floor_message"
+  assert_contains "$floor_launch_output" "$floor_message"
+  assert_contains "$floor_launch_output" 'PUBLIC_CHILD_STATUS=1'
+  assert_absent "$codex_start_wrapper_pids/codex-appserver"
+done
+unset AIT_FAKE_CLI_VERSION
+rm -f "$codex_start_state"/*
+pass "public Codex launch and start refuse old or unknown versions before background work"
 
 seed_codex_core_state
 start_codex_fixture 2
@@ -1056,10 +1089,23 @@ pass "adopted Codex process exit fails without a pidfile"
 
 export AIT_CODEX_START_DELAY=1
 seed_codex_core_state
+printf 'KEEP-STDOUT\n' > "$codex_start_logs/ait-codex-appserver.log"
+printf 'KEEP-STDERR\n' > "$codex_start_logs/ait-codex-appserver.err"
 codex_start_output="$("$codex_start_fixture/bin/start-all.sh" 2>&1)"
+assert_contains "$(cat "$codex_start_logs/ait-codex-appserver.log")" KEEP-STDOUT
+assert_contains "$(cat "$codex_start_logs/ait-codex-appserver.err")" KEEP-STDERR
 assert_contains "$codex_start_output" "waiting for codex-appserver socket"
 assert_contains "$codex_start_output" "codex-appserver  running"
 codex_start_pid="$(cat "$codex_start_wrapper_pids/codex-appserver")"
+launch_group="$(/bin/ps -p "$codex_start_pid" -o pgid= | tr -d ' ')"
+terminal_group="$(/bin/ps -p $$ -o pgid= | tr -d ' ')"
+[ "$launch_group" != "$terminal_group" ] || fail "shared Codex inherited the launching terminal group"
+# Adoption must precede the CLI floor; this already-running owner stays intact.
+export AIT_FAKE_CLI_VERSION=0.165.0
+warm_output="$("$codex_start_fixture/ait" start 2>&1)"
+assert_contains "$warm_output" "codex-appserver already running"
+assert_not_contains "$warm_output" "0.166.0 or newer is required"
+unset AIT_FAKE_CLI_VERSION
 kill "$codex_start_pid" 2>/dev/null || true
 wait "$codex_start_pid" 2>/dev/null || true
 for wrapper in plc pds appview; do
@@ -1189,6 +1235,7 @@ exec /bin/sleep "$@"
 EOF
 cat > "$lifecycle/shim/codex" <<'EOF'
 #!/bin/bash
+if [ "${1:-}" = --version ]; then echo 'codex-cli 0.167.0'; exit 0; fi
 printf '%s\n' "$*" > "$AIT_TUI_CAPTURE"
 if [ "${AIT_TEST_TERMINAL:-}" = 1 ]; then
   stty -echo -icanon min 1 time 0
@@ -1216,6 +1263,7 @@ export AIT_FAKE_SHARED_SOCKET="$lifecycle/shared.sock"
 export AIT_TUI_CAPTURE="$lifecycle/tui.args"
 cat > "$lifecycle/shim/pgrep" <<'EOF'
 #!/bin/bash
+if [ -n "${AIT_TEST_WAIT_FOR_LAUNCH:-}" ] && [ ! -f "$AIT_TEST_WAIT_FOR_LAUNCH" ]; then exit 0; fi
 printf '%s\n' "$AIT_TEST_SHARED_PID"
 EOF
 cat > "$lifecycle/shim/ps" <<'EOF'
@@ -1235,6 +1283,26 @@ for cached in absent 99999999 "$second_session_pid" "$shared_fixture_pid"; do
   process_alive "$second_session_pid" || fail 'resume stopped the sibling session'
 done
 pass "Codex resume repairs absent, dead and unrelated PID caches without disturbing siblings"
+# Drive the genuinely-new background-launch branch, retaining prior diagnostics.
+cat > "$lifecycle/bin/run-codex-appserver.sh" <<'EOF'
+#!/bin/bash
+echo NEW-STDOUT
+echo NEW-STDERR >&2
+touch "$AIT_TEST_WAIT_FOR_LAUNCH"
+EOF
+chmod +x "$lifecycle/bin/run-codex-appserver.sh"
+export AIT_TEST_WAIT_FOR_LAUNCH="$lifecycle/launched"
+printf 'KEEP-STDOUT\n' > "$lifecycle/logs/ait-codex-appserver.log"
+printf 'KEEP-STDERR\n' > "$lifecycle/logs/ait-codex-appserver.err"
+PATH="$lifecycle/shim:/usr/bin:/bin" "$lifecycle/bin/codex-session.sh" > /dev/null 2>&1
+assert_file "$AIT_TEST_WAIT_FOR_LAUNCH"
+for stream in log err; do
+  text="$(cat "$lifecycle/logs/ait-codex-appserver.$stream")"
+  assert_contains "$text" KEEP-STD
+  assert_contains "$text" NEW-STD
+done
+unset AIT_TEST_WAIT_FOR_LAUNCH
+pass "shared-server launch preserves existing stdout and stderr logs"
 export AIT_TERMINAL_LAUNCHER="$lifecycle/bin/codex-session.sh"
 AIT_TEST_TERMINAL=1 PATH="$lifecycle/shim:/usr/bin:/bin" /usr/bin/expect <<'EOF'
 set timeout 15
@@ -1271,8 +1339,35 @@ expect eof
 set result [wait]
 exit [lindex $result 3]
 EOF
-unset AIT_TERMINAL_LAUNCHER
 pass "failed Codex TUI restores terminal modes, disables mouse tracking and flushes queued reports"
+AIT_TEST_TERMINAL=1 PATH="$lifecycle/shim:/usr/bin:/bin" /usr/bin/expect <<'EOF'
+set timeout 15
+log_user 0
+spawn /bin/bash -c {
+  trap ':' INT
+  "$AIT_TERMINAL_LAUNCHER" --resume 11111111-1111-4111-8111-111111111111
+  echo "CANCEL_STATUS=$?"
+}
+expect {
+  TERMINAL-READY { send -- "\003" }
+  timeout { exit 1 }
+  eof { exit 1 }
+}
+expect {
+  "retrying large-history recovery" { exit 1 }
+  "CANCEL_STATUS=130" {}
+  timeout { exit 1 }
+  eof { exit 1 }
+}
+expect eof
+exit [lindex [wait] 3]
+EOF
+unset AIT_TERMINAL_LAUNCHER
+driver_fixture_pid="$(cat "$lifecycle/driver.pid")"
+process_alive "$driver_fixture_pid" && fail 'interrupted resume left its driver running'
+process_alive "$shared_fixture_pid" || fail 'interrupted resume stopped shared server'
+process_alive "$second_session_pid" || fail 'interrupted resume stopped sibling'
+pass "Ctrl-C during resumed TUI exits without a relay and preserves siblings"
 # Model the saved state remaining after the controlling terminal disappears.
 # This non-PTY child has no /dev/tty; cleanup must still reap its driver.
 sed 's/^terminal_state=""$/terminal_state="terminal-was-closed"/' \

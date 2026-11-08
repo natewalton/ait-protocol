@@ -1,6 +1,7 @@
 #!/bin/bash
 # Regression check for the shared Codex app-server's inherited open-file limit.
 set -euo pipefail
+if [ "${1:-}" = --version ]; then echo "codex-cli ${AIT_TEST_CODEX_VERSION:-0.167.0}"; exit 0; fi
 
 # The launcher runs this file as its fake Codex binary. Reporting from the
 # child proves the resource limit survives the real process boundary.
@@ -18,6 +19,17 @@ cleanup() {
   rm -rf "$TEST_DIR"
 }
 trap cleanup EXIT
+
+wait_for_exit() {
+  local pid="$1" state
+  for _ in {1..100}; do
+    state="$(ps -p "$pid" -o stat= 2>/dev/null | tr -d ' ' || true)"
+    case "$state" in ''|Z*) return 0 ;; esac
+    sleep 0.05
+  done
+  echo "fixture process $pid did not exit" >&2
+  return 1
+}
 
 # Every process path, socket and log directory belongs to this fixture.
 mkdir -p "$TEST_DIR/bin" "$TEST_DIR/mcp/dist"
@@ -69,27 +81,56 @@ export AIT_TEST_SERVER_PID="$TEST_DIR/server.pid"
 export AIT_TEST_CHILD_PID="$TEST_DIR/child.pid"
 cat > "$TEST_DIR/codex" <<'PY'
 #!/usr/bin/python3
-import os, signal, socket, subprocess, time
+import os, signal, socket, subprocess, time, sys, fcntl
+if sys.argv[1:] == ['--version']:
+    print('codex-cli ' + os.environ.get('AIT_TEST_CODEX_VERSION', '0.167.0'))
+    sys.exit(0)
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 path = os.environ['AIT_CODEX_SHARED_SOCKET']
+physical = path + '.endpoint'
 gate = os.environ.get('AIT_TEST_BIND_GATE')
 if gate:
     open(os.environ['AIT_TEST_SERVER_PID'] + '.prebind', 'w').write(str(os.getpid()))
     while not os.path.exists(gate): time.sleep(.01)
-s.bind(path)
+# Model the native backend's exclusive bind and stale endpoint handling. AIT
+# must discover/adopt it, never manage its lock or unlink its live alias.
+lock = open(physical + '.native-lock', 'a')
+fcntl.flock(lock, fcntl.LOCK_EX)
+for endpoint in [physical, path]:
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        probe.connect(endpoint)
+        print('control socket already in use', file=sys.stderr)
+        sys.exit(1)
+    except OSError: pass
+    finally: probe.close()
+for endpoint in [path, physical]:
+    try: os.unlink(endpoint)
+    except FileNotFoundError: pass
+s.bind(physical)
 s.listen()
+inode = os.stat(physical).st_ino
+os.symlink(physical, path)
+fcntl.flock(lock, fcntl.LOCK_UN)
 s.set_inheritable(True)
-child = subprocess.Popen(['/bin/sleep', '120'], close_fds=False)
+child = subprocess.Popen(['/bin/cat'], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, close_fds=False)
 open(os.environ['AIT_TEST_SERVER_PID'], 'w').write(str(os.getpid()))
 open(os.environ['AIT_TEST_CHILD_PID'], 'w').write(str(child.pid))
-signal.signal(signal.SIGTERM, signal.SIG_IGN if os.environ.get('AIT_TEST_IGNORE_TERM') else lambda *_: exit(0))
-while True: time.sleep(1)
+signal.signal(signal.SIGTERM, signal.SIG_IGN if os.environ.get('AIT_TEST_IGNORE_TERM') else lambda *_: sys.exit(0))
+try:
+    while True: time.sleep(1)
+finally:
+    child.stdin.close()
+    child.wait(timeout=3)
+    if os.path.exists(physical) and os.stat(physical).st_ino == inode:
+        os.unlink(physical)
+        if os.path.islink(path) and os.readlink(path) == physical: os.unlink(path)
 PY
 chmod +x "$TEST_DIR/codex"
 cat > "$TEST_DIR/shim/lsof" <<'SH'
 #!/bin/bash
-if [ "${1:-}" = -t ] && [ "${2:-}" = "$AIT_CODEX_SHARED_SOCKET" ]; then
-  actual="$(/usr/sbin/lsof -t "$AIT_CODEX_SHARED_SOCKET" 2>/dev/null || true)"
+if [ "${1:-}" = -t ] && { [ "${2:-}" = "$AIT_CODEX_SHARED_SOCKET" ] || [ "${2:-}" = "$AIT_CODEX_SHARED_SOCKET.endpoint" ]; }; then
+  actual="$(/usr/sbin/lsof -t "$2" 2>/dev/null || true)"
   for file in "$AIT_TEST_CHILD_PID" "$AIT_TEST_SERVER_PID"; do
     [ -f "$file" ] || continue
     pid="$(cat "$file")"
@@ -108,7 +149,12 @@ exit 0
 SH
 chmod +x "$TEST_DIR/shim/lsof"
 export CODEX_BIN="$TEST_DIR/codex" NODE_BIN=/usr/bin/true
-export PATH="$TEST_DIR/shim:$PATH"
+export PATH="$TEST_DIR/shim:$TEST_DIR:$PATH"
+if CODEX_BIN="$REPO/bin/run-codex-appserver-test.sh" AIT_TEST_CODEX_VERSION=0.165.0 \
+  "$launcher" > "$TEST_DIR/floor.log" 2>&1; then exit 1; fi
+grep -Fq "Codex 0.166.0 or newer is required to start AIT's shared server (found 0.165.0). Update Codex, then run ait start." "$TEST_DIR/floor.log"
+[ ! -e "$AIT_TEST_SERVER_PID" ]
+echo 'run-codex-appserver-test: direct wrapper refuses an unsupported version before spawning'
 server_pid=""
 child_pid=""
 http_pids=""
@@ -122,9 +168,8 @@ cleanup() {
   for pid in $http_pids $extra_pids ${decoy:-}; do kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; done
   rm -rf "$TEST_DIR"
 }
-# Include a stale socket left by an exited server and an abandoned startup lock.
+# Include a stale socket left by an exited server; native startup recovers it.
 /usr/bin/python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' "$AIT_CODEX_SHARED_SOCKET"
-printf '%s\n' 99999999 > "$AIT_CODEX_SHARED_SOCKET.start-lock"
 "$launcher" > "$TEST_DIR/first.log" 2>&1 &
 first_launcher=$!
 "$launcher" > "$TEST_DIR/second.log" 2>&1 &
@@ -235,16 +280,13 @@ server_pid=""; child_pid=""
 rm -f "$AIT_TEST_SERVER_PID" "$AIT_TEST_CHILD_PID"
 echo 'run-codex-appserver-test: foreign Codex conflicts preserve HTTP start/stop, summary and decoy safety'
 
-# Reproduce two previously orphaned own servers on one socket. One invocation
-# must discover both, including the one no longer reachable through the path.
-"$TEST_DIR/codex" app-server --listen "unix://$AIT_CODEX_SHARED_SOCKET" \
+# An owned prebind orphan plus a bound server both belong to explicit stop.
+AIT_TEST_BIND_GATE="$TEST_DIR/orphan-never-bind" "$TEST_DIR/codex" app-server \
+  --listen "unix://$AIT_CODEX_SHARED_SOCKET" \
   -c "mcp_servers.ait.args=[\"$TEST_DIR/mcp/dist/server.js\"]" &
 orphan=$!
 extra_pids="$extra_pids $orphan"
-for _ in {1..100}; do [ -s "$AIT_TEST_SERVER_PID" ] && break; sleep 0.05; done
-orphan_child="$(cat "$AIT_TEST_CHILD_PID")"
-extra_pids="$extra_pids $orphan_child"
-rm -f "$AIT_CODEX_SHARED_SOCKET" "$AIT_TEST_SERVER_PID" "$AIT_TEST_CHILD_PID"
+for _ in {1..100}; do [ -s "$AIT_TEST_SERVER_PID.prebind" ] && break; sleep 0.05; done
 "$TEST_DIR/codex" app-server --listen "unix://$AIT_CODEX_SHARED_SOCKET" \
   -c "mcp_servers.ait.args=[\"$TEST_DIR/mcp/dist/server.js\"]" &
 server_pid=$!
@@ -254,10 +296,35 @@ child_pid="$(cat "$AIT_TEST_CHILD_PID")"
 wait "$orphan" 2>/dev/null || true
 wait "$server_pid" 2>/dev/null || true
 if kill -0 "$orphan" 2>/dev/null || kill -0 "$server_pid" 2>/dev/null; then exit 1; fi
-kill "$orphan_child" 2>/dev/null || true
 server_pid=""; child_pid=""
-rm -f "$AIT_TEST_SERVER_PID" "$AIT_TEST_CHILD_PID"
-echo 'run-codex-appserver-test: one stop removes every owned orphan on the exact socket'
+rm -f "$AIT_TEST_SERVER_PID" "$AIT_TEST_CHILD_PID" "$AIT_TEST_SERVER_PID.prebind"
+echo 'run-codex-appserver-test: one stop removes owned bound and prebind servers'
+
+# A wrapper which has not bound owns its child, not a competing winner.
+gate="$TEST_DIR/loser-bind"
+AIT_TEST_BIND_GATE="$gate" "$launcher" > "$TEST_DIR/loser.log" 2>&1 &
+loser=$!
+extra_pids="$extra_pids $loser"
+for _ in {1..100}; do [ -s "$AIT_TEST_SERVER_PID.prebind" ] && break; sleep 0.05; done
+prebind="$(cat "$AIT_TEST_SERVER_PID.prebind")"
+extra_pids="$extra_pids $prebind"
+"$TEST_DIR/codex" app-server --listen "unix://$AIT_CODEX_SHARED_SOCKET" \
+  -c "mcp_servers.ait.args=[\"$TEST_DIR/mcp/dist/server.js\"]" &
+server_pid=$!
+for _ in {1..100}; do [ -s "$AIT_TEST_SERVER_PID" ] && break; sleep 0.05; done
+child_pid="$(cat "$AIT_TEST_CHILD_PID")"
+kill -TERM "$loser"
+status=0
+wait "$loser" || status=$?
+[ "$status" = 143 ]
+kill -0 "$server_pid"
+kill -0 "$child_pid"
+[ "$(running_pid codex-appserver)" = "$server_pid" ]
+"$TEST_DIR/bin/stop-codex-appserver.sh"
+wait "$server_pid" 2>/dev/null || true
+server_pid=""; child_pid=""
+rm -f "$AIT_TEST_SERVER_PID" "$AIT_TEST_CHILD_PID" "$AIT_TEST_SERVER_PID.prebind"
+echo 'run-codex-appserver-test: losing wrapper TERM preserves the winning server'
 
 # Signals target only owned fixture processes. The blocked bind is an event
 # gate, not a timing assumption about how fast the server starts.
@@ -287,9 +354,6 @@ PY
   # The foreign checkout cannot break or replace a live startup's kernel lock.
   if "$foreign/bin/run-codex-appserver.sh" > "$TEST_DIR/foreign-prebind.log" 2>&1; then exit 1; fi
   kill -0 "$prebind"
-  lock_status=0
-  /usr/bin/lockf -s -k -t 0 "$AIT_CODEX_SHARED_SOCKET.start-lock" /usr/bin/true || lock_status=$?
-  [ "$lock_status" = 75 ]
   kill -"$signal" "$wrapper"
   wait "$wrapper" 2>/dev/null || true
   if [ "$signal" = INT ]; then
@@ -307,7 +371,6 @@ PY
     child_pid=""
   else
     if kill -0 "$prebind" 2>/dev/null; then exit 1; fi
-    /usr/bin/lockf -s -k -t 0 "$AIT_CODEX_SHARED_SOCKET.start-lock" /usr/bin/true
   fi
   rm -f "$AIT_TEST_SERVER_PID.prebind" "$AIT_TEST_SERVER_PID" "$AIT_TEST_CHILD_PID"
 done
@@ -351,56 +414,35 @@ kill -TERM "$wrapper"
 status=0
 wait "$wrapper" || status=$?
 [ "$status" = 143 ]
+wait_for_exit "$child_pid"
 if kill -0 "$server_pid" 2>/dev/null || kill -0 "$child_pid" 2>/dev/null; then exit 1; fi
 server_pid=""; child_pid=""
-/usr/bin/lockf -s -k -t 0 "$AIT_CODEX_SHARED_SOCKET.start-lock" /usr/bin/true
 rm -f "$AIT_TEST_SERVER_PID" "$AIT_TEST_CHILD_PID"
 echo 'run-codex-appserver-test: wrapper TERM escalates and reaps a stubborn server and children'
 
-# Pause stop exactly at its final socket unlink while its kernel lock is held.
-# Starting in this interval must wait, then bind a socket that stop cannot remove.
-cat > "$TEST_DIR/shim/rm" <<'SH'
-#!/bin/bash
-if [ -n "${AIT_TEST_STOP_CLEANUP_GATE:-}" ] && [ "${1:-}" = -f ] && [ "${2:-}" = "$AIT_CODEX_SHARED_SOCKET" ]; then
-  touch "$AIT_TEST_STOP_CLEANUP_GATE.arrived"
-  while [ ! -e "$AIT_TEST_STOP_CLEANUP_GATE" ]; do sleep 0.01; done
-fi
-exec /bin/rm "$@"
-SH
-chmod +x "$TEST_DIR/shim/rm"
-rm -f "$AIT_CODEX_SHARED_SOCKET"
-/usr/bin/python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' "$AIT_CODEX_SHARED_SOCKET"
-cleanup_gate="$TEST_DIR/stop-cleanup"
-AIT_TEST_STOP_CLEANUP_GATE="$cleanup_gate" "$TEST_DIR/bin/stop-codex-appserver.sh" > "$TEST_DIR/stop-race.log" 2>&1 &
-stopper=$!
-extra_pids="$extra_pids $stopper"
-for _ in {1..100}; do [ -f "$cleanup_gate.arrived" ] && break; sleep 0.05; done
-[ -f "$cleanup_gate.arrived" ]
-lock_status=0
-/usr/bin/lockf -s -k -t 0 "$AIT_CODEX_SHARED_SOCKET.start-lock" /usr/bin/true || lock_status=$?
-[ "$lock_status" = 75 ]
-"$launcher" > "$TEST_DIR/start-race.log" 2>&1 &
-race_wrapper=$!
-extra_pids="$extra_pids $race_wrapper"
-for _ in {1..100}; do grep -q 'startup in progress' "$TEST_DIR/start-race.log" && break; sleep 0.05; done
-grep -q 'startup in progress' "$TEST_DIR/start-race.log"
-[ ! -f "$AIT_TEST_SERVER_PID" ]
-touch "$cleanup_gate"
-wait "$stopper"
-for _ in {1..100}; do [ -s "$AIT_TEST_SERVER_PID" ] && break; sleep 0.05; done
-server_pid="$(cat "$AIT_TEST_SERVER_PID")"
-child_pid="$(cat "$AIT_TEST_CHILD_PID")"
+# SIGKILL leaves a stale native endpoint. Status must describe absence, not a
+# broken live server, so the updater's ordinary stopped-state path still works.
+cp "$REPO/bin/status.sh" "$TEST_DIR/bin/status.sh"
+mkdir -p "$TEST_DIR/mcp/dist/codex"
+printf 'process.exit(1)\n' > "$TEST_DIR/mcp/dist/codex/probe.js"
+printf '#!/bin/sh\nexit 1\n' > "$TEST_DIR/shim/curl"
+printf '#!/bin/sh\necho "codex-cli 0.167.0"\n' > "$TEST_DIR/shim/codex"
+chmod +x "$TEST_DIR/shim/curl" "$TEST_DIR/shim/codex"
 [ -S "$AIT_CODEX_SHARED_SOCKET" ]
-[ "$(running_pid codex-appserver)" = "$server_pid" ]
-kill -0 "$server_pid"
-"$launcher" > "$TEST_DIR/race-adopt.log"
-[ "$(running_pid codex-appserver)" = "$server_pid" ]
-"$TEST_DIR/bin/stop-codex-appserver.sh"
-wait "$race_wrapper" 2>/dev/null || true
-server_pid=""; child_pid=""
-echo 'run-codex-appserver-test: start waits through final stop cleanup and retains its bound socket'
+stale_status="$("$TEST_DIR/bin/status.sh" || true)"
+grep -Eq 'codex-appserver +unreachable' <<< "$stale_status"
+if grep -Fq protocol-unhealthy <<< "$stale_status"; then exit 1; fi
+/usr/bin/sed -n '/^service_state() {/,/^}/p' "$REPO/bin/update.sh" > "$TEST_DIR/update-state.sh"
+STATUS_SCRIPT="$TEST_DIR/bin/status.sh" AIT_TEST_UPDATE_STATE="$TEST_DIR/update-state.sh" /bin/bash <<'SH'
+set -euo pipefail
+source "$AIT_TEST_UPDATE_STATE"
+fail() { echo "$*" >&2; exit 1; }
+service_state
+[ "$WAS_READY" = 0 ]
+SH
+echo 'run-codex-appserver-test: stale endpoint is unreachable and updater accepts stopped state'
 
-# Opposite direction: stop meets a startup that still owns the pre-bind lock.
+# Stop meets an owned server before native bind.
 # It terminates that verified startup and completes in the same invocation.
 rm -f "$AIT_TEST_SERVER_PID" "$AIT_TEST_CHILD_PID" "$AIT_TEST_SERVER_PID.prebind"
 gate="$TEST_DIR/stop-prebind"
@@ -413,7 +455,6 @@ extra_pids="$extra_pids $prebind"
 "$TEST_DIR/bin/stop-codex-appserver.sh"
 wait "$wrapper" 2>/dev/null || true
 if kill -0 "$prebind" 2>/dev/null; then exit 1; fi
-/usr/bin/lockf -s -k -t 0 "$AIT_CODEX_SHARED_SOCKET.start-lock" /usr/bin/true
 rm -f "$AIT_TEST_SERVER_PID.prebind"
 echo 'run-codex-appserver-test: stop completes against an own prebind startup without foreign-lock errors'
 
@@ -423,6 +464,7 @@ cat > "$TEST_DIR/npm-codex" <<'JS'
 const { spawn } = require('node:child_process')
 const child = spawn(process.env.AIT_TEST_NATIVE_CODEX, process.argv.slice(2), { stdio: 'inherit' })
 child.on('exit', (code) => process.exit(code ?? 1))
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(signal, () => child.kill(signal))
 JS
 chmod +x "$TEST_DIR/npm-codex"
 CODEX_BIN="$TEST_DIR/npm-codex" AIT_TEST_NATIVE_CODEX="$TEST_DIR/codex" \
@@ -434,13 +476,7 @@ server_pid="$(cat "$AIT_TEST_SERVER_PID")"
 child_pid="$(cat "$AIT_TEST_CHILD_PID")"
 shim_pid="$(ps -p "$server_pid" -o ppid= | tr -d ' ')"
 [ "$shim_pid" != "$wrapper" ]
-# Wait for the lock-release event, not an assumed native startup duration.
-released=0
-for _ in {1..100}; do
-  if /usr/bin/lockf -s -k -t 0 "$AIT_CODEX_SHARED_SOCKET.start-lock" /usr/bin/true; then released=1; break; fi
-  sleep 0.05
-done
-[ "$released" = 1 ]
+[ ! -e "$AIT_CODEX_SHARED_SOCKET.start-lock" ]
 [ "$(running_pid codex-appserver)" = "$server_pid" ]
 kill -TERM "$wrapper"
 status=0
@@ -449,4 +485,4 @@ wait "$wrapper" || status=$?
 if kill -0 "$server_pid" 2>/dev/null || kill -0 "$shim_pid" 2>/dev/null || kill -0 "$child_pid" 2>/dev/null; then exit 1; fi
 server_pid=""; child_pid=""
 rm -f "$AIT_TEST_SERVER_PID" "$AIT_TEST_CHILD_PID"
-echo 'run-codex-appserver-test: npm shim releases bind lock and shutdown reaps shim/native server/children'
+echo 'run-codex-appserver-test: npm shim adopts native endpoint and shutdown reaps shim/native server/children'

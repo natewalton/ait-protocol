@@ -185,10 +185,11 @@ export async function runCodexSession(): Promise<void> {
             )
             process.exit(1)
           }
-          // Any other answer except overload is Codex's final word on this
+          // Overload and structured server shutdown are transient. Other first
+          // resume errors are Codex's final word on this
           // thread (archived, corrupt history), and retrying cannot change it.
           // Its message says what to do, e.g. "Run `codex unarchive <id>`".
-          if (firstAttempt && err instanceof RpcError && err.code !== SERVER_OVERLOADED) {
+          if (firstAttempt && err instanceof RpcError && err.code !== SERVER_OVERLOADED && !err.isServerShuttingDown) {
             console.error(`ait codex session: could not resume codex thread ${threadId}: ${err.message}`)
             process.exit(1)
           }

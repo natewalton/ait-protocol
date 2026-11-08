@@ -12,7 +12,9 @@ service_pids() {
     appview) lsof -nP -iTCP:2585 -sTCP:LISTEN -t 2>/dev/null ;;
     codex-appserver)
       if [ -S "$CODEX_SOCK" ]; then
-        lsof -t "$CODEX_SOCK" 2>/dev/null
+        # Codex publishes an advertised alias to its protected physical socket.
+        # lsof does not follow that alias on macOS.
+        lsof -t "$(/bin/realpath "$CODEX_SOCK" 2>/dev/null)" 2>/dev/null
       else
         # Before the socket binds, retain the existing command-line discovery
         # policy so start-all can adopt the process and wait for its event.
@@ -44,6 +46,18 @@ codex_server_command() {
   case " $1 " in
     *"/codex app-server --listen unix://$CODEX_SOCK "*|*" codex app-server --listen unix://$CODEX_SOCK "*) return 0 ;;
   esac
+  return 1
+}
+
+# Call synchronously before a new launch, never as a proxy for an incumbent's
+# version. Native Codex owns exclusive bind, stale recovery and endpoint cleanup.
+require_codex_native_lifecycle() {
+  local binary="${1:-${CODEX_BIN:-codex}}" version major minor
+  version="$("$binary" --version 2>/dev/null | sed -n 's/^codex-cli \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*$/\1/p' || true)"
+  major="${version%%.*}"
+  minor="${version#*.}"; minor="${minor%%.*}"
+  if [ -n "$version" ] && { [ "$major" -gt 0 ] || { [ "$major" -eq 0 ] && [ "$minor" -ge 166 ]; }; }; then return 0; fi
+  echo "Codex 0.166.0 or newer is required to start AIT's shared server (found ${version:-unknown}). Update Codex, then run ait start." >&2
   return 1
 }
 
@@ -102,12 +116,8 @@ codex_shutdown_target() {
 }
 
 stop_codex_pids() {
-  local servers="$1 ${2:-}" direct_child="${2:-}" pid children="" still i
+  local servers="$1 ${2:-}" direct_child="${2:-}" pid still i
   [ -n "$servers" ] || return 0
-  for pid in $servers; do
-    codex_shutdown_target "$pid" "$direct_child" || continue
-    children="$children $(pgrep -P "$pid" || true)"
-  done
   for pid in $servers; do
     codex_shutdown_target "$pid" "$direct_child" || continue
     kill "$pid" 2>/dev/null && echo "stopping codex app-server (pid $pid)"
@@ -122,9 +132,6 @@ stop_codex_pids() {
     codex_shutdown_target "$pid" "$direct_child" || continue
     kill -9 "$pid" 2>/dev/null && echo "force-killed codex app-server (pid $pid)"
   done
-  for pid in $children; do kill "$pid" 2>/dev/null || true; done
-  if [ -n "$children" ]; then
-    sleep 1
-    for pid in $children; do kill -9 "$pid" 2>/dev/null || true; done
-  fi
+  # Native shutdown closes its MCP stdio; AIT's MCP exits on stdin EOF.
+  # Never retain descendant PIDs and signal them after their parent is gone.
 }

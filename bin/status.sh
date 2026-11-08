@@ -1,7 +1,8 @@
 #!/bin/bash
 # Read-only health and harness status for the shared AIT installation.
 set -euo pipefail
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
+. "$REPO/bin/lib-service-pids.sh"
 
 check_core=0
 if [ "${1:-}" = "--check-core" ]; then
@@ -37,9 +38,9 @@ codex_cleanup_status() {
   if [ -n "$version" ] && [ "$major" -eq "$major" ] 2>/dev/null &&
      [ "$minor" -eq "$minor" ] 2>/dev/null &&
      { [ "$major" -gt 0 ] || [ "$minor" -ge 154 ]; }; then
-    printf 'Codex %s; exited-session cleanup immediate' "$version"
+    printf 'installed Codex CLI %s; zero-delay cleanup supported; running version not inferred' "$version"
   else
-    printf 'Codex %s; immediate cleanup requires Codex 0.154+' "${version:-unknown}"
+    printf 'installed Codex CLI %s; immediate cleanup requires Codex 0.154+; running version not inferred' "${version:-unknown}"
   fi
 }
 
@@ -63,7 +64,7 @@ done
 if command -v codex >/dev/null 2>&1; then
   sock="${AIT_CODEX_SHARED_SOCKET:-$HOME/.ait/codex-shared.sock}"
   state=unreachable
-  if [ -S "$sock" ]; then
+  if [ -S "$sock" ] && [ -n "$(service_pids codex-appserver || true)" ]; then
     if probe_codex "$sock"; then
       state=running
     else

@@ -122,15 +122,13 @@ check_process_boundary() {
   if command -v codex >/dev/null 2>&1; then
     pid="$(service_pid codex-appserver || true)"
     if [ -n "$pid" ]; then
-      command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
-      case "$command" in
-        *"$REPO/mcp/dist/server.js"*) running=1 ;;
-        *)
-          echo "error: conflicting codex-appserver process pid $pid from ${command:-unknown command}" >&2
-          echo "  recovery: stop the owning checkout's bin/stop-all.sh, then rerun the AIT installer" >&2
-          return 1
-          ;;
-      esac
+      if service_owns_pid codex-appserver "$pid"; then
+        running=1
+      else
+        echo "error: conflicting codex-appserver process pid $pid" >&2
+        echo "  recovery: stop the owning checkout's bin/stop-all.sh, then rerun the AIT installer" >&2
+        return 1
+      fi
     fi
   fi
   printf '%s' "$running"

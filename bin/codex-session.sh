@@ -67,23 +67,24 @@ for ((i = 1; i <= $#; i++)); do
   fi
 done
 
-if [ ! -f "$mcp_dir/dist/server.js" ] || [ ! -f "$mcp_dir/dist/codex/tuiRelay.js" ]; then
-  echo "codex-session: building mcp…" >&2
-  (cd "$mcp_dir" && npm run build >&2)
-fi
-
 # Ensure the SHARED codex app-server is running (start once; leave it running for
 # other sessions). bin/start-all.sh / launchd may already have started it.
 appserver_pidfile="${AIT_LOG_DIR:-/tmp}/ait-codex-appserver.pid"
 mkdir -p "$(dirname "$appserver_pidfile")"
 source "$repo_root/bin/lib-service-pids.sh"
 shared_pid="$(running_pid codex-appserver)"
+if [ -z "$shared_pid" ]; then require_codex_native_lifecycle; fi
+if [ ! -f "$mcp_dir/dist/server.js" ] || [ ! -f "$mcp_dir/dist/codex/tuiRelay.js" ]; then
+  echo "codex-session: building mcp…" >&2
+  (cd "$mcp_dir" && npm run build >&2)
+fi
 if [ -n "$shared_pid" ]; then
   printf '%s\n' "$shared_pid" > "$appserver_pidfile"
+  echo "codex-session: using shared codex app-server (pid $shared_pid)" >&2
 else
   echo "codex-session: starting shared codex app-server…" >&2
-  nohup "$repo_root/bin/run-codex-appserver.sh" \
-    >"${AIT_LOG_DIR:-/tmp}/ait-codex-appserver.log" 2>"${AIT_LOG_DIR:-/tmp}/ait-codex-appserver.err" &
+  nohup /usr/bin/perl -MPOSIX -e 'POSIX::setsid() >= 0 or die "setsid: $!"; exec @ARGV or die "exec: $!"' "$repo_root/bin/run-codex-appserver.sh" \
+    >>"${AIT_LOG_DIR:-/tmp}/ait-codex-appserver.log" 2>>"${AIT_LOG_DIR:-/tmp}/ait-codex-appserver.err" &
   echo "$!" > "$appserver_pidfile"
   disown 2>/dev/null || true
 fi
@@ -140,7 +141,7 @@ cleanup() {
   [ -z "$relay_dir" ] || rmdir "$relay_dir" 2>/dev/null || true
   echo "codex-session: session stopped (log kept at $log_file; shared server still running)" >&2
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
 
 # Wait for the driver to report its socket + threadId. The driver deliberately
 # retries the shared app-server forever, and resuming a large persisted thread

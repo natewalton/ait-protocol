@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { createHash, randomUUID } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as http from 'node:http'
@@ -115,6 +117,10 @@ const { createCodexSink } = await import('../dist/codex/sink.js')
 storage.compareAndSwapNotificationCursor('cursor-1', 'cursor-0')
 class DeliveryClient {
   completions = []
+  closed = []
+  isClosed = false
+  onClose(fn) { this.closed.push(fn) }
+  close() { this.isClosed = true; this.completions.length = 0; for (const fn of this.closed.splice(0)) fn() }
   starts = []
   rejectNext = false
   activeTurnId() { return null }
@@ -122,6 +128,7 @@ class DeliveryClient {
   async turnStart(threadId, text) {
     if (this.rejectNext) {
       this.rejectNext = false
+      this.close()
       throw new Error('transport closed')
     }
     const id = `turn-${this.starts.length + 1}`
@@ -192,6 +199,7 @@ await tick()
 postExitClient.complete(0)
 assert.equal(checkpoint(), 'cursor-exit', 'session-exit notification did not replay')
 assert.equal(deliveryBoundaries.length, 6, 'delivery boundary table is incomplete')
+for (const client of [ambiguousClient, replacementClient, failedClient, postFailureClient, closedClient, postCloseClient, exitingClient, postExitClient]) client.close()
 console.log(`delivery boundaries: ${JSON.stringify(deliveryBoundaries)}`)
 console.log('ok - delivery failures leave the cursor replayable through a replacement sink')
 
@@ -220,10 +228,15 @@ const stalled = await fakeAppServer(path.join(root, 'stalled.sock'), {
 })
 const stalledClient = new AppServerClient(stalled.socketPath)
 await stalledClient.connect(200)
+stalledClient.onTurnCompleted(() => {})
+stalledClient.onClose(() => {})
 const pendingTurn = stalledClient.threadStart({})
 await assert.rejects(stalledClient.assertResponsive(50), /protocol check timed out/)
 await assert.rejects(pendingTurn, /protocol check timed out/)
 assert.equal(stalledClient.pending.size, 0, 'closed transport retained pending requests')
+assert.equal(stalledClient.turnCompletedListeners.length, 0, 'closed transport retained completion listeners')
+assert.equal(stalledClient.closeListeners.size, 0, 'closed transport retained close listeners')
+assert.equal(stalledClient.mcpStatusListeners.size, 0, 'closed transport retained readiness listeners')
 await stalled.close()
 console.log('ok - a stalled active connection closes and rejects pending work')
 
@@ -245,6 +258,117 @@ assert.deepEqual(
 approvalClient.close()
 await approvals.close()
 console.log('ok - current v2 approval requests fail closed')
+
+const testThread = '55555555-5555-4555-8555-555555555555'
+// Exercise the production host rather than only connect(explicitTimeout).
+let initializes = 0
+let delayedInitializeCompleted = false
+const waiting = await fakeAppServer(path.join(root, 'host-init.sock'), {
+  async onRequest(message) {
+    if (message.method === 'initialize') {
+      initializes++
+      if (initializes === 1) return null
+      await delay(75)
+      delayedInitializeCompleted = true
+      return { result: {} }
+    }
+    if (message.method === 'thread/resume') return { result: threadResult() }
+  },
+})
+const waitingDriver = launchDriver(waiting.socketPath)
+try {
+  await waitUntil(() => waitingDriver.output.includes('initialize timed out'), 'production initialize deadline')
+  await waitUntil(() => waitingDriver.output.includes('→ thread'), 'reconnect after initialize timeout')
+  assert.equal(initializes, 2, 'startup timeout must close and open a second connection')
+  assert.equal(delayedInitializeCompleted, true, 'delayed valid initialize must complete')
+  assert.equal(waitingDriver.child.exitCode, null, 'recovered driver must keep running')
+} finally { await waitingDriver.close(); await waiting.close() }
+console.log('ok - production driver times out, reconnects, and completes a delayed initialize')
+
+for (const [label, error, transient] of [
+  ['draining', { code: -32600, message: 'Server is draining; retry after reconnecting', data: { reason: 'serverShuttingDown' } }, true],
+  ['unknown', { code: -32600, message: 'no rollout found for test' }, false],
+  ['other', { code: -32600, message: 'unrelated permanent refusal', data: { reason: 'other' } }, false],
+]) {
+  let attempts = 0
+  const endpoint = await fakeAppServer(path.join(root, `host-${label}.sock`), {
+    onRequest(message) {
+      if (message.method !== 'thread/resume') return
+      attempts++
+      return attempts === 1 ? { error } : { result: threadResult() }
+    },
+  })
+  const driver = launchDriver(endpoint.socketPath)
+  try {
+    if (transient) {
+      await waitUntil(() => driver.output.includes('→ thread'), 'draining reconnect')
+      assert.equal(attempts, 2, 'shutdown must reconnect and resume the same thread')
+      assert.equal(driver.child.exitCode, null)
+    } else {
+      await waitUntil(() => driver.child.exitCode !== null, 'permanent failure')
+      assert.equal(driver.child.exitCode, 1)
+      assert.equal(attempts, 1, 'permanent -32600 must not retry')
+    }
+  } finally { await driver.close(); await endpoint.close() }
+}
+console.log('ok - production host retries structured shutdown, not arbitrary -32600')
+
+// Real driver HTTP push -> Codex request -> disconnect -> registration replay
+// -> completed replacement turn -> persisted cursor. PDS/AppView are owned fakes.
+const baseline = checkpoint()
+const registrations = []
+const identity = session.getIdentity()
+const jwt = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: identity.did, scope: 'com.atproto.access', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.fixture`
+const fakeSession = { did: identity.did, handle: identity.handle, active: true, accessJwt: jwt, refreshJwt: jwt }
+const pds = http.createServer(async (req, res) => {
+  const chunks = []
+  for await (const chunk of req) chunks.push(chunk)
+  res.setHeader('content-type', 'application/json')
+  if (req.url === '/xrpc/ait.notification.registerPushTarget') {
+    const data = JSON.parse(Buffer.concat(chunks).toString())
+    registrations.push(data)
+    res.end(JSON.stringify({ status: 'ok', cursor: data.cursor ?? baseline }))
+  } else res.end(JSON.stringify(fakeSession))
+})
+await new Promise((resolve) => pds.listen(0, '127.0.0.1', resolve))
+const pdsUrl = `http://127.0.0.1:${pds.address().port}`
+let accepts = 0
+let turnSocket
+const injected = []
+const endpoint = await fakeAppServer(path.join(root, 'host-replay.sock'), {
+  onRequest(message, socket) {
+    if (message.method === 'thread/resume') return { result: threadResult() }
+    if (message.method !== 'turn/start') return
+    accepts++
+    turnSocket = socket
+    injected.push(message.params.input[0].text)
+    return { result: { turn: { id: `delivery-${accepts}` } } }
+  },
+})
+const { writeThreadSessionId } = await import('../dist/codex/threadMap.js')
+writeThreadSessionId(testThread, process.env.AIT_MCP_TEST_SESSION_ID)
+const driver = launchDriver(endpoint.socketPath, { PDS_URL: pdsUrl, APPVIEW_URL: pdsUrl })
+try {
+  await waitUntil(() => registrations.length === 1, 'first registration')
+  const delivery = notification('at://http-replay', 'cursor-http-replay')
+  assert.equal((await fetch(registrations[0].url, { method: 'POST', body: JSON.stringify(delivery) })).status, 200)
+  await waitUntil(() => accepts === 1, 'first injection')
+  assert.equal(checkpoint(), baseline, 'acceptance must not commit')
+  turnSocket.terminate()
+  await waitUntil(() => registrations.length >= 2, 'reconnect registration')
+  assert.equal(registrations.at(-1).cursor, baseline, 'registration must replay from the durable checkpoint')
+  assert.equal((await fetch(registrations.at(-1).url, { method: 'POST', body: JSON.stringify(delivery) })).status, 200)
+  await waitUntil(() => accepts === 2, 'replacement injection')
+  assert.ok(injected.every((text) => text.includes(delivery.uri)))
+  turnSocket.send(JSON.stringify({ method: 'turn/completed', params: { threadId: testThread, turn: { id: 'delivery-2', status: 'completed' } } }))
+  await waitUntil(() => checkpoint() === 'cursor-http-replay', 'completed cursor')
+} finally {
+  await driver.close()
+  await endpoint.close()
+  pds.closeAllConnections()
+  await new Promise((resolve) => pds.close(resolve))
+}
+console.log('ok - production HTTP notification replays after reconnect and commits only on completion')
 
 fs.rmSync(root, { recursive: true, force: true })
 console.log('PASS codex recovery')
@@ -275,6 +399,11 @@ async function fakeAppServer(socketPath, options = {}) {
         pendingServerRequest.resolve(
           message.error ? { error: message.error } : { result: message.result },
         )
+        return
+      }
+      const handled = await options.onRequest?.(message, socket)
+      if (handled !== undefined) {
+        if (handled !== null) socket.send(JSON.stringify({ id: message.id, ...handled }))
         return
       }
       if (message.method === 'initialize') {
@@ -308,4 +437,32 @@ async function fakeAppServer(socketPath, options = {}) {
       await new Promise((resolve) => server.close(resolve))
     },
   }
+}
+
+function threadResult() {
+  return { thread: { id: testThread }, model: 'gpt-6.1-sol', reasoningEffort: 'medium', approvalPolicy: 'never', activePermissionProfile: { id: ':danger-full-access' } }
+}
+async function waitUntil(check, label) {
+  const end = Date.now() + 8000
+  while (Date.now() < end) {
+    if (check()) return
+    await delay(20)
+  }
+  assert.fail(`${label} did not complete`)
+}
+function launchDriver(socket, overrides = {}) {
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../dist/server.js', import.meta.url)), '--resume', testThread], {
+    cwd: root,
+    env: { ...process.env, HOME: path.join(root, 'home'), CODEX_HOME: path.join(root, 'codex'), AIT_NOTIFICATION_MODE: 'codex', AIT_CODEX_SHARED_SOCKET: socket, PDS_URL: 'http://127.0.0.1:1', APPVIEW_URL: 'http://127.0.0.1:1', ...overrides },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  })
+  const driver = { child, output: '', async close() {
+    if (child.exitCode !== null || child.signalCode !== null) return
+    const exited = new Promise((resolve) => child.once('exit', resolve))
+    child.kill('SIGTERM')
+    await Promise.race([exited, delay(2000)])
+    if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exited }
+  } }
+  child.stderr.on('data', (chunk) => { driver.output += chunk })
+  return driver
 }

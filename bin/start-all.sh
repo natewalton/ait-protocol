@@ -154,8 +154,15 @@ start_one() {
     return
   fi
 
+  if [ "$name" = codex-appserver ]; then require_codex_native_lifecycle || return 1; fi
   rm -f "$pidfile"
-  nohup "$REPO/bin/$wrapper" > "$LOGS/ait-$name.log" 2> "$LOGS/ait-$name.err" &
+  # Codex installs its own HUP/INT handlers; nohup alone cannot isolate it
+  # from the launching terminal's process group.
+  if [ "$name" = codex-appserver ]; then
+    nohup /usr/bin/perl -MPOSIX -e 'POSIX::setsid() >= 0 or die "setsid: $!"; exec @ARGV or die "exec: $!"' "$REPO/bin/$wrapper" >> "$LOGS/ait-$name.log" 2>> "$LOGS/ait-$name.err" &
+  else
+    nohup "$REPO/bin/$wrapper" > "$LOGS/ait-$name.log" 2> "$LOGS/ait-$name.err" &
+  fi
   local pid=$!
   STARTING_NAME="$name"
   STARTING_PID="$pid"

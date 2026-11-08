@@ -13,6 +13,8 @@ import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 
+const endpointOnly = process.argv.includes('--endpoint-contract')
+const repoRoot = fs.realpathSync(fileURLToPath(new URL('../..', import.meta.url)))
 const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ait-codex-rollout-test-'))
 const codexHome = path.join(testRoot, 'codex-home')
 const socketPath = path.join(testRoot, 'app.sock')
@@ -76,16 +78,22 @@ PDS_URL = "http://127.0.0.1:1"
 `)
 
 let serverOutput = ''
-const server = spawn('codex', [
-  'app-server', '--listen', `unix://${socketPath}`,
-  '-c', 'model="gpt-6.1-sol"',
-  '-c', 'model_reasoning_effort="medium"',
-], {
-  env: { ...process.env, CODEX_HOME: codexHome },
-  stdio: ['ignore', 'pipe', 'pipe'],
-})
-server.stdout.on('data', (chunk) => { serverOutput += chunk })
-server.stderr.on('data', (chunk) => { serverOutput += chunk })
+const startServer = () => {
+  const child = spawn('codex', [
+    'app-server', '--listen', `unix://${socketPath}`,
+    '-c', 'model="gpt-6.1-sol"',
+    '-c', 'model_reasoning_effort="medium"',
+    ...(endpointOnly ? ['-c', `mcp_servers.ait.args=["${repoRoot}/mcp/dist/server.js"]`] : []),
+  ], {
+    env: { ...process.env, CODEX_HOME: codexHome },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  child.stdout.on('data', (chunk) => { serverOutput += chunk })
+  child.stderr.on('data', (chunk) => { serverOutput += chunk })
+  return child
+}
+let server = startServer()
+let duplicate
 
 let client
 let driver
@@ -101,6 +109,9 @@ try {
   client = new AppServerClient(socketPath)
   await client.connect()
 
+  if (endpointOnly) {
+    await testEndpointContract()
+  } else {
   const profiles = await client.request('permissionProfile/list', { cwd: process.cwd() })
   assert.ok(profiles.data.some((profile) =>
     profile.id === ':danger-full-access' && profile.allowed),
@@ -268,17 +279,22 @@ try {
       'model switch + event-gated MCP readiness + ' +
       'legacy attach seed + prior paginated-seed reproduction',
   )
+  }
 } finally {
+  if (duplicate?.exitCode === null && duplicate.signalCode === null) {
+    duplicate.kill('SIGKILL')
+    await onceExit(duplicate)
+  }
   if (driver?.exitCode === null && driver.signalCode === null) {
     driver.kill('SIGTERM')
     await onceExit(driver)
   }
   client?.close()
-  if (server.exitCode === null) {
+  if (server.exitCode === null && server.signalCode === null) {
     server.kill('SIGTERM')
     await Promise.race([onceExit(server), delay(2000)])
   }
-  if (server.exitCode === null) {
+  if (server.exitCode === null && server.signalCode === null) {
     server.kill('SIGKILL')
     await onceExit(server)
   }
@@ -300,4 +316,58 @@ function hasDanglingSeed(rows) {
 function onceExit(child) {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
   return new Promise((resolve) => child.once('exit', resolve))
+}
+
+// Exercise AIT's actual ownership consumer, not a duplicate lsof implementation.
+function owner() {
+  return execFileSync('/bin/bash', ['-c',
+    '. "$1/bin/lib-service-pids.sh"; running_pid codex-appserver', 'bash', repoRoot], {
+    encoding: 'utf8',
+    env: { ...process.env, AIT_CODEX_SHARED_SOCKET: socketPath },
+  }).trim()
+}
+
+async function boundedExit(child) {
+  let timer
+  try {
+    await Promise.race([onceExit(child), new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`fixture process ${child.pid} did not exit`)), 10000)
+    })])
+  } finally { clearTimeout(timer) }
+}
+
+async function testEndpointContract() {
+  assert.equal(fs.lstatSync(socketPath).isSymbolicLink(), true, 'native advertised endpoint must be an alias')
+  const physical = fs.realpathSync(socketPath)
+  assert.equal(owner(), String(server.pid), 'candidate must discover the physical socket owner through its alias')
+  duplicate = startServer()
+  await boundedExit(duplicate)
+  assert.notEqual(duplicate.exitCode, 0, 'duplicate bind must refuse')
+  assert.match(serverOutput, /already in use/)
+  assert.equal(fs.realpathSync(socketPath), physical)
+  assert.equal(owner(), String(server.pid), 'duplicate must preserve the original owner')
+  await client.request('thread/list', { limit: 1 })
+  client.close()
+  server.kill('SIGKILL')
+  await boundedExit(server)
+  assert.equal(fs.lstatSync(socketPath).isSymbolicLink(), true, 'SIGKILL must leave the stale alias fixture')
+  assert.equal(owner(), '', 'dead physical holder must not be adopted')
+  server = startServer()
+  for (let i = 0; i < 100 && owner() !== String(server.pid); i++) {
+    assert.equal(server.exitCode, null, serverOutput)
+    await delay(50)
+  }
+  assert.equal(owner(), String(server.pid), 'native restart must recover the stale endpoint')
+  const { AppServerClient } = await import('../dist/codex/appServerClient.js')
+  client = new AppServerClient(socketPath)
+  await client.connect()
+  await client.request('thread/list', { limit: 1 })
+  const replacementPhysical = fs.realpathSync(socketPath)
+  client.close()
+  server.kill('SIGTERM')
+  await boundedExit(server)
+  assert.equal(fs.existsSync(replacementPhysical), false, 'TERM removes physical socket')
+  assert.throws(() => fs.lstatSync(socketPath), { code: 'ENOENT' }, 'TERM removes advertised alias')
+  assert.equal(owner(), '')
+  console.log(`PASS native endpoint ${codexVersion}: alias owner, duplicate refusal, SIGKILL recovery, TERM cleanup; no model calls`)
 }

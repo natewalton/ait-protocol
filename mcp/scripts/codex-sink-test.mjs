@@ -37,6 +37,10 @@ storage.compareAndSwapNotificationCursor(null, 'cursor-0')
 
 class FakeClient {
   completed = []
+  closed = []
+  isClosed = false
+  onClose(fn) { this.closed.push(fn) }
+  close() { this.isClosed = true; this.completed.length = 0; for (const fn of this.closed.splice(0)) fn() }
   starts = []
   steers = []
   early = false
@@ -206,6 +210,121 @@ check('(i.3) it retries once the turn accepts input again',
 client.running = null
 client.emit('thread-1', 'review-turn', 'completed')
 check('(i.4) and commits when that turn ends', checkpoint() === 'cursor-9')
+
+// A rejection must wait on the existing delay, not recurse through microtasks.
+// A second attempt blocks so reverting the fix fails boundedly, never spins.
+client.close()
+const timeoutCount = () => process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length
+const baselineTimers = timeoutCount()
+const rejected = new FakeClient()
+let rejectedCalls = 0
+rejected.turnStart = async () => {
+  rejectedCalls++
+  if (rejectedCalls > 1) return new Promise(() => {})
+  throw new Error('fixture transient rejection')
+}
+const rejectedSink = createCodexSink(rejected, 'retirement')
+await rejectedSink(view('at://retirement-retry', 'cursor-retirement'))
+await tick()
+check('(j) rejected injection waits instead of immediately retrying', rejectedCalls === 1)
+check('(j.2) exactly one retry timer belongs to this live sink', timeoutCount() === baselineTimers + 1)
+rejected.close()
+await tick()
+check('(j.3) closing the connection releases its retry timer', timeoutCount() === baselineTimers)
+check('(j.4) closing releases completion and close listeners', rejected.completed.length === 0 && rejected.closed.length === 0)
+let refusedClosed = false
+try { await rejectedSink(view('at://after-close', 'must-not-commit')) } catch { refusedClosed = true }
+check('(j.5) post-close HTTP delivery can be rejected for replay', refusedClosed)
+check('(j.6) closing never advances the persisted checkpoint', checkpoint() === 'cursor-9')
+
+const retired = new FakeClient()
+const retiredSink = createCodexSink(retired, 'retirement')
+await retiredSink(view('at://retirement-late', 'old-cursor'))
+await tick()
+const lateCompletion = retired.completed[0]
+retired.close()
+const replacement = new FakeClient()
+const replay = createCodexSink(replacement, 'retirement')
+await replay(view('at://retirement-late', 'replacement-cursor'))
+await tick()
+replacement.complete(0)
+check('(k) replacement sink replays the same URI and commits on completion', checkpoint() === 'replacement-cursor')
+lateCompletion({ threadId: 'retirement', turn: { id: 'turn-1', status: 'completed' } })
+check('(k.2) late retired completion cannot regress the replacement cursor', checkpoint() === 'replacement-cursor')
+replacement.close()
+
+const duringSend = new FakeClient()
+let finishSend
+const pendingSend = new Promise((resolve) => { finishSend = resolve })
+duringSend.turnStart = () => pendingSend
+const duringSendSink = createCodexSink(duringSend, 'retirement')
+await duringSendSink(view('at://retirement-inflight', 'pending-cursor'))
+const lateDuringSend = duringSend.completed[0]
+duringSend.close()
+finishSend('late-turn')
+await tick()
+lateDuringSend({ threadId: 'retirement', turn: { id: 'late-turn', status: 'completed' } })
+check('(l) close during send prevents a late response/completion commit', checkpoint() === 'replacement-cursor')
+check('(l.2) closed sends leave no retry timer', timeoutCount() === baselineTimers)
+
+// A notification-bearing turn fails while a second notification is steering
+// into it. The next accepted turn must carry the old batch before the new one,
+// whether the first replacement start succeeds or is itself rejected.
+for (const rejectReplacement of [false, true]) {
+  const label = rejectReplacement ? 'replacement-rejected' : 'replacement-accepted'
+  const racing = new FakeClient()
+  const racingSink = createCodexSink(racing, 'racing-thread')
+  const beforeRace = checkpoint()
+  const first = view(`at://${label}-n1`, `${label}-cursor-1`)
+  const second = view(`at://${label}-n2`, `${label}-cursor-2`)
+  await racingSink(first)
+  await tick()
+  racing.running = racing.starts[0].id
+  racing.steerFails = true
+  racing.onSteerFail = () => {
+    racing.running = null
+    racing.complete(0, 'failed')
+  }
+  const start = racing.turnStart.bind(racing)
+  const attempts = []
+  const cursors = [checkpoint()]
+  let accepted
+  const replacementAccepted = new Promise((resolve) => { accepted = resolve })
+  racing.turnStart = async (thread, text) => {
+    attempts.push({ text, checkpoint: checkpoint() })
+    if (rejectReplacement && attempts.length === 1) throw new Error('fixture replacement rejection')
+    const id = await start(thread, text)
+    accepted(id)
+    return id
+  }
+  await racingSink(second)
+  await tick()
+  cursors.push(checkpoint())
+  let deadline
+  try {
+    await Promise.race([
+      replacementAccepted,
+      new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error('replacement stalled')), 8000) }),
+    ])
+    await tick()
+    cursors.push(checkpoint())
+    check(`(m ${label}) retry includes n1 before n2`, attempts.every(({ text }) =>
+      text.includes(first.uri) && text.indexOf(first.uri) < text.indexOf(second.uri)))
+    check(`(m ${label}.2) replacement rejection cannot strand the batch`, attempts.length === (rejectReplacement ? 2 : 1))
+    check(`(m ${label}.3) no acceptance or failed turn skips the old cursor`,
+      cursors.every((cursor) => cursor === beforeRace) && attempts.every((attempt) => attempt.checkpoint === beforeRace))
+    racing.complete(1)
+    cursors.push(checkpoint())
+    check(`(m ${label}.4) cursor advances to n2 only after both were delivered`,
+      checkpoint() === second.cursor && racing.starts[1].text.includes(first.uri))
+    console.log(`cursor sequence ${label}: ${JSON.stringify(cursors)}`)
+  } catch (err) {
+    check(`(m ${label}) replacement completes: ${err.message}`, false)
+  } finally {
+    clearTimeout(deadline)
+    racing.close()
+  }
+}
 
 rmSync(target)
 rmSync(process.env.XDG_DATA_HOME, { recursive: true, force: true })

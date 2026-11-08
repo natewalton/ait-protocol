@@ -518,3 +518,21 @@ AppView transport code are byte-identical to the previous reviewed branch.
 The fixture uses a freshly installed stock Iroh1.2.0 comparison package; the
 first run's missing old temporary package was a fixture setup failure after
 the nine consumer outcomes, not a policy pass. No live operation ran.
+
+
+## Native lifecycle release integration, 2026-11-08
+
+Rebase the development branch onto released v0.1.44 (`a72983c`). Preserve its
+native Codex endpoint ownership, process-group isolation, connection-owned sink
+cleanup, ordered replay and required prepare-job regressions. The existing
+peer status fixture must copy the shared ownership helper now sourced by
+`bin/status.sh`. No native transport, identity, package or lockfile changes.
+
+The second-Mac guide requires Codex 0.166+ before the old installation is
+stopped or code replaced. Claude-only use remains supported. Keep the separate
+development-branch fetch/detach/full-install route, comment-free zsh blocks and
+no live changes during branch preparation. Validate both builds, existing
+peer feed/projection/mentions/picker, the owned assisted two-install journey,
+CLI/updater/launcher and Codex sink/recovery/native endpoint checks before
+independent review and shared-branch push. These local fixtures do not replace
+the pending real cross-internet two-Mac test.

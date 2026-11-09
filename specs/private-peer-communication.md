@@ -3,7 +3,7 @@
 Status: reviewed private-peer implementation; Nate authorized packaged direct-payload fork adoption and two-Mac test preparation on 2026-11-05. Live test pending.
 Date: 2026-11-05
 Original source baseline for the citations below: 98390e9, v0.1.39.
-Current development branch is rebased onto a72983c, v0.1.44, retaining its security, native Codex lifecycle, terminal, notification recovery, release gates and shared friendly-name fixes.
+Current development branch is rebased onto c976d1b, v0.1.45, retaining its security, native Codex lifecycle, terminal, notification recovery, release gates, shared friendly-name fixes and metadata-only Codex resume/startup diagnostics. Private-peer transport and reviewed presence behavior are preserved.
 Original reviewed component proofs: cd8fa48.
 
 ## Why

@@ -536,3 +536,12 @@ peer feed/projection/mentions/picker, the owned assisted two-install journey,
 CLI/updater/launcher and Codex sink/recovery/native endpoint checks before
 independent review and shared-branch push. These local fixtures do not replace
 the pending real cross-internet two-Mac test.
+
+## Development integration onto v0.1.45 (2026-11-09)
+
+The shared peer branch now incorporates released v0.1.45 (`c976d1b`), including
+metadata-only Codex resume, paginated new threads and startup-stage diagnostics.
+The existing legacy resume path and name/set persistence are retained. This
+integration does not change the fork, peer transport, identity preparation or
+reviewed presence behavior. The two-Mac guide now expects development version
+0.1.45; updating either installed Mac remains a separate, paused operation.

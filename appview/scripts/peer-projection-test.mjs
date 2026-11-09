@@ -308,6 +308,13 @@ test('offline/unlinked peer projections serve every read surface and notificatio
   try {
     assert.equal((await getAuthorFeed(db, unreachable, { did: B })).feed[0].post.author.handle, HANDLE_B)
     assert.equal((await getProfile(db, unreachable, { did: B, pdsUrl: 'http://127.0.0.1:1' })).handle, HANDLE_B)
+    const peerProfile = await getProfile(db, unreachable, { did: B, pdsUrl: 'http://127.0.0.1:1' })
+    assert.equal(Object.hasOwn(peerProfile, 'live'), false, 'unreachable peer presence is unknown, not offline')
+    assert.doesNotThrow(() => lexicons.assertValidXrpcOutput('ait.actor.getProfile', peerProfile))
+    const directory = await searchActors(db, resolver, { q: 'alice', limit: 10, retiredOnly: false })
+    assert.equal(directory.actors.find(actor => actor.did === B)?.live, undefined)
+    assert.equal(directory.actors.find(actor => actor.did === A)?.live, false)
+    assert.doesNotThrow(() => lexicons.assertValidXrpcOutput('ait.actor.searchActors', directory))
     assert.equal((await getTimeline(db, unreachable, { viewer: A })).feed[0].post.author.handle, HANDLE_B)
     assert.equal((await getPostThread(db, unreachable, { uri: peer.uri.toString() })).thread.post.author.handle, HANDLE_B)
     assert.equal((await listNotifications(db, unreachable, { viewer: A })).notifications[0].author.handle, HANDLE_B)
@@ -315,6 +322,8 @@ test('offline/unlinked peer projections serve every read surface and notificatio
     globalThis.fetch = async (_, init) => { delivered.push(JSON.parse(init.body)); return new Response('ok') }
     await registerAndReplay(db, unreachable, A, 'http://127.0.0.1:1/push', 0)
     assert.equal(delivered[0].author.handle, HANDLE_B)
+    assert.equal((await getProfile(db, resolver, { did: A, pdsUrl: 'http://127.0.0.1:1' })).live, true)
+    assert.equal((await searchActors(db, resolver, { q: 'alice', limit: 10, retiredOnly: false })).actors.find(actor => actor.did === A)?.live, true)
     // The resolver itself still fails: projected labels are display data only.
     await assert.rejects(unreachable.did.resolveAtprotoData(B), /Unlinked or offline/)
     await assert.rejects(hydrateHandle(unreachable, A, db), /Unlinked or offline/)

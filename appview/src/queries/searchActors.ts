@@ -13,7 +13,7 @@ export interface SearchActorsParams {
 export interface ActorBasic {
   did: string
   handle: string
-  live: boolean
+  live?: boolean
   displayName?: string
 }
 
@@ -99,7 +99,8 @@ export async function searchActors(
     if (row.handle === INVALID_HANDLE) continue
     const label = friendlyHandle(row.handle)
     if (!label.toLowerCase().startsWith(needle) && !row.handle.toLowerCase().startsWith(needle)) continue
-    const actor: ActorBasic = { did: row.did, handle: row.handle, live: isLive(row.did) }
+    const actor: ActorBasic = { did: row.did, handle: row.handle }
+    if (!row.source || row.source === 'local') actor.live = isLive(row.did)
     const qualified = qualifyActorLabel(label, row.source, row.did)
     actor.displayName = owners.get(label.toLowerCase())!.size > 1
       ? qualified

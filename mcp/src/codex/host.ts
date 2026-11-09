@@ -162,6 +162,7 @@ export async function runCodexSession(): Promise<void> {
     const client = new AppServerClient(socketPath)
     try {
       const closed = new Promise<Error | undefined>((resolve) => client.onClose(resolve))
+      console.error('ait codex session: connecting to shared app-server')
       await client.connect() // rejects if the shared server isn't accepting yet
 
       // First lifecycle honours --resume; every reconnect resumes our thread.
@@ -176,7 +177,8 @@ export async function runCodexSession(): Promise<void> {
       let started
       if (threadId) {
         try {
-          started = await client.threadResume({ threadId, ...threadParams })
+          console.error(`ait codex session: resuming thread ${threadId}`)
+          started = await client.threadResume({ threadId, ...threadParams, excludeTurns: true })
         } catch (err) {
           if (firstAttempt && isUnknownThread(err)) {
             console.error(
@@ -196,15 +198,12 @@ export async function runCodexSession(): Promise<void> {
           throw err
         }
       } else {
-        // Codex 0.152 defaults app-server-created threads to paginated history.
-        // Pin legacy: thread/name/set then writes an attachable one-record
-        // rollout, without thread/inject_items and its dangling auto-compact
-        // context.
+        console.error('ait codex session: creating thread')
         started = await client.threadStart({
           ...threadParams,
           model: AIT_CODEX_MODEL,
           config: { ...threadParams.config, model_reasoning_effort: AIT_CODEX_REASONING_EFFORT },
-          historyMode: 'legacy',
+          historyMode: 'paginated',
         })
       }
       try {
@@ -214,14 +213,11 @@ export async function runCodexSession(): Promise<void> {
         process.exit(1)
       }
       threadId = started.thread.id
-      // New session: create the on-disk rollout the TUI attaches to (a bare
-      // thread/start writes none) — BEFORE announcing, so the wrapper's `codex
-      // resume <threadId>` finds a rollout. The explicit legacy history mode
-      // makes thread/name/set persist a session_meta-only rollout on Codex 0.152,
-      // with no synthetic turn context and no model turn. No orientation is
-      // injected: the operator controls how the session engages.
+      // Persist the new zero-turn thread before publishing it for TUI attach.
+      // Name persistence is required for both native history formats.
       if (!openingTurnDone && !resumeThreadId) {
         try {
+          console.error(`ait codex session: persisting thread ${threadId}`)
           await client.setName(threadId, CODEX_THREAD_NAME)
         } catch (err) {
           // The name did not land, so this thread has no rollout. Forget it: the

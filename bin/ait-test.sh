@@ -1209,11 +1209,12 @@ cat > "$lifecycle/shim/node" <<'EOF'
 #!/bin/bash
 printf '%s' "$$" > "$AIT_DRIVER_PID_FILE"
 if [ "${AIT_DRIVER_WAIT_FOR_MCP:-}" = 1 ]; then
-  echo 'ait codex session: checking MCP server readiness' >&2
+  echo "ait codex session: ${AIT_DRIVER_STAGE:-checking MCP server readiness}" >&2
+  echo 'ait codex session: @fixture joined — registering push target' >&2
   # Release readiness only after the wrapper has actually reported the wait.
   # A fixed delay races the wrapper's 60 polling iterations on slow runners.
   attempts=0
-  until grep -Fq 'codex-session: checking MCP server readiness' "$AIT_MCP_WAIT_OUTPUT"; do
+  until grep -Fq "codex-session: ${AIT_DRIVER_STAGE:-checking MCP server readiness}" "$AIT_MCP_WAIT_OUTPUT"; do
     attempts=$((attempts + 1))
     if [ "$attempts" -ge 600 ]; then
       echo 'fixture: wrapper never reported MCP readiness wait' >&2
@@ -1386,6 +1387,14 @@ AIT_DRIVER_WAIT_FOR_MCP=1 AIT_MCP_WAIT_OUTPUT="$lifecycle/mcp-wait.output" \
   >"$lifecycle/mcp-wait.output" 2>&1
 assert_contains "$(cat "$lifecycle/mcp-wait.output")" 'codex-session: checking MCP server readiness'
 assert_not_contains "$(cat "$lifecycle/mcp-wait.output")" 'still waiting for thread to become ready'
+for stage in 'resuming thread 11111111-1111-4111-8111-111111111111' 'persisting thread 11111111-1111-4111-8111-111111111111'; do
+  AIT_DRIVER_STAGE="$stage" AIT_DRIVER_WAIT_FOR_MCP=1 AIT_MCP_WAIT_OUTPUT="$lifecycle/stage-wait.output" \
+    AIT_FAST_SLEEP=1 PATH="$lifecycle/shim:/usr/bin:/bin" \
+    "$lifecycle/bin/codex-session.sh" --resume 11111111-1111-4111-8111-111111111111 \
+    >"$lifecycle/stage-wait.output" 2>&1
+  assert_contains "$(cat "$lifecycle/stage-wait.output")" "codex-session: $stage"
+  assert_not_contains "$(cat "$lifecycle/stage-wait.output")" 'still waiting for thread to become ready'
+done
 driver_fixture_pid="$(cat "$lifecycle/driver.pid")"
 process_alive "$driver_fixture_pid" && fail "exited Codex session left its driver running"
 process_alive "$shared_fixture_pid" || fail "exited Codex session stopped the shared app-server"

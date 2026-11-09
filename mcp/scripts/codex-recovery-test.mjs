@@ -285,6 +285,29 @@ try {
 } finally { await waitingDriver.close(); await waiting.close() }
 console.log('ok - production driver times out, reconnects, and completes a delayed initialize')
 
+// Resume has no short deadline: restoring valid history can take longer than
+// initialize. Observe the stage and exact request while the server holds it.
+let pendingResume
+const restoring = await fakeAppServer(path.join(root, 'host-resume.sock'), {
+  onRequest(message, socket) {
+    if (message.method !== 'thread/resume') return
+    assert.equal(message.params.excludeTurns, true, 'driver must not request unused turns')
+    pendingResume = () => socket.send(JSON.stringify({ id: message.id, result: threadResult() }))
+    return null
+  },
+})
+const restoringDriver = launchDriver(restoring.socketPath)
+try {
+  await waitUntil(() => pendingResume, 'resume request')
+  assert.ok(restoringDriver.output.includes(`ait codex session: resuming thread ${testThread}`), 'stage must precede pending resume')
+  await delay(3200)
+  assert.equal(restoringDriver.child.exitCode, null)
+  assert.ok(!restoringDriver.output.includes('→ thread'), 'held resume must not report readiness')
+  pendingResume()
+  await waitUntil(() => restoringDriver.output.includes('→ thread'), 'delayed resume readiness')
+} finally { await restoringDriver.close(); await restoring.close() }
+console.log('ok - metadata-only resume reports its stage and waits for a valid delayed reply')
+
 for (const [label, error, transient] of [
   ['draining', { code: -32600, message: 'Server is draining; retry after reconnecting', data: { reason: 'serverShuttingDown' } }, true],
   ['unknown', { code: -32600, message: 'no rollout found for test' }, false],

@@ -161,11 +161,8 @@ while [ -z "$sock" ] || [ -z "$tid" ]; do
   sleep 0.5
   wait_ticks=$((wait_ticks + 1))
   if [ $((wait_ticks % 60)) -eq 0 ]; then
-    if [ "$(tail -n 1 "$log_file")" = 'ait codex session: checking MCP server readiness' ]; then
-      echo "codex-session: checking MCP server readiness ($((wait_ticks / 2))s); driver log: $log_file" >&2
-    else
-      echo "codex-session: still waiting for thread to become ready ($((wait_ticks / 2))s); driver log: $log_file" >&2
-    fi
+    stage="$({ grep -E '^ait codex session: (connecting to shared app-server|resuming thread .*|creating thread|persisting thread .*|checking MCP server readiness)$' "$log_file" || true; } | tail -n 1 | sed 's/^ait codex session: //')"
+    echo "codex-session: ${stage:-still waiting for thread to become ready} ($((wait_ticks / 2))s); driver log: $log_file" >&2
   fi
 done
 

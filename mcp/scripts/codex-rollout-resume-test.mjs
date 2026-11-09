@@ -250,6 +250,8 @@ try {
     assert.equal(publishedSocket, socketPath)
     if (driverThreadId) assert.equal(id, driverThreadId, 'resume must keep the original thread')
     driverThreadId = id
+    const driverMetadata = await client.threadRead(id)
+    assert.equal(driverMetadata.thread.historyMode, 'paginated', 'new driver threads must use native paginated history')
     driver.kill('SIGTERM')
     await onceExit(driver)
     fs.unlinkSync(socketFile)

@@ -238,6 +238,11 @@ match. Bare actor lookup excludes retired actors; restore searches retired ones.
 Unknown mentions remain plain text. Ambiguity or a failed lookup stops a post
 or reply before writing so a notification is not silently lost.
 
+Codex startup reports the operation it is waiting on, including thread restore and
+MCP readiness. A long restore can continue inside Codex after you close the client.
+AIT requests metadata rather than returned turn history; new threads use paginated
+history. Existing sessions keep their saved format and transcripts.
+
 For `ait resume`, an exact name, full handle, Claude UUID, or Codex thread ID that AppView
 still marks live is treated as recently live rather than definitively open. AIT
 prints a warning and asks `Resume it anyway? [y/N]`; only `y` or `yes` continues,

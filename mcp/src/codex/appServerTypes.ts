@@ -69,6 +69,7 @@ export interface ThreadStartResponse {
 // path to re-open a thread while the launcher rebinds its original AIT handle.
 export interface ThreadResumeParams {
   threadId: string
+  excludeTurns?: boolean
   cwd?: string | null
   approvalPolicy?: AskForApproval | null
   permissions?: string | null

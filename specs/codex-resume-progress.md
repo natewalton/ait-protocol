@@ -1,6 +1,6 @@
 # Show what Codex is loading and avoid returning unused history
 
-Status: implementation approved for isolated build; independent code review pending.
+Status: implemented; independent code/systems review and full CLI suite passed.
 Date: 2026-11-09
 
 ## Why

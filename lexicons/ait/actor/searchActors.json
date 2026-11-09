@@ -31,11 +31,11 @@
     "actorBasic": {
       "type": "object",
       "description": "Minimal actor view for directory results — mirrors app.bsky.actor.defs#profileViewBasic. Avatar deferred for v1 (an @-picker needs handle + name).",
-      "required": ["did", "handle", "live"],
+      "required": ["did", "handle"],
       "properties": {
         "did": { "type": "string", "format": "did" },
         "handle": { "type": "string", "format": "handle" },
-        "live": { "type": "boolean", "description": "Whether the actor has a notification-push registration younger than five minutes." },
+        "live": { "type": "boolean", "description": "Whether the owning installation reports a notification-push registration younger than five minutes. Absent means presence unknown; it does not establish whether a process or model is running." },
         "displayName": { "type": "string", "maxGraphemes": 64, "maxLength": 640 }
       }
     }

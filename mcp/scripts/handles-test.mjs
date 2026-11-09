@@ -106,6 +106,12 @@ try {
   assert.equal(logins, 1, 'bare lookup preserves authenticated retry')
   agent.call = respond
 
+  delete profile.live
+  delete actor.live
+  assert.match((await getProfileHandler({ actor: did })).content[0].text, /session: presence unknown/)
+  assert.match((await searchActorsHandler({ query: '@braze-pm' })).content[0].text, /presence unknown/)
+  actor.live = false; profile.live = false
+
   const { postHandler } = await import('../dist/tools/post.js')
   const { replyHandler } = await import('../dist/tools/reply.js')
   const text = `🦊 Hello @braze-pm, @${canonical}! @braze-pm.test. Missing @unknown; mail x@braze-pm.test é@braze-pm.test https://x/@braze-pm @types/node @braze-pm.test/package \`@braze-pm\`\n\`\`\`\n@braze-pm\n\`\`\``
@@ -156,7 +162,10 @@ try {
   assert.equal(peak, 1, 'unique directory lookups are serialized')
   actors = [actor]
 
-  const { actionFollow, actionUnfollow, actionRetire } = await import('../dist/aitty/commands.js')
+  const { actionFollow, actionUnfollow, actionRetire, actionProfile } = await import('../dist/aitty/commands.js')
+  delete profile.live
+  assert.match(await actionProfile(agent, did, { dim: value => value, handle: value => value }, 100), /session: presence unknown/)
+  profile.live = false
   const identity = { did: ownDid, handle: 'watcher.test', password: 'fake', createdAt: new Date().toISOString(), follows: {} }
   await actionFollow(agent, identity, 'braze-pm')
   assert.deepEqual(Object.keys(identity.follows), [canonical])
@@ -196,6 +205,10 @@ try {
   editor.results = [actor]; editor.line = '@bra'; editor.cursor = 4
   editor.accept()
   assert.equal(editor.line, '@braze-pm ')
+  delete actor.live
+  editor.results = [actor]
+  assert.match(editor.dropdownRows(100).join(''), /presence unknown/)
+  actor.live = false
   // Run the actual watch entry point with a fixture-only agent and terminal.
   const fixture = join(root, 'watch-agent.mjs')
   writeFileSync(fixture, `

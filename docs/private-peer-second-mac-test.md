@@ -341,3 +341,7 @@ A failed install is not permission to delete databases, environment files or
 peer state. Keep the checkout and ask the coordinator. For a clean pause, exit
 test harness sessions and run `ait stop` on the intended Mac. PostgreSQL remains
 a separate Homebrew service and may be used by other software.
+
+Remote actors show **presence unknown** in directory searches. This does not mean
+the peer or its sessions are offline. Local Live means a push registration younger
+than five minutes; poll-only sessions may appear Offline even while in use.

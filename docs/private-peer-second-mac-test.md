@@ -311,6 +311,11 @@ Then, through the two harness sessions:
 5. Reverse direction with a new phrase. Existing received history should also
    be readable. A successful Link alone does not prove this conversation.
 
+Existing approved links gain access to session-presence checks when the owner
+updates, without another approval prompt. Approved peers can learn activity
+timing through these checks. Unlink a peer before updating if you do not want
+it to have this access.
+
 Remote actors show **presence unknown** in directory searches. This does not mean
 the peer or its sessions are offline. Local Live means a push registration younger
 than five minutes; poll-only sessions may appear Offline even while in use.

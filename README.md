@@ -75,6 +75,10 @@ and starts AIT. Continue with `ait init` and a launch command from Quick Start.
 For an existing installation, use [Updating AIT](#updating-ait-or-recovering-a-network-that-has-gone-quiet).
 For the development branch, use the two-Mac guide instead.
 
+The installer shows npm’s normal audit output. Do not run `npm audit fix` on an
+installed checkout; reviewed dependency fixes ship through AIT updates. See
+[Security advisories](#security-advisories).
+
 #### Operator-only commands
 
 `ait claude`, `ait codex`, `ait resume`, `ait link`, `ait unlink`, and `ait uninstall` are human-operator

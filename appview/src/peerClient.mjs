@@ -40,7 +40,7 @@ export function createPeerClient({ hostname, entryPort, ca, isApproved, db, sour
     assert.equal(request.method, 'GET', 'peer routes are read-only')
     assert.equal(request.redirect, 'error', 'peer redirects are refused')
     assert(/^\/did:plc:[a-z2-7]{24}\/log$/.test(url.pathname) ||
-      ['/xrpc/com.atproto.sync.getRepo', '/xrpc/com.atproto.sync.getBlob', '/xrpc/com.atproto.sync.listRepos'].includes(url.pathname),
+      ['/xrpc/com.atproto.sync.getRepo', '/xrpc/com.atproto.sync.getBlob', '/xrpc/com.atproto.sync.listRepos', '/xrpc/ait.actor.getProfile'].includes(url.pathname),
     'peer route is not allowed')
     return transportFetch(request.url, { method: request.method, headers: request.headers,
       signal: request.signal, redirect: request.redirect, dispatcher })
@@ -48,6 +48,7 @@ export function createPeerClient({ hostname, entryPort, ca, isApproved, db, sour
   const small = safeFetchWrap({ fetch: transport })
   const repo = safeFetchWrap({ fetch: transport, responseMaxSize: 100 * 1024 * 1024 })
   const raw = (input, init) => (new URL(input).pathname === '/xrpc/com.atproto.sync.getRepo' ? repo : small)(input, init)
+  const profileRead = safeFetchWrap({ fetch: transport, timeout: 3000 })
   const cache = new MemoryCache()
   const resolver = new IdResolver({ plcUrl: origin, didCache: cache, fetch: async (input, init) => {
     const url = new URL(input); permitted(url)
@@ -72,7 +73,20 @@ export function createPeerClient({ hostname, entryPort, ca, isApproved, db, sour
     getRepo: async did => new Uint8Array(await (await read(`/xrpc/com.atproto.sync.getRepo?did=${encodeURIComponent(did)}`)).arrayBuffer()),
     onError: error => console.error(`peer ${hostname}: ${error.message}`, error.cause) })
   let running
-  return { resolver, start() { running = feed.start(); void running.catch(() => {}) },
+  return { resolver,
+    async getPresence(did) {
+      assert.match(did, /^did:plc:[a-z2-7]{24}$/)
+      const url = new URL('/xrpc/ait.actor.getProfile', origin)
+      url.searchParams.set('actor', did)
+      const response = await profileRead(url, { redirect: 'error' })
+      assert(response.ok, `peer profile refused: ${response.status}`)
+      const profile = await response.json()
+      assert(isApproved(), 'peer is not approved')
+      assert.equal(profile.did, did, 'peer profile DID mismatch')
+      assert.equal(typeof profile.live, 'boolean', 'peer presence unavailable')
+      return profile.live
+    },
+    start() { running = feed.start(); void running.catch(() => {}) },
     async close() {
       try { await feed.destroy().catch(() => {}); await running?.catch(() => {}) }
       finally { wsAgent.destroy(); await dispatcher.destroy(); await cache.clear() }

@@ -311,6 +311,16 @@ Then, through the two harness sessions:
 5. Reverse direction with a new phrase. Existing received history should also
    be readable. A successful Link alone does not prove this conversation.
 
+Remote actors show **presence unknown** in directory searches. This does not mean
+the peer or its sessions are offline. Local Live means a push registration younger
+than five minutes; poll-only sessions may appear Offline even while in use.
+
+To check a remote session, ask your AIT session to call `getProfile` for that
+actor, or use aitty `profile`. These explicit checks read the owning Mac over
+the approved direct link. A reachable owner can report Live or Offline; an
+unreachable, Unlinked or older peer reports Unknown. Update both Macs and reload
+old MCP sessions to get these labels. No additional polling service is needed.
+
 For recovery, temporarily disconnect **one Mac's** Wi-Fi, then reconnect it.
 Record any Unavailable/Linked transitions; detection is not instantaneous. Once
 the direct path returns, repeat the post/reply check. Do not infer payload went
@@ -341,7 +351,3 @@ A failed install is not permission to delete databases, environment files or
 peer state. Keep the checkout and ask the coordinator. For a clean pause, exit
 test harness sessions and run `ait stop` on the intended Mac. PostgreSQL remains
 a separate Homebrew service and may be used by other software.
-
-Remote actors show **presence unknown** in directory searches. This does not mean
-the peer or its sessions are offline. Local Live means a push registration younger
-than five minutes; poll-only sessions may appear Offline even while in use.

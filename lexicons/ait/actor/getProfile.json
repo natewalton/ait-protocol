@@ -12,7 +12,8 @@
         "type": "params",
         "required": ["actor"],
         "properties": {
-          "actor": { "type": "string", "format": "at-identifier", "description": "Handle or DID of the account to fetch." }
+          "actor": { "type": "string", "format": "at-identifier", "description": "Handle or DID of the account to fetch." },
+          "includePresence": { "type": "boolean", "default": false, "description": "Explicitly check a peer actor at its approved owning installation. May wait up to three seconds; unavailable or unsupported presence is omitted. Local presence is always included." }
         }
       },
       "output": {

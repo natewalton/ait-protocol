@@ -109,6 +109,48 @@ test('an authentic PLC log cannot claim hosting through a different approved mac
   }
 })
 
+test('source-bound presence validates owner reply, approval and a bounded unavailable read', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'ait-peer-presence-'))
+  const machine = loadState(directory), db = openDb(':memory:')
+  const did = 'did:plc:' + 'a'.repeat(24)
+  let approved = true, body = { did, live: true }, status = 200, hold = false, pending, requests = 0
+  const server = https.createServer({ key: machine.key, cert: machine.cert }, (req, res) => {
+    requests++
+    assert.equal(req.url, '/xrpc/ait.actor.getProfile?actor=' + encodeURIComponent(did))
+    assert.equal(req.headers.authorization, undefined)
+    if (hold) { pending = res; return }
+    res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body))
+  })
+  server.listen(0, '127.0.0.1'); await once(server, 'listening')
+  const client = createPeerClient({ hostname: machine.hostname, ca: machine.ca,
+    entryPort: server.address().port, db, source: machine.id, isApproved: () => approved })
+  try {
+    assert.equal(await client.getPresence(did), true)
+    body = { did, live: false }; assert.equal(await client.getPresence(did), false)
+    body = { did: 'did:plc:' + 'b'.repeat(24), live: true }
+    await assert.rejects(client.getPresence(did), /DID mismatch/)
+    body = { did, live: 'true' }; await assert.rejects(client.getPresence(did), /presence unavailable/)
+    status = 403; await assert.rejects(client.getPresence(did), /refused: 403/); status = 200
+    hold = true
+    const received = once(server, 'request'), checking = client.getPresence(did)
+    await received; approved = false
+    pending.end(JSON.stringify({ did, live: true }))
+    await assert.rejects(checking, /not approved/)
+    const before = requests
+    await assert.rejects(client.getPresence(did))
+    assert.equal(requests, before, 'revoked peer is refused before issuing a request')
+    approved = true
+    const start = performance.now()
+    await assert.rejects(client.getPresence(did))
+    assert(performance.now() - start >= 2000 && performance.now() - start < 8000,
+      'unavailable presence must use the bounded request, not a persistent retry')
+  } finally {
+    pending?.destroy(); await client.close(); server.closeAllConnections()
+    await new Promise(resolve => server.close(resolve)); db.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('peer projection preserves records and resolves labels without network fallback', async (t) => {
   const db = openDb(':memory:')
   const oldFetch = globalThis.fetch
@@ -315,6 +357,12 @@ test('offline/unlinked peer projections serve every read surface and notificatio
     assert.equal(directory.actors.find(actor => actor.did === B)?.live, undefined)
     assert.equal(directory.actors.find(actor => actor.did === A)?.live, false)
     assert.doesNotThrow(() => lexicons.assertValidXrpcOutput('ait.actor.searchActors', directory))
+    let checks = 0
+    const getPresence = async did => { checks++; assert.equal(did, B); return true }
+    const checkedProfile = await getProfile(db, unreachable, { did: B, pdsUrl: 'http://127.0.0.1:1', getPresence })
+    assert.equal(checkedProfile.live, true)
+    assert.equal(checkedProfile.postsCount, peerProfile.postsCount)
+    assert.equal(checks, 1)
     assert.equal((await getTimeline(db, unreachable, { viewer: A })).feed[0].post.author.handle, HANDLE_B)
     assert.equal((await getPostThread(db, unreachable, { uri: peer.uri.toString() })).thread.post.author.handle, HANDLE_B)
     assert.equal((await listNotifications(db, unreachable, { viewer: A })).notifications[0].author.handle, HANDLE_B)

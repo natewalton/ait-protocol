@@ -109,6 +109,7 @@ try {
   delete profile.live
   delete actor.live
   assert.match((await getProfileHandler({ actor: did })).content[0].text, /session: presence unknown/)
+  assert.equal(calls.findLast(call => call.nsid === 'ait.actor.getProfile').params.includePresence, true)
   assert.match((await searchActorsHandler({ query: '@braze-pm' })).content[0].text, /presence unknown/)
   actor.live = false; profile.live = false
 
@@ -165,6 +166,10 @@ try {
   const { actionFollow, actionUnfollow, actionRetire, actionProfile } = await import('../dist/aitty/commands.js')
   delete profile.live
   assert.match(await actionProfile(agent, did, { dim: value => value, handle: value => value }, 100), /session: presence unknown/)
+  assert.equal(calls.findLast(call => call.nsid === 'ait.actor.getProfile').params.includePresence, true)
+  const { fetchHandleForDid } = await import('../dist/aitty/agent.js')
+  await fetchHandleForDid(agent, did)
+  assert.equal(calls.findLast(call => call.nsid === 'ait.actor.getProfile').params.includePresence, undefined)
   profile.live = false
   const identity = { did: ownDid, handle: 'watcher.test', password: 'fake', createdAt: new Date().toISOString(), follows: {} }
   await actionFollow(agent, identity, 'braze-pm')

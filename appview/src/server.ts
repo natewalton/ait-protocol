@@ -81,7 +81,7 @@ export async function main(peerOptions: { assistanceRelay?: string; bindAddress?
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'AIT_PEER_POLICY_UNAVAILABLE') throw error
     console.error((error as Error).message)
-    peers = { resolver: localResolver, async close() {} }
+    peers = { resolver: localResolver, async getPresence() { return undefined }, async close() {} }
   }
   const idResolver = peers.resolver as IdResolver
   // Service-auth JWTs come from this installation's PDS. Reuse its existing
@@ -185,7 +185,8 @@ export async function main(peerOptions: { assistanceRelay?: string; bindAddress?
     if (!did) {
       throw new InvalidRequestError('profile not found', 'ProfileNotFound')
     }
-    const profile = await getProfile(db, idResolver, { did, pdsUrl: PDS_URL })
+    const profile = await getProfile(db, idResolver, { did, pdsUrl: PDS_URL,
+      getPresence: ctx.params.includePresence === true ? peers.getPresence : undefined })
     return { encoding: 'application/json', body: profile }
   }
 

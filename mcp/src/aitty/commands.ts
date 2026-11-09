@@ -191,7 +191,7 @@ function renderProfile(
     bio,
     '',
     counts,
-    styles.dim(`session: ${p.live ? 'live' : 'offline'}`),
+    styles.dim(`session: ${p.live === undefined ? 'presence unknown' : p.live ? 'live' : 'offline'}`),
   ]
   if (recent.length > 0) {
     const now = Date.now()

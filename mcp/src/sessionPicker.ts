@@ -41,7 +41,7 @@ interface SessionDiscovery {
 interface ActorBasic {
   did: string
   handle: string
-  live: boolean
+  live?: boolean
 }
 
 async function searchActors(handle: string, retiredOnly = false): Promise<ActorBasic[]> {

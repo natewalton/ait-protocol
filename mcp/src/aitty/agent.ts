@@ -269,7 +269,7 @@ export interface ProfileView {
   postsCount: number
   followersCount: number
   followsCount: number
-  live: boolean
+  live?: boolean
 }
 
 // Full profile (bio, display name, counts) for the `profile` command.
@@ -289,7 +289,7 @@ export interface ActorBasic {
   did: string
   handle: string
   displayName?: string
-  live: boolean
+  live?: boolean
 }
 
 // `retiredOnly` searches the handles retired from the directory (ADR-0043)

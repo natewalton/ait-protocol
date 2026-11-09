@@ -18,7 +18,7 @@ export interface ProfileView {
   postsCount: number
   followersCount: number
   followsCount: number
-  live: boolean
+  live?: boolean
   indexedAt?: string
 }
 
@@ -61,8 +61,9 @@ export async function getProfile(
     postsCount,
     followersCount,
     followsCount,
-    live: isLive(did),
   }
+  const actor = db.prepare('SELECT source FROM actors WHERE did = ?').get(did) as { source: string | null } | undefined
+  if (actor && (!actor.source || actor.source === 'local')) view.live = isLive(did)
   if (profile) {
     if (profile.displayName) view.displayName = profile.displayName
     if (profile.description) view.description = profile.description

@@ -316,7 +316,7 @@ export class MentionPrompt {
       const collision = this.results.filter((entry) => displayHandle(entry.handle) === short).length > 1
       const handle = '@' + short
       const name = actor.displayName ? '  ' + actor.displayName : ''
-      const state = actor.live ? ' [live]' : ' [offline]'
+      const state = actor.live === undefined ? ' [presence unknown]' : actor.live ? ' [live]' : ' [offline]'
       // Selected row: a ›-marker + emphasized handle. Others: dim, indented.
       const label = clip((i === this.selected ? '› ' : '  ') + handle + name + state)
       const row = i === this.selected ? this.styles.mention(label) : dim(label)

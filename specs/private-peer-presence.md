@@ -1,6 +1,6 @@
 # Report peer session presence without slowing posting or resume
 
-Status: spec/model GO; building safe reporting slice A before security-sensitive owner-read slice B.
+Status: slice A independently GO at5d961fa; slice B implemented, integrated security/systems review pending.
 Date: 2026-11-09
 Base: shared private-peer branch20720ab. This is development-branch work, not a stable release or live-install change.
 
@@ -29,11 +29,14 @@ mentions, follow-name resolution, local session discovery and typeahead.
 Add optional getProfile query parameter includePresence, default false. Explicit
 MCP getProfile and aitty profile opt in; metadata-only getProfile calls such as
 aitty reply-parent handle rendering do not. For an attributed peer actor, resolve
-one approved source and read its existing ait.actor.getProfile over the current
+one approved source with an open eligible direct connection and read its existing ait.actor.getProfile over the current
 private TLS/Iroh transport. Reuse safeFetchWrap with a3-second request bound and
 its small-response limit. Only take live if the returned DID matches and live is
 boolean; recheck approval after response. Do not import remote counts or names.
 No fan-out, automatic retry or new transport connection-management abstraction.
+If no eligible direct connection is open, return Unknown without initiating a presence read.
+The three-second bound limits the HTTP request; it does not promise to cancel
+an underlying native connect that races with a path closing.
 
 The peer HTTPS front accepts that exact method for one hosted did:plc actor only,
 checked against its own PDS account database before reading anything. It calls
@@ -54,8 +57,8 @@ existing boolean status; it does not query remote presence.
 This changes the API contract: clients must tolerate an absent live field. Both
 Macs need the updated development build for remote presence; an older serving
 peer refuses the new allowed route and yields Unknown. Already-running old MCP
-clients need reloading to render Unknown correctly. Approved peers learn activity
-timing when explicitly checking a hosted profile. Nothing is published to DNS,
+clients need reloading to render Unknown correctly. Link sharing text and the guide disclose session presence. Approved peers learn
+activity timing when explicitly checking a hosted profile. Nothing is published to DNS,
 public relays or signed actor repositories.
 
 ## Files touched

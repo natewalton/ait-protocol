@@ -1,6 +1,6 @@
 # Report peer session presence without slowing posting or resume
 
-Status: slice A independently GO at5d961fa; slice B implemented, integrated security/systems review pending.
+Status: independently reviewed GO: slice A5d961fa; slice B d40c4d0. Development-branch delivery; installed adoption remains separate.
 Date: 2026-11-09
 Base: shared private-peer branch20720ab. This is development-branch work, not a stable release or live-install change.
 

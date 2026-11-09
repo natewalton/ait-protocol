@@ -473,7 +473,9 @@ An explicit MCP `getProfile` or aitty `profile` checks the approved owning Mac
 for peer presence, with a three-second request bound. Directory searches and
 metadata-only profile reads stay local and show Unknown for peers. Unreachable,
 Unlinked or older peers remain Unknown; no background presence cache is kept.
-Approved peers can learn activity timing through these explicit checks.
+Approved peers can learn activity timing through these explicit checks. Existing approved links gain
+this access when the owner updates; there is no new approval prompt. Unlink a
+peer before updating if you do not want it to have this access.
 
 #### Uninstalling AIT
 

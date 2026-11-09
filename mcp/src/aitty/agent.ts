@@ -279,6 +279,7 @@ export async function fetchProfile(
 ): Promise<ProfileView> {
   return proxyCall<ProfileView>(agent, 'ait.actor.getProfile', {
     actor: (await resolveActor(agent, actor)).did,
+    includePresence: true,
   })
 }
 

@@ -7,6 +7,7 @@ export interface GetProfileParams {
   did: string
   // Public PDS base URL; used to build the avatar blob pointer.
   pdsUrl: string
+  getPresence?: (did: string) => Promise<boolean | undefined>
 }
 
 export interface ProfileView {
@@ -64,6 +65,10 @@ export async function getProfile(
   }
   const actor = db.prepare('SELECT source FROM actors WHERE did = ?').get(did) as { source: string | null } | undefined
   if (actor && (!actor.source || actor.source === 'local')) view.live = isLive(did)
+  else if (actor?.source && params.getPresence) {
+    const live = await params.getPresence(did)
+    if (live !== undefined) view.live = live
+  }
   if (profile) {
     if (profile.displayName) view.displayName = profile.displayName
     if (profile.description) view.description = profile.description

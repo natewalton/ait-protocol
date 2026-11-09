@@ -144,7 +144,7 @@ async function startAppview(s) {
     s.events.on('output', ready); ready(); s.child.once('exit', code => reject(Error(`AppView exited ${code}: ${s.output}`)))
   }), `${s.name} AppView ready`)
   s.control = path.join(installationPaths(s.repo).directory, 'control.sock')
-  await s.agent.call('ait.notification.registerPushTarget', undefined, { url: s.callbackUrl }, {
+  if (!s.skipRegistration) await s.agent.call('ait.notification.registerPushTarget', undefined, { url: s.callbackUrl }, {
     encoding: 'application/json', headers: { 'atproto-proxy': `${s.values.bskyAppViewDid}#bsky_appview` },
   })
 }
@@ -203,7 +203,7 @@ async function unapprovedRead(invitation) {
 
 // An approved but adversarial peer controls its HTTP bytes, not the gateway's
 // destination or forwarded credentials. Use real native auth and verified TLS.
-async function peerRequest(from, to, invitation, request) {
+async function peerRequest(from, to, invitation, request, complete = false) {
   const saved = JSON.parse(fs.readFileSync(path.join(installationPaths(from.repo).directory, 'machine.json')))
   const ticket = JSON.parse(Buffer.from(invitation.slice(9), 'base64url'))
   const builder = Endpoint.builder(); presetMinimal(builder)
@@ -225,7 +225,7 @@ async function peerRequest(from, to, invitation, request) {
     await within(once(secure, 'secureConnect'), 'adversarial peer TLS')
     let response = ''
     const result = new Promise((resolve, reject) => {
-      secure.on('data', part => { response += part; if (response.includes('\r\n\r\n')) resolve(response) })
+      secure.on('data', part => { response += part; if (!complete && response.includes('\r\n\r\n')) resolve(response) })
       secure.once('end', () => resolve(response)); secure.once('error', reject)
     })
     secure.write(request)
@@ -414,6 +414,18 @@ try {
       assert.match(response, /^HTTP\/1\.1 400/, `unsafe request target ${target}`)
     }
     assert.equal(trapRequests, 0, 'peer-chosen origin must never receive a request')
+    const ownProfile = await peerRequest(b, a, invitation,
+      `GET /xrpc/ait.actor.getProfile?actor=${encodeURIComponent(a.account.did)}&includePresence=true HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`, true)
+    assert.match(ownProfile, /^HTTP\/1\.1 200/)
+    assert.match(ownProfile, /"live":true/)
+    const reads = a.plcDocReads
+    for (const actor of [b.account.did, 'alice', 'did:plc:' + 'z'.repeat(24)]) {
+      const refused = await peerRequest(b, a, invitation,
+        `GET /xrpc/ait.actor.getProfile?actor=${encodeURIComponent(actor)}&includePresence=true HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`)
+      assert.match(refused, /^HTTP\/1\.1 403/)
+    }
+    assert.equal(a.plcDocReads, reads, 'non-hosted actors refuse before identity/profile work')
+
     const response = await peerRequest(b, a, invitation,
       `GET /xrpc/com.atproto.sync.subscribeRepos?cursor=0 HTTP/1.1\r\nHost: ${host}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ${randomBytes(16).toString('base64')}\r\nAuthorization: Bearer peer-secret\r\nCookie: peer-cookie\r\nX-Forwarded-For: 10.0.0.1\r\n\r\n`)
     assert.match(response, /^HTTP\/1\.1 101/)
@@ -424,6 +436,14 @@ try {
   }
   const directory = await tool(a, 'searchActors', { query: 'bobby' })
   assert.match(directory.content[0].text, new RegExp(b.account.did)); assert(!directory.content[0].text.includes('.test'))
+  assert.match(directory.content[0].text, /presence unknown/)
+  const metadata = (await a.agent.call('ait.actor.getProfile', { actor: b.account.did }, undefined, {
+    headers: { 'atproto-proxy': `${a.values.bskyAppViewDid}#bsky_appview` },
+  })).data
+  assert.equal(Object.hasOwn(metadata, 'live'), false, 'metadata-only profile does not request remote presence')
+  assert.match((await tool(a, 'getProfile', { actor: b.account.did })).content[0].text, /session: live/)
+  report('directory/metadata stay Unknown; explicit MCP profile reads owner registration over the approved link')
+
   const readsBefore = a.plcDocReads
   await tool(a, 'getProfile', { actor: b.account.did })
   const readsAfterFirst = a.plcDocReads
@@ -452,6 +472,7 @@ try {
       a.events.on('output', ready); ready()
     }), 'native direct-loss status event', 30000)
     assert.equal((await localCommand(a.control, 'status')).peers[0].state, 'Unavailable')
+    assert.match((await tool(a, 'getProfile', { actor: b.account.did })).content[0].text, /session: presence unknown/)
     const backlog = await tool(b, 'post', { text: '@alice local commit while direct connection is unavailable' })
     const backlogUri = /URI: (\S+)/.exec(backlog.content[0].text)[1]
     assert(!a.push.some(n => n.uri === backlogUri), 'unavailable peer must not have received the new record')
@@ -481,6 +502,7 @@ try {
   assert.equal((await localCommand(a.control, 'status')).peers.length, 0)
   assert.match((await tool(a, 'getPostThread', { post_uri: postUri })).content[0].text, new RegExp(replyUri))
   assert.match((await tool(a, 'getProfile', { actor: b.account.did })).content[0].text, /bobby/)
+  assert.match((await tool(a, 'getProfile', { actor: b.account.did })).content[0].text, /session: presence unknown/)
   assert.match((await tool(a, 'getTimeline', {})).content[0].text, /bobby/)
   assert.match((await tool(a, 'listNotifications', {})).content[0].text, /bobby/)
   const duplicate = spawn(process.execPath, [path.join(repo, 'appview/dist/server.js')], {
@@ -511,6 +533,14 @@ try {
   await notification(a, /URI: (\S+)/.exec(reverseBarrier.content[0].text)[1])
   assert.equal(a.push.length, before + 2)
   report('Unlink closes approved access; relink/replay does not duplicate notifications')
+  const stoppedOwner = once(b.child, 'exit'); b.child.kill('SIGTERM'); await within(stoppedOwner, 'owner presence restart')
+  b.skipRegistration = true
+  await startAppview(b)
+  const presenceBarrier = await tool(b, 'post', { text: 'owner restarted without a callback @alice' })
+  await notification(a, /URI: (\S+)/.exec(presenceBarrier.content[0].text)[1])
+  assert.match((await tool(a, 'getProfile', { actor: b.account.did })).content[0].text, /session: offline/)
+  report('reachable owner without a callback reports Offline; Unlink reports Unknown without losing retained profiles')
+
   if (relay && !process.argv.includes('--repeat-core')) { await policyRefusals(a); await connectBound() }
   }
   }

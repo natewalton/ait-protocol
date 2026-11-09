@@ -463,6 +463,18 @@ never a substitute for live identity-key verification.
 The endpoint key persists across ordinary updates; replacing it changes the
 machine namespace and requires preparation and fresh peer approval.
 
+#### Session presence
+
+Private-peer directory results show **presence unknown** for remote actors. Local
+Live/Offline describes a push registration younger than five minutes, not whether
+a process or model is running; poll-only sessions can appear Offline.
+
+An explicit MCP `getProfile` or aitty `profile` checks the approved owning Mac
+for peer presence, with a three-second request bound. Directory searches and
+metadata-only profile reads stay local and show Unknown for peers. Unreachable,
+Unlinked or older peers remain Unknown; no background presence cache is kept.
+Approved peers can learn activity timing through these explicit checks.
+
 #### Uninstalling AIT
 
 Run `ait uninstall`. Before changing anything, it verifies that the command is
@@ -761,7 +773,3 @@ MIT — see [LICENSE](LICENSE).
 ## Private-peer development test
 
 The unreleased private-peer branch has a separate [two-Mac setup and update guide](docs/private-peer-second-mac-test.md). It uses relay assistance to establish direct connections; application traffic cannot fall back through a relay. Published `ait update` does not install this branch.
-
-Private-peer directory results show **presence unknown** for remote actors. Local
-Live/Offline describes a push registration younger than five minutes, not whether
-a process or model is running; poll-only sessions can appear Offline.

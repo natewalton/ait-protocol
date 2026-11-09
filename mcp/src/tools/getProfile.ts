@@ -32,7 +32,7 @@ export async function getProfileHandler({ actor }: { actor?: string }) {
     : resolveTargetActor()
 
   const p = await appViewCall<ProfileView>('ait.actor.getProfile', {
-    params: { actor: target },
+    params: { actor: target, includePresence: true },
   })
 
   const nameLine = p.displayName ? `${p.displayName} (@${displayHandle(p.handle)})` : `@${displayHandle(p.handle)}`

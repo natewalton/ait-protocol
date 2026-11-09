@@ -14,9 +14,11 @@ import { IdResolver } from '@atproto/identity'
 import { base32 } from 'multiformats/bases/base32'
 import { loadState } from './peerState.mjs'
 import { createPeerClient } from './peerClient.mjs'
+import { getProfile } from './queries/getProfile.js'
+import { isLive } from './pushRegistry.js'
 
 const CONTROL = [...Buffer.from('ait-link/1')], DATA = [...Buffer.from('ait-atproto/1')]
-export const sharingScope = 'Share hosted AIT actors, complete repository history, future records and blobs. Never credentials, writes or machine administration.'
+export const sharingScope = 'Share hosted AIT actors, session presence, complete repository history, future records and blobs. Never credentials, writes or machine administration.'
 export const stateDirectory = dbPath => path.join(path.dirname(path.resolve(dbPath)), 'peers')
 export const peerHostname = id => `${base32.baseEncode(Uint8Array.from(id.toBytes()))}.localhost`
 export function parseInvitation(text) {
@@ -153,9 +155,20 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
     const target = new URL(base); target.pathname = url.pathname; target.search = url.search
     return target
   }
-  const front = https.createServer({ key: machine.key, cert: machine.cert }, (req, res) => {
+  const front = https.createServer({ key: machine.key, cert: machine.cert }, async (req, res) => {
     try {
       const url = requestTarget(req), log = /^\/(did:plc:[a-z2-7]{24})\/log$/.exec(url.pathname)
+      if (url.pathname === '/xrpc/ait.actor.getProfile') {
+        const did = url.searchParams.get('actor')
+        if (!/^did:plc:[a-z2-7]{24}$/.test(did ?? '') || !hosted(did)) {
+          res.writeHead(403); return res.end()
+        }
+        // Never forward includePresence or provide a peer-read callback here.
+        // This machine reports only its own registry for its own hosted DID.
+        const profile = await getProfile(db, localResolver, { did, pdsUrl })
+        res.writeHead(200, { 'content-type': 'application/json' })
+        return res.end(JSON.stringify({ ...profile, live: isLive(did) }))
+      }
       const repo = ['/xrpc/com.atproto.sync.getRepo', '/xrpc/com.atproto.sync.getBlob'].includes(url.pathname)
       const list = url.pathname === '/xrpc/com.atproto.sync.listRepos'
       if (!(log && hosted(log[1])) && !(repo && hosted(url.searchParams.get('did'))) && !list) { res.writeHead(403); return res.end() }
@@ -217,6 +230,14 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
     return found.length ? Response.json(found[0]) : new Response('', { status: 404 })
   } })
   resolver.handle.resolve = async () => undefined
+
+  async function getPresence(did) {
+    const source = db.prepare('SELECT source FROM actors WHERE did = ?').get(did)?.source
+    const client = source && machine.state.peers[source] && sources.get(source)?.client
+    if (!client || ![...connections].some(c => c.remoteId().toString() === source && hasPayloadPath(c))) return undefined
+    try { return await client.getPresence(did) }
+    catch { return undefined } // Unavailable, old or revoked peers are not Offline.
+  }
 
   async function attach(id) {
     const peer = machine.state.peers[id]
@@ -358,7 +379,7 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
   })
   control.listen(controlPath); await once(control, 'listening'); fs.chmodSync(controlPath, 0o600)
   for (const id of Object.keys(machine.state.peers)) await attach(id)
-  return { resolver, command, endpoint, id: machine.id, hostname: machine.hostname,
+  return { resolver, getPresence, command, endpoint, id: machine.id, hostname: machine.hostname,
     async close() {
       stopping = true
       for (const connection of connections) connection.close(0n, [])

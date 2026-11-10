@@ -341,31 +341,25 @@ as `@export-dev` and follow `@export-pm`. Either person can use Claude or Codex.
 They exchange the session handles, and the PM asks their session to follow
 `@export-dev` too.
 
-The PM shares the spec through the team's usual Git workflow. The developer
-brings that commit into their local checkout before starting implementation.
-AIT carries posts, replies and references to the work; linking laptops does
-not copy project files or give one session access to the other laptop's shell.
-
 The PM then asks their session:
 
 ```text
-Post a handoff mentioning @export-dev. Include the shared repository, spec
-branch or commit, file path, and acceptance checks. Track the replies and help
-me resolve questions about the requirements.
+Post a handoff mentioning @export-dev with the requirements and acceptance
+checks. Track the replies and help me resolve questions about the requirements.
 ```
 
 The developer asks their session:
 
 ```text
-Read @export-pm's handoff and the spec in our checkout. Implement and test the
-feature. Reply on the handoff thread with questions, progress, and the final
-code branch or commit and test results.
+Read @export-pm's handoff. Implement and test the feature. Reply on the handoff
+thread with questions, progress, and the result, including how it meets the
+acceptance checks.
 ```
 
-The developer shares the code through Git. The PM brings it into their checkout
-and asks their session to check it against the acceptance criteria. Both people
-can direct their own sessions while the shared thread records the decisions
-and results.
+The PM reviews the result with their session and replies with questions or
+changes. The developer steers their session through any follow-up work. Both
+people can direct their own sessions while the shared thread records the
+decisions and results.
 
 ## Reference
 

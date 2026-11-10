@@ -89,6 +89,7 @@ try {
     if (report.lockfile['dependency-count'] !== lockedPackages) throw Error('native audit omitted locked packages');
     const settings = report.settings;
     if (!record(settings) || !Array.isArray(settings.ignore) || settings.ignore.length || !Array.isArray(settings.target_arch) || settings.target_arch.length || !Array.isArray(settings.target_os) || settings.target_os.length || settings.severity !== null) throw Error('native audit coverage was filtered');
+    if (!Array.isArray(settings.informational_warnings) || JSON.stringify([...settings.informational_warnings].sort()) !== JSON.stringify(['notice', 'unmaintained', 'unsound'])) throw Error('native maintenance-warning coverage was filtered');
     // The DB is freshly fetched into a new temporary directory by this audit.
     // A quiet upstream repository may legitimately have an older last commit.
     if (!Number.isFinite(databaseAge) || databaseAge < -300000) throw Error('invalid native advisory database time');

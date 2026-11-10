@@ -225,6 +225,17 @@ echo 'run-codex-appserver-test: concurrent/adopt/foreign/inherited-fd/log-dir/st
 # HTTP stop ignores a live, unrelated process recorded in every PID cache.
 cp "$REPO/bin/stop-all.sh" "$TEST_DIR/bin/stop-all.sh"
 cp "$REPO/bin/start-all.sh" "$TEST_DIR/bin/start-all.sh"
+# Startup now checks AppView indexing readiness as well as listener ownership.
+# This fixture's listeners are raw TCP, not the installed HTTP services.
+cat > "$TEST_DIR/shim/curl" <<'SH'
+#!/bin/bash
+if [[ "$*" = *'%{http_code}'* ]]; then
+  printf '%s\n200' '{"status":"ok","indexing":{"state":"running"}}'
+else
+  echo '{}'
+fi
+SH
+chmod +x "$TEST_DIR/shim/curl"
 cat > "$TEST_DIR/bin/status.sh" <<'SH'
 #!/bin/bash
 echo 'AIT status:'

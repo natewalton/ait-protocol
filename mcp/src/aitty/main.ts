@@ -269,25 +269,18 @@ async function ensureFollows(
 ): Promise<{ desiredDids: Set<string>; unresolved: string[] }> {
   const desiredDids = new Set<string>()
   const unresolved: string[] = []
+  const resolved: { did: string; handle: string; requested: string }[] = []
+  // Resolve the complete request before creating any follows: a later ambiguous
+  // input must not leave earlier follow writes behind.
   for (const handle of requested) {
-    // Resolve to a DID; if resolve hiccups but we already follow this handle,
-    // reuse the stored DID so a transient failure doesn't hide its posts.
-    let did: string | undefined
-    let key = handle
     try {
-      const actor = await resolveActor(agent, handle)
-      did = actor.did
-      key = actor.handle
+      resolved.push({ ...await resolveActor(agent, handle), requested: handle })
     } catch (error) {
-      // Only an explicit stored identifier can safely use the old cached DID.
-      // A bare name must never bypass a directory ambiguity or outage.
-      if (handle.includes('.') || handle.startsWith('did:')) did = identity.follows[handle]?.did
-      if (!did && !(error instanceof UnknownActorError)) throw error
-    }
-    if (!did) {
+      if (!(error instanceof UnknownActorError)) throw error
       unresolved.push(handle)
-      continue
     }
+  }
+  for (const { did, handle: key, requested: handle } of resolved) {
     if (did === identity.did) continue // never follow self
     if (desiredDids.has(did)) continue // same account given twice
     desiredDids.add(did)

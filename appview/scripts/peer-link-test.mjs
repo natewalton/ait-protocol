@@ -82,7 +82,7 @@ async function fixture(name, pgPort) {
     dataDirectory: path.join(s.repo, 'pds/.pds'), blobstoreDiskLocation: path.join(s.repo, 'pds/.pds/blobs'),
     didPlcUrl: `http://127.0.0.1:${s.plcPort}`, inviteRequired: false, rateLimitsEnabled: false,
     jwtSecret: randomBytes(32).toString('hex'), adminPassword: randomBytes(32).toString('hex'),
-    plcRotationKeyK256PrivateKeyHex: randomBytes(32).toString('hex'), serviceHandleDomains: ['.test'],
+    plcRotationKeyK256PrivateKeyHex: randomBytes(32).toString('hex'), serviceHandleDomains: ['.test', '.watcher.example.com'],
     disableSsrfProtection: true, crawlers: [] }
   fs.mkdirSync(s.values.dataDirectory, { recursive: true })
   s.appviewPort = await freePort(); s.appviewUrl = `http://127.0.0.1:${s.appviewPort}`
@@ -92,17 +92,21 @@ async function fixture(name, pgPort) {
   s.password = randomBytes(16).toString('hex')
   s.account = (await agent.createAccount({ handle: `${name}.test`, email: `${name}@example.com`, password: s.password })).data
   s.agent = agent
+  s.watcherAgent = new AtpAgent({ service: s.url, fetch: (input, init) => localPdsFetch(input, init, s.url) })
+  registerAitLexicons(s.watcherAgent)
+  s.watcher = (await s.watcherAgent.createAccount({ handle: 'terminal-observer.watcher.example.com',
+    email: 'watcher@example.com', password: s.password })).data
   s.env = {
     PDS_HOSTNAME: 'pds.localhost', PDS_PORT: 0, PDS_DATA_DIRECTORY: s.values.dataDirectory,
     PDS_BLOBSTORE_DISK_LOCATION: s.values.blobstoreDiskLocation, PDS_DID_PLC_URL: s.values.didPlcUrl,
     PDS_JWT_SECRET: s.values.jwtSecret, PDS_ADMIN_PASSWORD: s.values.adminPassword,
     PDS_PLC_ROTATION_KEY_K256_PRIVATE_KEY_HEX: s.values.plcRotationKeyK256PrivateKeyHex,
-    PDS_SERVICE_HANDLE_DOMAINS: '.test', PDS_DISABLE_SSRF_PROTECTION: true,
+    PDS_SERVICE_HANDLE_DOMAINS: '.test,.watcher.example.com', PDS_DISABLE_SSRF_PROTECTION: true,
     PDS_BSKY_APP_VIEW_URL: s.appviewUrl, PDS_BSKY_APP_VIEW_DID: s.values.bskyAppViewDid,
     PDS_INVITE_REQUIRED: false, PDS_CRAWLERS: '',
   }
   fs.writeFileSync(path.join(s.repo, 'pds/.env'), envText(s.env), { mode: 0o600 })
-  fs.writeFileSync(path.join(s.repo, 'appview/.env'), envText({ APPVIEW_DB_PATH: './data/appview.sqlite', APPVIEW_DID: s.values.bskyAppViewDid }))
+  fs.writeFileSync(path.join(s.repo, 'appview/.env'), envText({ APPVIEW_DB_PATH: './data/appview.sqlite', APPVIEW_DID: s.values.bskyAppViewDid, APPVIEW_OPERATOR: 'terminal-observer.watcher.example.com' }))
   s.callback = http.createServer(async (req, res) => {
     const chunks = []; for await (const part of req) chunks.push(part)
     const body = JSON.parse(Buffer.concat(chunks).toString()); s.push.push(body); s.events.emit('push', body); res.end('ok')
@@ -123,6 +127,7 @@ async function startAppview(s) {
   const env = { PATH: process.env.PATH, HOME: path.join(s.repo, 'home'), LOG_ENABLED: 'false',
     APPVIEW_PORT: String(s.appviewPort), APPVIEW_PDS_URL: s.url, APPVIEW_PDS_WS_URL: s.url.replace('http:', 'ws:'),
     APPVIEW_PLC_URL: s.values.didPlcUrl, APPVIEW_PEER_RELAY: s.peerOptions?.assistanceRelay ?? '' }
+  if (s.legacyOperator) env.APPVIEW_OPERATOR = 'terminal-observer.test'
   s.launchEnv = env
   if (s.peerOptions) {
     const profile = `(version 1)(allow default)(deny network*)(allow network-bind (local ip "localhost:*"))(allow network-inbound (local ip "localhost:*"))(allow network-outbound (remote tcp "localhost:*"))(allow network-outbound (remote udp "localhost:${s.proxyPort}"))(allow network-bind (local unix-socket (regex #"^${root}/")))(allow network-inbound (local unix-socket (regex #"^${root}/")))(allow network-outbound (remote unix-socket (regex #"^${root}/")))`
@@ -143,6 +148,15 @@ async function startAppview(s) {
     const ready = () => { if (s.output.includes('appview listening')) { s.events.off('output', ready); resolve() } }
     s.events.on('output', ready); ready(); s.child.once('exit', code => reject(Error(`AppView exited ${code}: ${s.output}`)))
   }), `${s.name} AppView ready`)
+  await within((async () => {
+    while (true) {
+      const response = await fetch(`${s.appviewUrl}/xrpc/_health`)
+      const health = await response.json()
+      if (response.ok) { assert.equal(health.indexing.state, 'running'); return }
+      assert.equal(health.status, 'starting', JSON.stringify(health))
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+  })(), `${s.name} initial local backfill`)
   s.control = path.join(installationPaths(s.repo).directory, 'control.sock')
   if (!s.skipRegistration) await s.agent.call('ait.notification.registerPushTarget', undefined, { url: s.callbackUrl }, {
     encoding: 'application/json', headers: { 'atproto-proxy': `${s.values.bskyAppViewDid}#bsky_appview` },
@@ -342,12 +356,34 @@ try {
   const a = await fixture('alice', pgPort), b = await fixture('bobby', pgPort)
   await writeOldPost(a, b); await writeOldPost(b, a)
   for (const s of instances) {
-    await stopPds(s); assert(needsPreparation(s.repo)); await prepareInstallation(s.repo)
+    await stopPds(s); assert(needsPreparation(s.repo))
+    if (s === a) {
+      // Throw after a real successful account rename, then recover using only
+      // the durable operator setting. No production test hook or state marker.
+      const realFetch = globalThis.fetch
+      let renamed = false
+      globalThis.fetch = async (input, init) => {
+        const response = await realFetch(input, init)
+        if (!renamed && String(input).endsWith('/xrpc/com.atproto.admin.updateAccountHandle') && response.ok) {
+          renamed = true
+          throw Error('fixture crash after first namespace rename')
+        }
+        return response
+      }
+      try { await assert.rejects(prepareInstallation(s.repo), /fixture crash after first namespace rename/) }
+      finally { globalThis.fetch = realFetch }
+      assert(renamed)
+      assert.equal(parse(fs.readFileSync(path.join(s.repo, 'appview/.env'))).APPVIEW_OPERATOR, s.watcher.did)
+    }
+    await prepareInstallation(s.repo)
     assert(!needsPreparation(s.repo)); await prepareInstallation(s.repo)
     const env = parse(fs.readFileSync(path.join(s.repo, 'pds/.env')))
     assert.match(env.PDS_SERVICE_HANDLE_DOMAINS, /^\.[a-z2-7]{52}\.aitproto\.com$/)
     await startPds(s, { ...s.values, hostname: env.PDS_HOSTNAME, serviceDid: env.PDS_SERVICE_DID, serviceHandleDomains: [env.PDS_SERVICE_HANDLE_DOMAINS] })
     s.agent = new AtpAgent({ service: s.url, fetch: (input, init) => localPdsFetch(input, init, s.url) }); registerAitLexicons(s.agent); await s.agent.resumeSession(s.account)
+    s.watcherAgent = new AtpAgent({ service: s.url, fetch: (input, init) => localPdsFetch(input, init, s.url) })
+    registerAitLexicons(s.watcherAgent)
+    await s.watcherAgent.login({ identifier: s.watcher.did, password: s.password })
     assert.equal((await s.agent.com.atproto.server.getSession()).data.did, s.account.did)
     const refreshed = await s.agent.com.atproto.server.refreshSession(undefined, { headers: { authorization: `Bearer ${s.account.refreshJwt}` } })
     assert.equal(refreshed.data.did, s.account.did); assert.match(refreshed.data.handle, /\.aitproto\.com$/)
@@ -402,6 +438,35 @@ try {
   await Promise.all([notification(a, b.oldPost.uri), notification(b, a.oldPost.uri)])
   await assert.rejects(localCommand(b.control, 'link', { invitation }))
   report('public Link confirmation creates approved direct streams; old history replays and invitation reuse fails')
+  const retire = async (s, actor, subject, retired) => actor.call('ait.actor.setRetired', undefined,
+    { subject, retired }, { encoding: 'application/json', headers: { 'atproto-proxy': `${s.values.bskyAppViewDid}#bsky_appview` } })
+  for (const s of instances) {
+    await within((async () => {
+      while (true) {
+        const state = (await localCommand(s.control, 'status')).peers[0]
+        if (state.indexing?.state === 'running') return
+        assert.notEqual(state.indexing?.state, 'failed', JSON.stringify(state))
+        await new Promise(resolve => setTimeout(resolve, 20))
+      }
+    })(), `${s.name} complete peer backfill`)
+    const directory = await s.agent.call('ait.actor.searchActors', { q: 'terminal-observer', limit: 100 }, undefined,
+      { headers: { 'atproto-proxy': `${s.values.bskyAppViewDid}#bsky_appview` } })
+    assert.equal(directory.data.actors.length, 2)
+    const ambiguous = await fetch(`${s.appviewUrl}/xrpc/com.atproto.identity.resolveHandle?handle=terminal-observer.test`)
+    assert.equal(ambiguous.status, 400); assert.equal((await ambiguous.json()).error, 'AmbiguousHandle')
+    await assert.rejects(retire(s, s.agent, s.watcher.did, true), error => error.error === 'NotOperator')
+    await retire(s, s.agent, s.account.did, true) // ordinary actors retain self-retirement
+    await retire(s, s.agent, s.account.did, false)
+    await retire(s, s.watcherAgent, s.account.did, true)
+    const hidden = await s.agent.call('ait.actor.searchActors', { q: s.name, limit: 100 }, undefined,
+      { headers: { 'atproto-proxy': `${s.values.bskyAppViewDid}#bsky_appview` } })
+    assert(!hidden.data.actors.some(actor => actor.did === s.account.did))
+    assert.equal((await s.agent.call('ait.feed.getAuthorFeed', { actor: s.account.did }, undefined,
+      { headers: { 'atproto-proxy': `${s.values.bskyAppViewDid}#bsky_appview` } })).data.feed.length, 1)
+    await retire(s, s.watcherAgent, s.account.did, false)
+  }
+  report('same-name watcher peers keep local operator authority; public retirement/search/history agree and self-only auth holds')
+
   let trapRequests = 0
   if (!relay) { // Adversarial endpoints use the unchanged direct-only fixture run.
   const trap = http.createServer((req, res) => { trapRequests++; res.end('unreachable') })
@@ -514,7 +579,10 @@ try {
   assert.equal((await localCommand(a.control, 'status')).peers.length, 0)
   const stopped = once(a.child, 'exit'); a.child.kill('SIGKILL'); await within(stopped, 'owned fixture crash')
   assert(fs.lstatSync(a.control).isSocket(), 'SIGKILL must leave the fixture socket for this regression')
+  a.legacyOperator = true
   await startAppview(a)
+  await retire(a, a.watcherAgent, a.account.did, true)
+  await retire(a, a.watcherAgent, a.account.did, false)
   assert.match((await tool(a, 'getPostThread', { post_uri: postUri })).content[0].text, new RegExp(replyUri))
   before = a.push.length // Startup backlog replay is separate from relink idempotence.
   report('retained peer history stays readable after Unlink/restart; dead socket is reclaimed and active owner preserved')

@@ -22,12 +22,18 @@ export function localCommand(socketPath, operation, body = {}, signal) {
     request.on('error', reject); request.end(JSON.stringify(body))
   })
 }
+export function formatPeerStatus(peer) {
+  const indexing = peer.indexing
+    ? `indexing ${peer.indexing.state}${peer.indexing.error ? `: ${peer.indexing.error}` : ''}`
+    : `indexing not started${peer.error ? `: ${peer.error}` : ''}`
+  return `${peer.state} ${JSON.stringify(peer.name)} ${peer.id} ${indexing}`
+}
 async function main() {
   const [operation, repo, value] = process.argv.slice(2)
   const { directory } = installationPaths(repo), control = path.join(directory, 'control.sock')
   if (operation === 'status') {
     const status = await localCommand(control, 'status', {}, AbortSignal.timeout(3000))
-    for (const peer of status.peers) console.log(`  ${peer.state} ${JSON.stringify(peer.name)} ${peer.id}`)
+    for (const peer of status.peers) console.log(`  ${formatPeerStatus(peer)}`)
     return
   }
   if (operation === 'unlink') {
@@ -53,7 +59,7 @@ async function main() {
     finally { process.off('SIGINT', interrupt) }
   } else {
     const status = await localCommand(control, 'status')
-    for (const peer of status.peers) console.log(`${peer.state} ${JSON.stringify(peer.name)} ${peer.id}`)
+    for (const peer of status.peers) console.log(formatPeerStatus(peer))
     const result = await localCommand(control, 'invite')
     console.log('Send this one-use invitation privately (expires in 10 minutes; the next ait link replaces it):')
     console.log(result.invitation)

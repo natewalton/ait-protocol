@@ -48,16 +48,20 @@ core_status=0
 declare -a names=(plc pds appview)
 declare -a urls=(http://localhost:2582/_health http://localhost:2583/xrpc/_health http://localhost:2585/xrpc/_health)
 if [ "$check_core" -eq 1 ]; then
-  for i in 0 1 2; do
+  for i in 0 1; do
     if ! probe_http "${urls[$i]}"; then core_status=1; fi
   done
+  [ "$(appview_health)" = running ] || core_status=1
   exit "$core_status"
 fi
 
 echo "AIT status:"
 for i in 0 1 2; do
   state=unreachable
-  if probe_http "${urls[$i]}"; then state=running; else core_status=1; fi
+  if [ "${names[$i]}" = appview ]; then
+    state="$(appview_health)"
+    [ "$state" = running ] || core_status=1
+  elif probe_http "${urls[$i]}"; then state=running; else core_status=1; fi
   printf '  %-16s %s\n' "${names[$i]}" "$state"
 done
 

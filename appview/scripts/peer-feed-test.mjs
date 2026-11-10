@@ -9,7 +9,7 @@ import { WebSocketServer } from 'ws'
 import { Secp256k1Keypair } from '@atproto/crypto'
 import { MemoryBlockstore, Repo, concatBytesAsync, getFullRepo } from '@atproto/repo'
 import { AtUri } from '@atproto/syntax'
-import { MessageFrame } from '@atproto/xrpc-server'
+import { MessageFrame, Subscription } from '@atproto/xrpc-server'
 import { createVerifiedFeed } from '../src/peerFeed.mjs'
 import { openDb } from '../src/db.ts'
 import { getRecord } from '../src/queries/getRecord.ts'
@@ -43,7 +43,7 @@ async function commit(value, seq) {
     since: null, blocks: value.car, ops, blobs: [] }
 }
 
-async function fixture(t, { repos = [], pages, messages, getRepo, source = SOURCE, isApprovedSource }) {
+async function fixture(t, { repos = [], pages, messages, getRepo, getJson, source = SOURCE, isApprovedSource }) {
   const db = openDb(':memory:')
   const errors = [], requests = [], resolutions = []
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' })
@@ -71,8 +71,9 @@ async function fixture(t, { repos = [], pages, messages, getRepo, source = SOURC
   }
   const feed = createVerifiedFeed({ db, idResolver, source, isApprovedSource,
     service: `ws://127.0.0.1:${server.address().port}`,
-    async getJson(path) {
+    async getJson(path, signal) {
       await connected.promise // Confirms the WebSocket opened before enumeration.
+      if (getJson) return getJson(path, signal)
       const url = new URL(path, 'http://fixture')
       assert.equal(url.pathname, '/xrpc/com.atproto.sync.listRepos')
       assert.equal(url.searchParams.get('limit'), '1000')
@@ -95,6 +96,13 @@ const failed = async feed => {
   const error = await feed.start().then(() => undefined, error => error)
   assert(error instanceof Error, 'fixture must terminate on its injected error')
   return error
+}
+async function waitFor(check) {
+  const deadline = Date.now() + 2000
+  while (!check()) {
+    assert(Date.now() < deadline, 'fixture state did not change')
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
 }
 function legacyPost(db, did, rkey, text = 'stale') {
   db.prepare('INSERT INTO posts (uri,cid,did,text,createdAt,indexedAt) VALUES (?,?,?,?,?,?)')
@@ -246,6 +254,83 @@ test('destroy cancels the official iterator and settles start without reporting 
   await running
   assert.equal(f.feed.getCursor(), 1)
   assert.deepEqual(f.errors, [])
+  assert.deepEqual(f.feed.getStatus(), { state: 'stopped' })
+})
+
+test('readiness waits for backfill and stays running when the ready stream is quiet', { timeout: 5000 }, async t => {
+  const entered = Promise.withResolvers(), release = Promise.withResolvers()
+  const f = await fixture(t, { messages: [], getJson: async () => {
+    entered.resolve()
+    await release.promise
+    return { repos: [] }
+  } })
+  assert.deepEqual(f.feed.getStatus(), { state: 'starting' })
+  const running = f.feed.start()
+  await entered.promise
+  assert.deepEqual(f.feed.getStatus(), { state: 'starting' })
+  release.resolve()
+  await waitFor(() => f.feed.getStatus().state === 'running')
+  assert.deepEqual(f.feed.getStatus(), { state: 'running' })
+  const copy = f.feed.getStatus()
+  copy.state = 'failed'
+  assert.deepEqual(f.feed.getStatus(), { state: 'running' }, 'callers cannot mutate owner status')
+  await f.feed.destroy()
+  await running
+  assert.deepEqual(f.feed.getStatus(), { state: 'stopped' })
+  assert.deepEqual(f.errors, [])
+})
+
+test('terminal backfill error remains visible and start cannot restart a dead consumer', { timeout: 5000 }, async t => {
+  const cause = Error('fixture listRepos unavailable')
+  let reads = 0
+  const f = await fixture(t, { messages: [], getJson: async () => { reads++; throw cause } })
+  const running = f.feed.start()
+  assert.equal(await running.catch(error => error), cause)
+  assert.deepEqual(f.feed.getStatus(), { state: 'failed', error: cause.message })
+  assert.equal(f.feed.start(), running)
+  assert.equal(reads, 1)
+  assert.deepEqual(f.errors, [cause])
+  await f.feed.destroy().catch(() => {})
+  assert.deepEqual(f.feed.getStatus(), { state: 'failed', error: cause.message })
+})
+
+test('destroy before start cannot create a new subscription', async t => {
+  const f = await fixture(t, { messages: [] })
+  await f.feed.destroy()
+  await f.feed.start()
+  assert.deepEqual(f.feed.getStatus(), { state: 'stopped' })
+  assert.equal(f.requests.length, 0)
+})
+
+test('destroy aborts an in-flight backfill read without reporting terminal failure', { timeout: 5000 }, async t => {
+  const entered = Promise.withResolvers()
+  const f = await fixture(t, { messages: [], getJson: async (_path, signal) => {
+    entered.resolve()
+    await new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
+  } })
+  const running = f.feed.start()
+  await entered.promise
+  await f.feed.destroy()
+  await running
+  assert.deepEqual(f.feed.getStatus(), { state: 'stopped' })
+  assert.deepEqual(f.errors, [])
+})
+
+test('unexpected normal iterator completion is a terminal failure', async t => {
+  const iterator = Subscription.prototype[Symbol.asyncIterator]
+  Subscription.prototype[Symbol.asyncIterator] = async function * () {}
+  t.after(() => { Subscription.prototype[Symbol.asyncIterator] = iterator })
+  const db = openDb(':memory:'), errors = []
+  t.after(() => db.close())
+  const feed = createVerifiedFeed({ db, idResolver: {}, service: 'ws://127.0.0.1:9',
+    getJson: async () => ({ repos: [] }), getRepo: async () => { throw Error('unexpected repository read') },
+    onError: error => errors.push(error),
+  })
+  const error = await failed(feed)
+  assert.equal(error.message, 'subscription ended unexpectedly')
+  assert.deepEqual(feed.getStatus(), { state: 'failed', error: error.message })
+  assert.deepEqual(errors, [error])
+  await feed.destroy().catch(() => {})
 })
 
 test('an initially sleeping peer resumes signed backfill and live delivery using native reconnect', { timeout: 10000 }, async t => {
@@ -299,6 +384,7 @@ test('an initially sleeping peer resumes signed backfill and live delivery using
   assert.equal((await refused.promise).code, 'ECONNREFUSED')
   assert.equal(reads, 0, 'sleeping peer must not trigger a failing eager HTTP backfill')
   assert.equal(feed.getCursor(), 0)
+  assert.deepEqual(feed.getStatus(), { state: 'starting' })
   assert.deepEqual(errors, [])
 
   server = new WebSocketServer({ port, host: '127.0.0.1' })
@@ -319,6 +405,7 @@ test('an initially sleeping peer resumes signed backfill and live delivery using
   assert.match(error.message, /active|boolean/)
   assert.equal(errors[0], error, 'validation failure stays terminal after recovery')
   assert.equal(errors.length, 1)
+  assert.deepEqual(feed.getStatus(), { state: 'failed', error: error.message })
   assert.equal(feed.getCursor(), 1)
   assert.equal((await getRecord(db, { repo: A, collection: POST, rkey: 'live' })).value.text, 'signed live')
   assert.equal(reads, 1)

@@ -23,7 +23,7 @@ const entry = { version: identity.version, resolved: url, integrity: `sha512-${s
 const vulnerability = { advisory: { id: 'RUSTSEC-2026-0384', title: 'Fixture vulnerability' }, package: { name: 'tokio', version: '1.54.0' } };
 const warning = { advisory: { id: 'RUSTSEC-2021-0145', title: 'Fixture maintenance warning' }, package: { name: 'atty', version: '0.2.14' } };
 const baseReport = () => ({ database: { 'last-commit': 'c'.repeat(40), 'last-updated': new Date().toISOString() },
-  lockfile: { 'dependency-count': 2 }, vulnerabilities: { found: false, count: 0, list: [] }, warnings: {} });
+  lockfile: { 'dependency-count': 2 }, settings: { ignore: [], target_arch: [], target_os: [], severity: null }, vulnerabilities: { found: false, count: 0, list: [] }, warnings: {} });
 const policyText = policy => `<!-- security-policy -->\n\`\`\`json\n${JSON.stringify(policy)}\n\`\`\`\n`;
 let checks = 0;
 try {
@@ -110,7 +110,15 @@ process.exit(s.exit);\n`, { mode: 0o700 });
   const fresh = run('fresh fetch may contain an older upstream commit', { valid: true, report: quiet });
   assert.ok(Number.isFinite(Date.parse(fresh.artifacts[0].checkedAt)));
   assert.equal(fresh.artifacts[0].databaseCommitTime, quiet.database['last-updated']);
+  const yanked = baseReport(); yanked.warnings = { yanked: [{ kind: 'yanked', package: { name: 'tokio', version: '1.54.0' }, advisory: null }] };
+  const yank = run('yanked crate without RustSec ID remains an explicit unclassified blocker', { valid: true, report: yanked });
+  assert.equal(yank.artifacts[0].findings[0].id, 'CRATES-IO-YANKED:tokio@1.54.0');
+  assert.equal(yank.artifacts[0].findings[0].severity, 'unknown');
   for (const [label, mutate, exit] of [
+    ['configured advisory ignores cannot hide findings', r => { r.settings.ignore = ['RUSTSEC-2026-0384']; }, 0],
+    ['target filtering cannot narrow full-lock coverage', r => { r.settings.target_os = ['linux']; }, 0],
+    ['severity filtering cannot narrow full-lock coverage', r => { r.settings.severity = 7; }, 0],
+    ['unknown warning category cannot pass coverage', r => { r.warnings = { new_schema: [] }; }, 0],
     ['count/list mismatch', r => { r.vulnerabilities.count = 1; }, 0],
     ['found flag disagreement', r => { r.vulnerabilities.found = true; }, 0],
     ['exit 1 without vulnerabilities', () => {}, 1],

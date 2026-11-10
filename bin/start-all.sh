@@ -12,6 +12,7 @@ mkdir -p "$LOGS"
 
 # shellcheck source=bin/lib-service-pids.sh
 . "$REPO/bin/lib-service-pids.sh"
+check_managed_ports || exit 1
 FAILED=""
 STARTING_NAME=""
 STARTING_PID=""
@@ -63,6 +64,51 @@ service_event_pid() {
     [ -S "${AIT_CODEX_SHARED_SOCKET:-$HOME/.ait/codex-shared.sock}" ] || return 0
   fi
   running_pid "$1"
+}
+
+wait_for_appview() {
+  local pid=$1 adopted=$2 pidfile="$LOGS/ait-appview.pid" owner health
+  STARTING_NAME=appview
+  STARTING_PID="$pid"
+  STARTING_PIDFILE="$pidfile"
+  STARTING_ADOPTED="$adopted"
+  while :; do
+    owner="$(running_pid appview)" || return 1
+    [ -z "$owner" ] || pid="$owner"
+    STARTING_PID="$pid"
+    health="$(appview_health)"
+    if [ "$health" = running ]; then
+      # A health response is not ownership evidence. Recheck the listener.
+      owner="$(running_pid appview)" || return 1
+      if [ -n "$owner" ]; then
+        echo "$owner" > "$pidfile"
+        echo "appview ready (pid $owner; local indexing running)"
+        break
+      fi
+    elif [ "$health" != starting ] && [ "$health" != unreachable ]; then
+      echo "appview $health; inspect $LOGS/ait-appview.err before restarting" >&2
+      FAILED="$FAILED appview"
+      break
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "appview exited before local indexing became ready; see $LOGS/ait-appview.err" >&2
+      rm -f "$pidfile"
+      FAILED="$FAILED appview"
+      break
+    fi
+    if ! curl -fsS --max-time 3 http://localhost:2582/_health >/dev/null 2>&1 ||
+       ! curl -fsS --max-time 3 http://localhost:2583/xrpc/_health >/dev/null 2>&1; then
+      echo "appview cannot become ready: mandatory PLC or PDS is unhealthy; inspect ait status" >&2
+      FAILED="$FAILED appview"
+      break
+    fi
+    echo "waiting for appview local indexing ($health); log: $LOGS/ait-appview.log (errors: $LOGS/ait-appview.err)"
+    sleep 1
+  done
+  STARTING_NAME=""
+  STARTING_PID=""
+  STARTING_PIDFILE=""
+  STARTING_ADOPTED=""
 }
 
 wait_for_codex() {
@@ -151,6 +197,7 @@ start_one() {
       return
     fi
     echo "$name already running (pid $live, adopted existing service)"
+    if [ "$name" = appview ]; then wait_for_appview "$live" 1; fi
     return
   fi
 
@@ -201,6 +248,7 @@ start_one() {
 
   echo "$live" > "$pidfile"
   echo "started $name (pid $live)"
+  if [ "$name" = appview ]; then wait_for_appview "$live" 0; fi
   STARTING_NAME=""
   STARTING_PID=""
   STARTING_PIDFILE=""

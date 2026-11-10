@@ -26,3 +26,26 @@ The current `bin/ait-test.sh` uses temporary service fixtures and command shims.
 Do not use `ait start`, `ait stop`, `ait update`, `ait uninstall`, `bin/start-all.sh`, `bin/stop-all.sh`, or `mcp/scripts/push-reregister-live.mjs` as isolated tests. They can operate on the installed services or data. Use them only when you intend a live operation and have checked the exact target and effect on open sessions.
 
 After local checks, `ait status` is a read-only check of the installed instance. It is not proof that a development build was deployed; verify the installed checkout and running process paths before claiming a change is live.
+
+## Readiness and isolated coverage
+
+Managed services use PLC 2582, PDS 2583, and AppView 2585. `ait start` rejects
+nondefault effective service ports before launching a service. Direct AppView
+fixtures may use ephemeral ports. A bound AppView listener is not readiness:
+both new and adopted services wait for the initial local backfill. `ait status`
+distinguishes starting, degraded indexing, and unreachable HTTP. Terminal local
+indexing failures require repair and restart; a quiet working feed stays healthy.
+Named actor endpoints return `ProjectionUnavailable` while local indexing is
+starting or failed, while explicit DID/URI history remains addressable.
+
+Peer status reports transport and indexing separately. An approved peer with an
+incompatible saved relay setting remains unavailable with a diagnostic; it does
+not block local startup. `Linked` alone does not assert that indexing is running.
+
+`appview/scripts/startup-readiness-test.mjs` runs actual compiled AppView main
+with temporary account/projection stores, signed fixture identities, and loopback
+PDS/PLC listeners. `appview/scripts/peer-lifecycle-test.mjs` uses temporary native
+endpoints and invokes the real peer status renderer. `peer-link-test.mjs` runs
+two signed PDSs and a temporary Postgres, including same-name operator accounts,
+authenticated retire/restore, and a crash after namespace mutation. These tests
+do not use installed env, accounts, Postgres, logs, ports, or Codex sessions.

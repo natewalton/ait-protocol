@@ -482,9 +482,9 @@ try {
   assert.ok((await actionNotifs(pdsAgent, styles)).includes('@luna'))
 
   const { MentionPrompt } = await import('../src/aitty/picker.ts')
-  for (const withAt of [true, false]) {
+  for (const context of ['mention', 'argument']) {
     const picker = new MentionPrompt({
-      styles, findToken: () => ({ start: 0, query: 'luna', withAt, retiredOnly: false }),
+      styles, findToken: () => ({ start: 0, query: 'luna', context, retiredOnly: false }),
       search: async () => actors, onLine: () => {}, onClose: () => {},
     })
     picker.line = '@luna'
@@ -496,7 +496,7 @@ try {
     assert.ok(rows.includes(actors[0].handle) && rows.includes(actors[1].handle), 'duplicate labels show canonical candidates')
     assert.ok(rows.includes(machine), 'ambiguous rows retain canonical identity detail')
     picker.accept()
-    assert.equal(picker.line, (withAt ? `@${actors[1].handle}` : actors[1].handle) + ' ')
+    assert.equal(picker.line, (context === 'mention' ? `@{${actors[1].did}}` : actors[1].did) + ' ')
     assert.equal(actors[1].handle, `luna.${'b'.repeat(52)}.aitproto.com`)
   }
   console.log('PASS: real AtpAgent createAccount/login/resume -> logical PDS dispatch -> local GET/POST; body/auth/query/signal preserved; denied hosts never fetch; redirects blocked; private namespace; mentions/display/picker/actor boundaries; domain discovery; DID reauth')

@@ -62,18 +62,19 @@ export function createPeerClient({ hostname, entryPort, ca, isApproved, db, sour
     return Response.json(formatDidDoc(data))
   } })
   resolver.handle.resolve = async () => undefined
-  const read = async route => {
-    const response = await raw(new URL(route, origin), { redirect: 'error' })
+  const read = async (route, signal) => {
+    const response = await raw(new URL(route, origin), { redirect: 'error', signal })
     assert(response.ok, `peer read failed: ${response.status}`)
     return response
   }
   const feed = createVerifiedFeed({ db, source, isApprovedSource,
     service: origin.replace('https:', 'wss:'), agent: wsAgent, idResolver: resolver,
-    getJson: async route => (await read(route)).json(),
-    getRepo: async did => new Uint8Array(await (await read(`/xrpc/com.atproto.sync.getRepo?did=${encodeURIComponent(did)}`)).arrayBuffer()),
+    getJson: async (route, signal) => (await read(route, signal)).json(),
+    getRepo: async (did, signal) => new Uint8Array(await (await read(`/xrpc/com.atproto.sync.getRepo?did=${encodeURIComponent(did)}`, signal)).arrayBuffer()),
     onError: error => console.error(`peer ${hostname}: ${error.message}`, error.cause) })
   let running
   return { resolver,
+    getStatus: () => feed.getStatus(),
     async getPresence(did) {
       assert.match(did, /^did:plc:[a-z2-7]{24}$/)
       const url = new URL('/xrpc/ait.actor.getProfile', origin)

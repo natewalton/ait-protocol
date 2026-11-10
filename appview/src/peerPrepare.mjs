@@ -3,6 +3,7 @@ import path from 'node:path'
 import assert from 'node:assert/strict'
 import { pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
+import { execFileSync } from 'node:child_process'
 import Database from 'better-sqlite3'
 import { parse } from 'dotenv'
 import { Secp256k1Keypair } from '@atproto/crypto'
@@ -10,11 +11,27 @@ import { Client, validateOperationLog } from '@did-plc/lib'
 import { SecretKey } from '@natewalton/iroh-direct'
 import { base32 } from 'multiformats/bases/base32'
 import { loadState, writePrivate } from './peerState.mjs'
+import { planOperatorPreparation, prepareOperatorIdentity } from './operatorIdentity.mjs'
 
 export function installationPaths(repo) {
   const pdsDirectory = path.join(repo, 'pds'), appviewDirectory = path.join(repo, 'appview')
-  const envFile = path.join(pdsDirectory, '.env'), env = parse(fs.readFileSync(envFile))
-  const appviewEnv = parse(fs.readFileSync(path.join(appviewDirectory, '.env')))
+  const envFile = path.join(pdsDirectory, '.env')
+  // PDS runs from this directory with inherited env plus a sourced, exported
+  // .env. dotenv alone would ignore inherited paths and preserve shell syntax
+  // literally, letting the operator bind a different store from the PDS.
+  // This is the same trusted local shell config already executed by run-pds;
+  // capture its values internally and never put credentials in diagnostics.
+  let env
+  try {
+    env = JSON.parse(execFileSync('/bin/bash', ['-c',
+      'set -euo pipefail; cd "$1"; set -a; source ./.env >/dev/null 2>&1; set +a; exec "$2" -e "$3"',
+      'ait-pds-environment', pdsDirectory, process.execPath,
+      "process.stdout.write(JSON.stringify(Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith('PDS_')))))",
+    ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }))
+  } catch {
+    throw Error('PDS environment could not be loaded with its service wrapper rules; inspect the local env file')
+  }
+  const appviewEnv = { ...parse(fs.readFileSync(path.join(appviewDirectory, '.env'))), ...process.env }
   // Match envToCfg: without DATA_DIRECTORY, the database is in the PDS cwd.
   const data = env.PDS_DATA_DIRECTORY || '.'
   const directory = path.join(path.dirname(path.resolve(appviewDirectory, appviewEnv.APPVIEW_DB_PATH || './data/appview.sqlite')), 'peers')
@@ -27,7 +44,9 @@ function handleDomain(hostname) {
 }
 
 export function needsPreparation(repo) {
-  const { env, directory } = installationPaths(repo), file = path.join(directory, 'machine.json')
+  const { env, directory, accountFile } = installationPaths(repo), file = path.join(directory, 'machine.json')
+  const operator = planOperatorPreparation(accountFile, path.join(repo, 'appview', '.env'))
+  if (operator.changed) return true
   // Never call loadState here: even an existing state causes chmod writes.
   if (!['machine.json', 'ca.pem', 'ca.key', 'tls.pem', 'tls.key'].every(name => fs.existsSync(path.join(directory, name)))) return true
   const state = JSON.parse(fs.readFileSync(file, 'utf8'))
@@ -84,6 +103,10 @@ async function destroyPds(pds) {
 export async function prepareInstallation(repo) {
   const { env, envFile, directory, accountFile } = installationPaths(repo)
   const originalEnv = fs.readFileSync(envFile, 'utf8')
+  // Persist the local operator DID before any account handle can change. A
+  // later crash leaves a durable reference that the next run can still bind.
+  const operator = prepareOperatorIdentity(accountFile, path.join(repo, 'appview', '.env'))
+  console.log(operator.diagnostic)
   const machine = loadState(directory), accounts = readAccounts(accountFile)
   const endpoint = `https://${machine.hostname}`
   const domain = handleDomain(machine.hostname)

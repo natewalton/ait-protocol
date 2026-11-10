@@ -19,6 +19,7 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
   onError = error => console.error(`feed ${source}:`, error) }) {
   let cursor = 0
   let running
+  let status = { state: 'starting' }
   const controller = new AbortController()
   const opened = Promise.withResolvers()
   const subscription = new Subscription({ service, agent, signal: controller.signal,
@@ -61,7 +62,7 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
   async function reconcile(did, meta, doc) {
     doc ??= await boundDocument(did)
     const key = await idResolver.did.resolveAtprotoKey(did)
-    const { creates, commit } = await verifyRepoCar(await getRepo(did), did, key)
+    const { creates, commit } = await verifyRepoCar(await getRepo(did, controller.signal), did, key)
     const base = { ...meta, did, commit: commit.cid, blocks: commit.newBlocks, rev: commit.rev }
     const present = new Set()
     // Verify the whole snapshot before making any projection changes.
@@ -93,7 +94,7 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       controller.signal.throwIfAborted()
       const query = new URLSearchParams({ limit: '1000' })
       if (pageCursor) query.set('cursor', pageCursor)
-      const page = await getJson(`/xrpc/${LIST}?${query}`)
+      const page = await getJson(`/xrpc/${LIST}?${query}`, controller.signal)
       lexicons.assertValidXrpcOutput(LIST, page)
       for (const repo of page.repos) {
         const doc = await boundDocument(repo.did)
@@ -142,15 +143,12 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       // cancellation/terminal errors if no connection ever opens.
       await Promise.race([opened.promise, first])
       await backfill()
+      controller.signal.throwIfAborted()
+      status = { state: 'running' }
       let next = await first
       while (!next.done) {
         await processMessage(next.value)
         next = await iterator.next()
-      }
-    } catch (error) {
-      if (error?.name !== 'AbortError' || !controller.signal.aborted) {
-        onError(error)
-        throw error
       }
     } finally {
       controller.abort()
@@ -160,8 +158,26 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
   }
 
   return {
-    start() { return running ??= consume() },
-    async destroy() { controller.abort(); await running },
+    start() {
+      if (status.state === 'stopped') return running ?? Promise.resolve()
+      return running ??= (async () => {
+        try {
+          await consume()
+          if (status.state !== 'stopped') throw Error('subscription ended unexpectedly')
+        } catch (error) {
+          if (status.state === 'stopped') return
+          status = { state: 'failed', error: error instanceof Error ? error.message : String(error) }
+          onError(error)
+          throw error
+        }
+      })()
+    },
+    async destroy() {
+      if (status.state !== 'failed') status = { state: 'stopped' }
+      controller.abort()
+      await running
+    },
+    getStatus() { return { ...status } },
     getCursor() { return cursor },
   }
 }

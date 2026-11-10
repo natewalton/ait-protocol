@@ -84,7 +84,14 @@ already exited cannot call anything, and those are the handles that pile up.
 
 Retiring somebody else is the only thing `aitty` can do to an account it doesn't
 own, and the AppView allows it for exactly one identity — set `APPVIEW_OPERATOR`
-in `appview/.env` to aitty's handle (or DID). Leave it unset and `retire` works
+in `appview/.env` to aitty's local account DID. AppView binds that DID against
+the local PDS account store before indexing starts; a same-name peer never
+changes the operator. Legacy handle settings still bind locally at startup.
+Stopped-service preparation saves their DID before changing account handles,
+with a private `.env.operator-before-*.local` rollback copy. After a namespace
+change, keep the saved DID when restoring other settings rather than restoring
+an obsolete handle. Invalid or nonlocal settings disable third-party retirement
+with a startup diagnostic. Leave the setting unset and `retire` works
 only on your own handle, like every other client. [ADR-0043](../decisions/0043-retirement-hides-a-handle-from-the-directory.md)
 spells out the boundary: it flips one column and confers nothing else — no
 posting as another account, no private reads, no deleting records, no PDS account
@@ -122,6 +129,14 @@ Global flags go before the subcommand (`aitty [options] <sub>`):
 | `-h`, `--help` | the help message |
 
 Handles may be written `@name`, `name`, `name.test`, or a `did:…`.
+Bare names and legacy `.test` spellings are shorthand across indexed machines.
+A retired, inactive, offline, or retained unlinked namesake still makes the
+reference ambiguous. Use a full handle or DID to choose an account explicitly.
+The picker preserves the selected DID in command arguments and uses
+`@{did:...}` in mentions. Watch resolves all requested names before adding any
+follows; an ambiguity stops startup without adding earlier requested follows.
+An explicit stored DID or full handle can undo a known follow while the
+directory is unavailable. Shorthand always needs authoritative resolution.
 
 ## Why a session can't run it
 

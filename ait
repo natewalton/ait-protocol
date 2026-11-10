@@ -116,9 +116,10 @@ ait start — start and verify the shared AIT services.
 Usage: ait start
 Arguments: none. Options: --help, -h.
 Prerequisites: macOS, the installed checkout, dependencies, builds, and env.
+Managed ports: PLC 2582, PDS 2583, AppView 2585. Nondefault ports fail before launch.
 Changes: starts PLC, PDS, AppView, and Codex only when Codex is installed.
 Example: ait start
-Normal result: prints the health table after successful probes.
+Normal result: waits for local indexing, then prints the health table. Peer failures are reported separately.
 Recovery: inspect `ait status` and /tmp/ait-*.err; stop before repairs.
 Exit behavior: 0 healthy, 1 service failure, 2 invalid arguments.
 EOF

@@ -99,6 +99,38 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
     if (assistanceRelay) await endpoint.insertRelay({ url: assistanceRelay })
     if (directAddress) await endpoint.addExternalAddr(directAddress)
   } catch (error) { await endpoint.close(); throw error }
+  let front, control, acceptTask, closing
+  const closeListener = server => server?.listening
+    ? new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+    : Promise.resolve()
+  function closeSource(source) {
+    return source.closing ??= (async () => {
+      source.controller.abort()
+      try { await source.client?.close() }
+      finally {
+        await closeListener(source.entry)
+        source.client = undefined
+        source.entry = undefined
+      }
+    })()
+  }
+  function close() {
+    return closing ??= (async () => {
+      stopping = true
+      for (const connection of connections) connection.close(0n, [])
+      for (const value of sockets) value.destroy()
+      const results = await Promise.allSettled([...sources.values()].map(closeSource))
+      results.push(...await Promise.allSettled([endpoint.close()]))
+      if (acceptTask) await acceptTask.catch(() => {})
+      // Closing owned connections cancels their bridge/accept work. Those
+      // expected task failures are not failures to release a resource.
+      await Promise.allSettled([...tasks])
+      results.push(...await Promise.allSettled([closeListener(front), closeListener(control)]))
+      const failures = results.filter(result => result.status === 'rejected').map(result => result.reason)
+      if (failures.length) throw new AggregateError(failures, 'private peer cleanup failed')
+    })()
+  }
+  try {
   const hasPayloadPath = connection => !connection.closeReason() &&
     connection.paths().some(p => p.applicationDataAllowed)
   async function waitDirect(connection, signal) {
@@ -155,7 +187,7 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
     const target = new URL(base); target.pathname = url.pathname; target.search = url.search
     return target
   }
-  const front = https.createServer({ key: machine.key, cert: machine.cert }, async (req, res) => {
+  front = https.createServer({ key: machine.key, cert: machine.cert }, async (req, res) => {
     try {
       const url = requestTarget(req), log = /^\/(did:plc:[a-z2-7]{24})\/log$/.exec(url.pathname)
       if (url.pathname === '/xrpc/ait.actor.getProfile') {
@@ -215,13 +247,16 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
     assert.match(did, /^did:plc:[a-z2-7]{24}$/)
     const source = db.prepare('SELECT source FROM actors WHERE did = ?').get(did)?.source
     if (source && source !== 'local') {
-      const peer = sources.get(source); assert(peer, 'source is Unlinked or Unavailable')
+      const peer = sources.get(source); assert(peer?.client, peer?.error ?? 'source is Unlinked or Unavailable')
       return Response.json(await peer.client.resolver.did.resolve(did))
     }
     const local = await localResolver.did.resolve(did)
     if (local) return Response.json(local)
     const answers = await Promise.all([...sources.values()].map(async peer => {
-      try { return await peer.client.resolver.did.resolve(did) } catch (error) {
+      try {
+        assert(peer.client, peer.error ?? 'source is Unavailable')
+        return await peer.client.resolver.did.resolve(did)
+      } catch (error) {
         if (error?.name === 'DidNotFoundError') return undefined
         throw error
       }
@@ -240,10 +275,12 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
   }
 
   async function attach(id) {
-    const peer = machine.state.peers[id]
+    const peer = machine.state.peers[id], source = { controller: new AbortController() }
+    sources.set(id, source)
+    try {
     const address = EndpointTicket.fromString(peer.ticket).endpointAddr()
     assert.equal(address.id().toString(), id); allowAddress(address)
-    const entry = net.createServer({ allowHalfOpen: true, pauseOnConnect: true }, value => track((async () => {
+    const entry = source.entry = net.createServer({ allowHalfOpen: true, pauseOnConnect: true }, value => track((async () => {
       socket(value); let connection
       const disconnected = new AbortController()
       const cancel = () => { disconnected.abort(Error('local peer request closed')); connection?.close(0n, []) }
@@ -257,21 +294,33 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
       } catch (error) { connection?.close(1n, []); value.destroy(); throw error }
       finally { value.off('close', cancel); if (connection) connections.delete(connection); value.destroy() }
     })()))
-    entry.listen(0, '127.0.0.1'); await once(entry, 'listening')
-    const client = createPeerClient({ hostname: peerHostname(address.id()), entryPort: entry.address().port,
+    // A cancellation may remove once()'s error listener before an in-flight
+    // bind reports its error. The awaited once still owns failure reporting.
+    entry.on('error', () => {})
+    entry.listen(0, '127.0.0.1'); await once(entry, 'listening', { signal: source.controller.signal })
+    source.controller.signal.throwIfAborted()
+    assert(machine.state.peers[id] && sources.get(id) === source, 'Unlinked')
+    const client = source.client = createPeerClient({ hostname: peerHostname(address.id()), entryPort: entry.address().port,
       ca: peer.ca, isApproved: () => !!machine.state.peers[id], db, source: id,
       isApprovedSource: previous => previous === 'local' || !!machine.state.peers[previous] })
-    sources.set(id, { client, entry }); client.start()
+    client.start()
+    return true
+    } catch (error) {
+      source.error = error instanceof Error ? error.message : String(error)
+      await closeSource(source)
+      if (!stopping && machine.state.peers[id]) console.error(`Private peer ${id}: Unavailable: ${source.error}`)
+      return false
+    }
   }
   async function forget(id, pairingConnection) {
     assert(machine.state.peers[id], 'unknown machine key')
     delete machine.state.peers[id]; machine.save()
     for (const connection of connections) if (connection !== pairingConnection && connection.remoteId().toString() === id) connection.close(1n, [])
     const source = sources.get(id); sources.delete(id)
-    if (source) { await source.client.close(); await new Promise(resolve => source.entry.close(resolve)) }
+    if (source) await closeSource(source)
     return { state: 'Unlinked', id }
   }
-  const acceptTask = (async () => {
+  acceptTask = (async () => {
     while (!stopping) {
       const incoming = await endpoint.acceptNext(); if (!incoming) return
       track((async () => {
@@ -304,6 +353,7 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
       })())
     }
   })()
+  void acceptTask.catch(error => { if (!stopping) console.error('private peer accept stopped:', error) })
   function validatePeer(peer, expectedId) {
     assert(peer && typeof peer.ca === 'string' && peer.ca.length < 8192 && peer.ca.includes('BEGIN CERTIFICATE'))
     assert(typeof peer.name === 'string' && /^[\x20-\x7e]{1,80}$/.test(peer.name), 'invalid machine name')
@@ -313,6 +363,8 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
   async function command(op, body = {}, signal) {
     if (op === 'status') return { id: machine.id, peers: Object.entries(machine.state.peers).map(([id, peer]) => ({
       id, name: peer.name, state: [...connections].some(c => c.remoteId().toString() === id && hasPayloadPath(c)) ? 'Linked' : 'Unavailable',
+      indexing: sources.get(id)?.client?.getStatus() ?? null,
+      ...(sources.get(id)?.error ? { error: sources.get(id).error } : {}),
     })) }
     if (op === 'invite') {
       const invitation = { version: 1, ticket: ownInfo().ticket, name, secret: randomBytes(32).toString('hex'), expires: Date.now() + 10 * 60 * 1000 }
@@ -342,7 +394,8 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
       const response = await readJson(stream); validatePeer(response.peer, id)
       attempt.signal.throwIfAborted()
       if (machine.state.peers[id]) await forget(id, connection)
-      machine.state.peers[id] = response.peer; machine.save(); await attach(id)
+      machine.state.peers[id] = response.peer; machine.save()
+      if (!await attach(id)) throw Error(sources.get(id)?.error ?? 'peer attachment unavailable')
       connection.close(0n, []); await connection.closed()
       return { state: 'Linked', id, name: response.peer.name }
     })()
@@ -366,7 +419,7 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
       if (connection) { connection.close(0n, []); connections.delete(connection) }
     }
   }
-  const control = http.createServer(async (req, res) => {
+  control = http.createServer(async (req, res) => {
     try {
       assert.equal(req.method, 'POST')
       const chunks = []; let length = 0
@@ -379,13 +432,10 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
   })
   control.listen(controlPath); await once(control, 'listening'); fs.chmodSync(controlPath, 0o600)
   for (const id of Object.keys(machine.state.peers)) await attach(id)
-  return { resolver, getPresence, command, endpoint, id: machine.id, hostname: machine.hostname,
-    async close() {
-      stopping = true
-      for (const connection of connections) connection.close(0n, [])
-      for (const value of sockets) value.destroy()
-      for (const { client, entry } of sources.values()) { await client.close(); await new Promise(resolve => entry.close(resolve)) }
-      await endpoint.close(); await acceptTask; await Promise.allSettled([...tasks])
-      await new Promise(resolve => front.close(resolve)); await new Promise(resolve => control.close(resolve))
-    } }
+  return { resolver, getPresence, command, endpoint, id: machine.id, hostname: machine.hostname, close }
+  } catch (error) {
+    try { await close() }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'private peer startup and cleanup failed') }
+    throw error
+  }
 }

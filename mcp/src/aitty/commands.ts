@@ -7,6 +7,7 @@
 // the shared styles so output matches the live feed.
 
 import type { AtpAgent } from '@atproto/api'
+import { ensureValidDid, ensureValidHandle } from '@atproto/syntax'
 import {
   createPost,
   createReply,
@@ -25,9 +26,9 @@ import {
 } from './agent.js'
 import { saveIdentity, type WatcherIdentity } from './identity.js'
 import { relativeTime, renderPost, type Styles } from './render.js'
-import { displayHandle, normalizeActor, resolveActor } from '../handles.js'
+import { displayHandle, isExplicitActor, normalizeActor, resolveActor } from '../handles.js'
 
-// Strip presentation syntax; bare names are resolved through the directory.
+// Strip presentation syntax; names resolve through the authoritative projection.
 export function stripAt(s: string): string {
   return s.replace(/^@/, '').toLowerCase()
 }
@@ -83,14 +84,16 @@ export async function actionUnfollow(
 ): Promise<string> {
   const reference = normalizeActor(target)
   const stored = Object.entries(id.follows)
-  const exact = stored.filter(([key, entry]) => key === reference || entry.did === reference)
-  const candidates = exact.length ? exact : stored.filter(([key]) => displayHandle(key) === reference)
+  if (reference.startsWith('did:')) ensureValidDid(reference)
+  else if (isExplicitActor(reference)) ensureValidHandle(reference)
+  // Only an explicit stored reference can undo a known record offline. Bare
+  // and legacy names must honor the same global ambiguity as every new action.
+  const candidates = isExplicitActor(reference)
+    ? stored.filter(([key, entry]) => key === reference || entry.did === reference)
+    : []
   if (candidates.length > 1) {
-    throw new Error(`@${reference} is ambiguous; use a full handle or DID:\n` +
-      candidates.map(([key, entry]) => `@${key} (${entry.did})`).join('\n'))
+    throw new Error(`@${reference} matches multiple stored follows; use a DID.`)
   }
-  // Existing follows are sufficient to undo a known record even when its
-  // actor retired or the directory is unavailable; no alias state is stored.
   const actor = candidates.length ? { did: candidates[0][1].did, handle: candidates[0][0] }
     : await resolveActor(agent, target)
   const { did, handle } = actor
@@ -115,7 +118,7 @@ export async function actionRetire(
   target: string,
   retired: boolean,
 ): Promise<string> {
-  const actor = await resolveActor(agent, target, !retired)
+  const actor = await resolveActor(agent, target)
   const key = displayHandle(actor.handle)
   await setActorRetired(agent, actor.did, retired)
   return retired

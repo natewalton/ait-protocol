@@ -31,15 +31,15 @@ const PROMPT_WIDTH = 2 // visible width of PROMPT
 const MAX_ROWS = 6 // dropdown rows shown at once
 
 // The token under the cursor that the picker completes. `start` is the index in
-// the line where replacement begins; `query` is what we search for; `withAt`
-// records whether to prefix the inserted handle with '@'; `retiredOnly` picks
+// the line where replacement begins; `query` is what we search for; `context`
+// selects argument or mention syntax; `retiredOnly` picks
 // which half of the directory to search — the handles retired out of it rather
 // than the listed ones. Returned by the caller-supplied finder so
 // command-specific knowledge stays out of here.
 export interface CompletionToken {
   start: number
   query: string
-  withAt: boolean
+  context: 'argument' | 'mention'
   retiredOnly: boolean
 }
 
@@ -241,9 +241,7 @@ export class MentionPrompt {
     const token = this.findToken(this.line, this.cursor)
     const choice = this.results[this.selected]
     if (!token || !choice) return this.closePickerAndRender()
-    const label = displayHandle(choice.handle)
-    const collision = this.results.filter((actor) => displayHandle(actor.handle) === label).length > 1
-    const insert = (token.withAt ? '@' : '') + (collision ? choice.handle : label) + ' '
+    const insert = (token.context === 'mention' ? `@{${choice.did}}` : choice.did) + ' '
     this.line = this.line.slice(0, token.start) + insert + this.line.slice(this.cursor)
     this.cursor = token.start + insert.length
     this.closePicker()

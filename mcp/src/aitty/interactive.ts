@@ -71,6 +71,26 @@ const HELP = [
   '  and profile stay readable, and unretire puts it back.',
 ].join('\n')
 
+// Identify the actual insertion context, including @-prefixed command arguments.
+// Suggestions are visibility-filtered; accepted choices always retain their DID.
+export function findCompletionToken(line: string, cursor: number): CompletionToken | null {
+  const head = line.slice(0, cursor)
+  const word = (head.match(/\S*$/) ?? [''])[0]
+  const start = cursor - word.length
+  const lead = line.replace(/^\s+/, '')
+  const firstSpace = lead.search(/\s/)
+  if (firstSpace === -1) return null
+  const cmd = lead.slice(0, firstSpace).toLowerCase()
+  const retiredOnly = cmd === 'unretire'
+  if (HANDLE_ARG_CMDS.has(cmd)) {
+    return { start, query: stripAt(word), context: 'argument', retiredOnly }
+  }
+  if (word.startsWith('@') && MENTION_CMDS.has(cmd)) {
+    return { start, query: stripAt(word), context: 'mention', retiredOnly }
+  }
+  return null
+}
+
 export async function runInteractive(
   agent: AtpAgent,
   identity: WatcherIdentity,
@@ -192,35 +212,6 @@ export async function runInteractive(
     return
   }
 
-  // The token the picker completes at the cursor: an `@mention` (in post/reply
-  // text, or a follow/unfollow/profile handle arg written @foo), or the bare
-  // handle arg of follow/unfollow/profile. null when the cursor isn't on one
-  // (e.g. still typing the command). `query` drives ait.actor.searchActors.
-  function findToken(line: string, cursor: number): CompletionToken | null {
-    const head = line.slice(0, cursor)
-    const word = (head.match(/\S*$/) ?? [''])[0] // token ending at the cursor
-    const start = cursor - word.length
-    const lead = line.replace(/^\s+/, '')
-    const firstSpace = lead.search(/\s/)
-    if (firstSpace === -1) return null // still typing the command itself
-    const cmd = lead.slice(0, firstSpace).toLowerCase()
-
-    // `unretire` is the one command whose targets are always handles the
-    // directory hides, so its picker searches the retired half instead of the
-    // listed one.
-    const retiredOnly = cmd === 'unretire'
-    if (word.startsWith('@')) {
-      if (MENTION_CMDS.has(cmd) || HANDLE_ARG_CMDS.has(cmd)) {
-        return { start, query: stripAt(word), withAt: true, retiredOnly }
-      }
-      return null
-    }
-    if (HANDLE_ARG_CMDS.has(cmd)) {
-      return { start, query: word.toLowerCase(), withAt: false, retiredOnly }
-    }
-    return null
-  }
-
   // In-flight commands, so a quit mid-write waits for the post/reply to land
   // rather than process.exit abandoning the network call.
   const inflight = new Set<Promise<void>>()
@@ -242,7 +233,7 @@ export async function runInteractive(
 
   prompt = new MentionPrompt({
     styles,
-    findToken,
+    findToken: findCompletionToken,
     // searchActors is a localhost end-client read; a failure (e.g. mid-restart)
     // becomes an empty result so the picker degrades quietly rather than throws.
     search: (token) =>

@@ -84,11 +84,15 @@ Both share hosted actor repository history, future records and blobs, never
 credentials, administration or remote writes. A stolen invitation can enroll
 its first redeemer; another ait link replaces the outstanding invitation.
 Unlink revokes new access and closes active streams. Received data remains.
-Normal result: Linked (eligible direct connection open now),
+Pairing normally reports approved:true plus a current connection snapshot.
+Concurrent Unlink is reflected as approved:false and Unlinked.
+Normal status: Linked (approved direct DATA connection open now),
 Unavailable (none currently open), or Unlinked.
 Recovery: inspect ait status; rerun ait update if preparation is incomplete.
 No application-payload relay fallback occurs if a direct path is unavailable.
-Exit behavior: 0 success/cancel, 1 unavailable/refused, 2 invalid arguments.
+Exit behavior: 0 approval saved/invitation created/confirmation declined,
+1 failed/refused, 2 invalid arguments, 130 interrupted. Saved approval does not
+guarantee a current DATA connection; inspect ait status.
 EOF
       ;;
     init)

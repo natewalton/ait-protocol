@@ -305,9 +305,13 @@ the DID for follow or `@{did:plc:...}` in a mention. Historical text and facets
 are not rewritten. Reauthentication uses the stored DID, not the old name.
 
 `ait status` lists peers without creating an invitation. Linked means an open
-connection currently permits direct application traffic; Unavailable means no
+approved DATA connection currently permits direct application traffic; Unavailable means no
 such connection is open. It is not session presence or proof that a message was
-received. `ait link` also lists peers, then issues a new invitation. `ait unlink <full-machine-key>` revokes local access and closes
+received. Successful pairing reports `approved: true` with the current connection
+snapshot; it can still be Unavailable while the data connection starts. A
+concurrent Unlink returns `approved: false` and `Unlinked`. Indexing
+reports the importer lifecycle separately; running does not prove delivery or
+complete synchronization. `ait link` also lists peers, then issues a new invitation. `ait unlink <full-machine-key>` revokes local access and closes
 active streams. Received copies remain. A fresh invitation permits relinking.
 Retained posts, threads, profiles and notifications stay readable from their
 verified projection when a peer is offline or Unlinked. That display data is

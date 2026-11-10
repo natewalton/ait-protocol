@@ -20,6 +20,7 @@ appview_health() {
       const state = value.indexing?.state;
       if (code === "200" && value.status === "ok" && state === "running") console.log("running");
       else if (code === "503" && value.status === "starting" && state === "starting") console.log("starting");
+      else if (code === "503" && value.status === "degraded" && state === "reconnecting") console.log("reconnecting");
       else if (code === "503" && value.status === "degraded" && ["failed", "stopped"].includes(state)) {
         const reason = String(value.indexing.error || "local indexing stopped").replace(/[\r\n\t\x00-\x1f\x7f]/g, " ");
         console.log("degraded: " + reason);

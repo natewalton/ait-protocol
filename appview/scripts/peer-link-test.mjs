@@ -190,7 +190,7 @@ async function publicLink(s, invitation = '', options = {}) {
   const [status] = await within(once(child, 'exit'), 'public ait link confirmation', 45000)
   assert.equal(status, options.status ?? 0, output)
   if (options.status) { assert.match(output, options.interrupt ? /Link cancelled/ : /Unavailable: could not establish a direct connection/); return }
-  if (invitation) assert.match(output, /"state":"Linked"/)
+  if (invitation) assert.match(output, /"approved":true/)
   else return /ait-link:[a-zA-Z0-9_-]+/.exec(output)[0]
 }
 

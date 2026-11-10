@@ -214,6 +214,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process
   try {
     if (!repo || !['check', 'prepare'].includes(operation)) throw Error('expected check|prepare and an installation path')
     if (operation === 'check') process.exitCode = needsPreparation(repo) ? 1 : 0
-    else console.log(`Private peers prepared: ${JSON.stringify(await prepareInstallation(repo))}; no machines are linked`)
+    else console.log(`Private peers prepared: ${JSON.stringify(await prepareInstallation(repo))}; runtime link status is reported after AppView starts`)
   } catch (error) { console.error(`Private-peer preparation failed: ${error.message}; rerun ait update`); process.exitCode = 1 }
 }

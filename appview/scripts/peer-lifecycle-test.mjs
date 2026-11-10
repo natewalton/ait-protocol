@@ -9,7 +9,7 @@ import { once } from 'node:events'
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import test from 'node:test'
-import { Endpoint, SecretKey, EndpointAddr, EndpointTicket } from '@natewalton/iroh-direct'
+import { Endpoint, Connection, SecretKey, EndpointAddr, EndpointTicket, RelayMode, presetMinimal } from '@natewalton/iroh-direct'
 import { startPeerNetwork } from '../src/peerNetwork.mjs'
 import { loadState } from '../src/peerState.mjs'
 import { openDb } from '../src/db.ts'
@@ -164,4 +164,105 @@ test('failed control binding closes an already bound native endpoint', { timeout
   t.after(() => { Endpoint.prototype.close = close })
   await assert.rejects(startPeerNetwork({ ...f.options, directory }), /EADDRINUSE|ENAMETOOLONG|EINVAL|listen/)
   assert.deepEqual(closed, [true], 'startup failure closes the acquired native endpoint')
+})
+
+test('pairing CONTROL alone cannot report Linked; DATA and unlink use the same snapshot', { timeout: 15000 }, async t => {
+  const f = fixture(t), machine = loadState(f.directory)
+  const builder = Endpoint.builder(); presetMinimal(builder)
+  builder.directApplicationDataOnly(); builder.bindAddr('127.0.0.1:0')
+  builder.relayMode(RelayMode.disabled())
+  builder.alpns(['ait-link/1', 'ait-atproto/1'].map(value => [...Buffer.from(value)]))
+  const remote = await builder.bind()
+  t.after(() => remote.close())
+  const id = remote.id().toString()
+  // Retain approval but prevent the importer from creating its own DATA dial.
+  machine.state.peers[id] = { name: 'control-only fixture', ca: machine.ca,
+    ticket: EndpointTicket.fromAddr(new EndpointAddr(remote.id(),
+      'https://127.0.0.1:9/', remote.addr().directAddresses())).toString() }
+  machine.save()
+  const network = await startPeerNetwork(f.options)
+  t.after(() => network.close())
+  const control = await remote.connect(network.endpoint.addr(), [...Buffer.from('ait-link/1')])
+  t.after(() => control.close(0n, []))
+  await new Promise(resolve => setTimeout(resolve, 100))
+  assert.equal((await network.command('status')).peers[0].state, 'Unavailable')
+  const data = await remote.connect(network.endpoint.addr(), [...Buffer.from('ait-atproto/1')])
+  t.after(() => data.close(0n, []))
+  for (let i = 0; i < 100 && (await network.command('status')).peers[0].state !== 'Linked'; i++) {
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  const peer = (await network.command('status')).peers[0]
+  assert.equal(peer.state, 'Linked'); assert.equal(peer.indexing, null)
+  assert.equal(peer.error, 'unconfigured assistance relay')
+  data.close(0n, []); await data.closed()
+  for (let i = 0; i < 100 && (await network.command('status')).peers[0].state !== 'Unavailable'; i++) {
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  assert.equal((await network.command('status')).peers[0].state, 'Unavailable')
+  assert.equal((await network.command('unlink', { id })).state, 'Unlinked')
+  assert.deepEqual((await network.command('status')).peers, [])
+  assert.match(await runCli(f.root), /No approved peers/)
+})
+
+test('successful pairing reports approval without inventing a DATA connection', { timeout: 15000 }, async t => {
+  const a = fixture(t), b = fixture(t), original = Endpoint.prototype.connect
+  Endpoint.prototype.connect = function (address, alpn) {
+    if (Buffer.from(alpn).toString() === 'ait-atproto/1') return Promise.reject(Error('fixture DATA dial unavailable'))
+    return original.call(this, address, alpn)
+  }
+  t.after(() => { Endpoint.prototype.connect = original })
+  const first = await startPeerNetwork(a.options)
+  t.after(() => first.close())
+  const second = await startPeerNetwork(b.options)
+  t.after(() => second.close())
+  const { invitation } = await first.command('invite')
+  const result = await second.command('link', { invitation })
+  assert.equal(result.approved, true)
+  assert.equal(result.state, 'Unavailable')
+  assert.equal(result.id, first.id)
+  assert.equal((await second.command('status')).peers[0].state, result.state)
+  // Declining a second request is a no-op, regardless of retained approval.
+  const child = spawn(process.execPath, ['--import', 'tsx',
+    new URL('../src/peerCli.mjs', import.meta.url).pathname, 'link', b.root, invitation], {
+    env: { ...process.env, HOME: b.root }, stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  let output = '', errors = ''
+  child.stdout.on('data', chunk => { output += chunk; if (output.includes('[y/N]')) child.stdin.end('n\n') })
+  child.stderr.on('data', chunk => { errors += chunk })
+  const timeout = setTimeout(() => child.kill('SIGKILL'), 5000)
+  const [code] = await once(child, 'exit'); clearTimeout(timeout)
+  assert.equal(code, 0, errors)
+  assert.match(output, /Link request not submitted; existing approvals unchanged/)
+  assert.equal((await second.command('status')).peers.length, 1)
+})
+
+
+test('unlink while pairing finishes cannot leave a stale approval in its reply', { timeout: 15000 }, async t => {
+  const a = fixture(t), b = fixture(t)
+  const connect = Endpoint.prototype.connect, closed = Connection.prototype.closed
+  const gate = Promise.withResolvers(), closing = Promise.withResolvers()
+  Endpoint.prototype.connect = function (address, alpn) {
+    if (Buffer.from(alpn).toString() === 'ait-atproto/1') return Promise.reject(Error('fixture DATA dial unavailable'))
+    return connect.call(this, address, alpn)
+  }
+  Connection.prototype.closed = async function () {
+    const result = await closed.call(this)
+    closing.resolve()
+    await gate.promise // Hold completion after native close while Unlink runs.
+    return result
+  }
+  t.after(() => { gate.resolve(); Endpoint.prototype.connect = connect; Connection.prototype.closed = closed })
+  const first = await startPeerNetwork(a.options)
+  t.after(() => first.close())
+  const second = await startPeerNetwork(b.options)
+  t.after(() => second.close())
+  const { invitation } = await first.command('invite')
+  const pending = second.command('link', { invitation })
+  await closing.promise
+  await second.command('unlink', { id: first.id })
+  gate.resolve()
+  const result = await pending
+  assert.equal(result.approved, false)
+  assert.equal(result.state, 'Unlinked')
+  assert.deepEqual((await second.command('status')).peers, [])
 })

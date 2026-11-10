@@ -12,7 +12,7 @@
   "overrides": {
     "form-data": "^4.0.6",
     "ws": "^8.21.0",
-    "nodemailer": "^8.0.11",
+    "nodemailer": "10.5.0",
     "glob": "14.0.2",
     "minimatch": "11.0.1",
     "fast-xml-parser": "5.12.0"

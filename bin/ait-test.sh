@@ -52,17 +52,38 @@ assert_mode_600() {
 
 launcher_fixture="$TMP_ROOT/launcher-host"
 mkdir -p "$launcher_fixture/plc/node_modules/@did-plc/server" \
+  "$launcher_fixture/plc/node_modules/express" \
   "$launcher_fixture/pds/node_modules/@atproto/pds" "$launcher_fixture/results"
 cp "$REPO/plc/launcher.js" "$launcher_fixture/plc/launcher.js"
 cp "$REPO/pds/launcher.js" "$launcher_fixture/pds/launcher.js"
 cat > "$launcher_fixture/plc/node_modules/@did-plc/server/index.js" <<'EOF'
 const fs = require('fs')
 const result = process.env.AIT_LISTEN_RESULT
-const app = { listen(port, host) { fs.writeFileSync(result, JSON.stringify({ port, host })); return {} } }
+const app = Object.assign(function upstreamApp() {}, {
+  listen(port, host) { fs.writeFileSync(result, JSON.stringify({ port, host, upstream: true })); return {} },
+})
 module.exports = {
   Database: { mock() { return {} } },
-  PlcServer: { create({ port }) { return { app, start: async () => app.listen(port), destroy: async () => {} } } },
+  PlcServer: { create({ port }) { return { app, async start() { return this.app.listen(port) }, destroy: async () => {} } } },
 }
+EOF
+cat > "$launcher_fixture/plc/node_modules/express/index.js" <<'EOF'
+const fs = require('fs')
+function express() {
+  const middleware = []
+  return Object.assign(function fixtureApp() {}, {
+    use(handler) { middleware.push(handler); return this },
+    listen(port, host) {
+      fs.writeFileSync(process.env.AIT_LISTEN_RESULT, JSON.stringify({
+        port, host, parserLimit: middleware[0]?.fixtureJsonOptions?.limit,
+        upstreamWrapped: typeof middleware[1] === 'function', errorHandlerArity: middleware[2]?.length,
+      }))
+      return {}
+    },
+  })
+}
+express.json = options => Object.assign(function fixtureJson() {}, { fixtureJsonOptions: options })
+module.exports = express
 EOF
 cat > "$launcher_fixture/pds/node_modules/@atproto/pds/index.js" <<'EOF'
 const fs = require('fs')
@@ -79,6 +100,17 @@ EOF
 printf '%s\n' '{"version":"0.4.226"}' > "$launcher_fixture/pds/node_modules/@atproto/pds/package.json"
 AIT_LISTEN_RESULT="$launcher_fixture/results/plc.json" node "$launcher_fixture/plc/launcher.js"
 assert_contains "$(cat "$launcher_fixture/results/plc.json")" '"host":"127.0.0.1"'
+assert_contains "$(cat "$launcher_fixture/results/plc.json")" '"port":2582'
+assert_contains "$(cat "$launcher_fixture/results/plc.json")" '"parserLimit":"100kb"'
+assert_contains "$(cat "$launcher_fixture/results/plc.json")" '"upstreamWrapped":true'
+assert_contains "$(cat "$launcher_fixture/results/plc.json")" '"errorHandlerArity":4'
+node - "$REPO/plc/package.json" <<'NODE'
+const assert = require('node:assert/strict')
+const pkg = require(process.argv[2])
+assert.equal(pkg.scripts.start, 'node launcher.js')
+assert.equal(pkg.scripts.dev, 'node --watch launcher.js')
+assert.ok(pkg.dependencies.express, 'the protected launcher requires a direct Express dependency')
+NODE
 AIT_LISTEN_RESULT="$launcher_fixture/results/pds.json" node "$launcher_fixture/pds/launcher.js"
 assert_contains "$(cat "$launcher_fixture/results/pds.json")" '"host":"127.0.0.1"'
 assert_contains "$(sed -n '/xrpc\.router\.listen(PORT/ p' "$REPO/appview/src/server.ts")" "127.0.0.1"

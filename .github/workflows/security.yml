@@ -1,0 +1,56 @@
+name: AIT security
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ait-security-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  security:
+    name: Security checks
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Determine security relevance
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          git diff --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/security-changed-paths"
+          # Only prose/license changes may skip; new config paths default to checked.
+          if grep -Eq '^(docs/security\.md|specs/security-release-and-continuous-checks\.md)$' "$RUNNER_TEMP/security-changed-paths" ||
+             grep -Ev '^(README\.md|LICENSE|docs/.*\.md|specs/.*\.md)$' "$RUNNER_TEMP/security-changed-paths" > /dev/null; then
+            echo 'relevant=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'relevant=false' >> "$GITHUB_OUTPUT"
+            echo 'Security checks: no relevant changes.'
+          fi
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        if: steps.changes.outputs.relevant == 'true'
+        with:
+          node-version: 24
+      - name: Test candidate security boundaries
+        if: steps.changes.outputs.relevant == 'true'
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          for workspace in plc pds appview mcp; do
+            npm --prefix "$workspace" ci --no-audit
+          done
+          npm --prefix appview run build
+          npm --prefix mcp run build
+          node pds/scripts/mailer-security-test.mjs
+          node bin/check-advisories-test.mjs
+          node bin/security-workflow-test.mjs
+          node bin/check-native-advisories-test.mjs
+          GITHUB_TOKEN="${{ github.token }}" bin/check-advisories.sh --candidate "$GITHUB_WORKSPACE"

@@ -155,7 +155,7 @@ source commit, source-lock digest and exact crate path/version.
       "decision": "mitigated",
       "owner": "@natewalton",
       "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
+      "expiresOn": "2026-12-10",
       "reason": "The CVE is rejected while the GHSA remains active. Actual supported PLC/PDS, peer and MCP ingress fixtures validate decoded byte/work limits, retained memory, malformed-input non-admission and subsequent permitted operations. CBOR/CAR work is checked before materialization; protocol framing violations close only their offending connection. This is mitigation within the documented resource envelope, not a zero-warning claim.",
       "exposures": [
         "local-and-approved-peer"
@@ -190,7 +190,7 @@ source commit, source-lock digest and exact crate path/version.
       "decision": "non-applicable",
       "owner": "@natewalton",
       "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
+      "expiresOn": "2026-12-10",
       "reason": "The actual bundled PLC compiler/constructor is PostgreSQL and the actual PDS constructor is SQLite. Candidate-bound dialect/literal regressions verify those paths; this advisory requires MySQL string-literal escaping. A newly introduced vulnerable dialect invalidates this decision.",
       "exposures": [
         "local-and-approved-peer"
@@ -224,7 +224,7 @@ source commit, source-lock digest and exact crate path/version.
       "decision": "mitigated",
       "owner": "@natewalton",
       "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
+      "expiresOn": "2026-12-10",
       "reason": "The CVE is rejected while the GHSA remains active. Actual supported PLC/PDS, peer and MCP ingress fixtures validate decoded byte/work limits, retained memory, malformed-input non-admission and subsequent permitted operations. CBOR/CAR work is checked before materialization; protocol framing violations close only their offending connection. This is mitigation within the documented resource envelope, not a zero-warning claim.",
       "exposures": [
         "local-and-approved-peer"
@@ -319,7 +319,7 @@ source commit, source-lock digest and exact crate path/version.
       "decision": "non-applicable",
       "owner": "@natewalton",
       "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
+      "expiresOn": "2026-12-10",
       "reason": "The actual bundled PLC compiler/constructor is PostgreSQL and the actual PDS constructor is SQLite. Candidate-bound dialect/literal regressions verify those paths; this advisory requires MySQL string-literal escaping. A newly introduced vulnerable dialect invalidates this decision.",
       "exposures": [
         "local-and-approved-peer"
@@ -788,7 +788,7 @@ source commit, source-lock digest and exact crate path/version.
       "decision": "mitigated",
       "owner": "@natewalton",
       "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
+      "expiresOn": "2026-12-10",
       "reason": "The CVE is rejected while the GHSA remains active. Actual supported PLC/PDS, peer and MCP ingress fixtures validate decoded byte/work limits, retained memory, malformed-input non-admission and subsequent permitted operations. CBOR/CAR work is checked before materialization; protocol framing violations close only their offending connection. This is mitigation within the documented resource envelope, not a zero-warning claim.",
       "exposures": [
         "local-and-approved-peer"
@@ -827,7 +827,7 @@ source commit, source-lock digest and exact crate path/version.
       "decision": "mitigated",
       "owner": "@natewalton",
       "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
+      "expiresOn": "2026-12-10",
       "reason": "The CVE is rejected while the GHSA remains active. Actual supported PLC/PDS, peer and MCP ingress fixtures validate decoded byte/work limits, retained memory, malformed-input non-admission and subsequent permitted operations. CBOR/CAR work is checked before materialization; protocol framing violations close only their offending connection. This is mitigation within the documented resource envelope, not a zero-warning claim.",
       "exposures": [
         "local-and-approved-peer"

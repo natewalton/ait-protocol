@@ -1,5 +1,5 @@
 #!/bin/bash
-# Read-only release gate. README.md owns the reviewed exceptions.
+# Read-only release gate. docs/security.md owns the reviewed exceptions.
 set -euo pipefail
 [ "$#" -eq 0 ] || { echo 'Usage: bin/check-advisories.sh' >&2; exit 2; }
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -10,9 +10,9 @@ const { spawnSync } = require('node:child_process');
 const repo = process.argv[2];
 const workspaces = ['plc', 'pds', 'appview', 'mcp'];
 try {
-  const blocks = [...fs.readFileSync(path.join(repo, 'README.md'), 'utf8')
+  const blocks = [...fs.readFileSync(path.join(repo, 'docs', 'security.md'), 'utf8')
     .matchAll(/<!-- advisory-exceptions -->\s*```json\s*([\s\S]*?)```/g)];
-  if (blocks.length !== 1) throw Error('README must contain exactly one advisory-exceptions JSON block');
+  if (blocks.length !== 1) throw Error('docs/security.md must contain exactly one advisory-exceptions JSON block');
   const exceptions = JSON.parse(blocks[0][1]);
   if (!Array.isArray(exceptions)) throw Error('advisory exceptions must be an array');
   const keys = new Set();
@@ -78,7 +78,7 @@ try {
     }
     console.log(`${workspace}: ${reviewed} reviewed advisory/package instances, ${unreviewed} unreviewed`);
   }
-  if (failed) throw Error('release blocked: review/fix the findings above; exceptions live in README.md');
+  if (failed) throw Error('release blocked: review/fix the findings above; exceptions live in docs/security.md');
   console.log('Advisory gate passed. No dependencies or exceptions were changed.');
 } catch (error) {
   console.error(`Advisory gate failed: ${error.message}`);

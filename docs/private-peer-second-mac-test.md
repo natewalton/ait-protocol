@@ -9,12 +9,12 @@ After either path, continue at **C: Link**.
 Run commands in the macOS Terminal app, outside Claude or Codex. Use the copy
 button on each command block and paste only its contents. The blocks contain no
 `#` shell comments and require no changes to zsh settings. Stop at the first
-error. This is an unreleased development build, based on **AIT v0.1.45**.
+error. These instructions pin **AIT v0.1.46-peer.1**, an Apple Silicon private-peer prerelease. Stable AIT remains a separate release channel.
 
 The branch is [`build/private-peer-integration`](https://github.com/natewalton/ait-protocol/tree/build/private-peer-integration).
-Fetch that branch explicitly: `ait update` installs public releases and does
-**not** update this development build. The branch can be rebased; use the
-fetch-and-detach recipe below rather than `git pull`.
+The recipes below fetch the immutable prerelease tag rather than the moving
+development branch. `ait update` follows stable releases and does **not** select
+this prerelease. Use the tag-pinned fetch-and-detach recipe, not `git pull`.
 
 ## What this test changes
 
@@ -68,7 +68,7 @@ stop-and-rebuild sequence below handles that. Claude-only Macs do not need
 Codex.
 
 First finish/save work and exit AIT harness sessions on this Mac. The block
-below downloads the latest branch before stopping services, refuses uncommitted
+below downloads the pinned prerelease tag before stopping services, refuses uncommitted
 Git changes, and keeps a local Git branch pointing at the old code. It also
 unloads any AIT launchd jobs belonging to this installation so they cannot
 restart services during dependency replacement. It leaves their plist files
@@ -87,7 +87,7 @@ in place. An unrelated launchd configuration is refused.
     echo 'STOP: uncommitted changes. Preserve them and ask the test coordinator.'; exit 1;
   }
   git fetch origin \
-    +refs/heads/build/private-peer-integration:refs/remotes/origin/build/private-peer-integration
+    refs/tags/v0.1.46-peer.1:refs/tags/v0.1.46-peer.1
   AIT_PREVIOUS_BRANCH="backup/before-peer-test-$(date +%Y%m%d-%H%M%S)"
   git branch "$AIT_PREVIOUS_BRANCH" HEAD
   echo "Previous code saved as $AIT_PREVIOUS_BRANCH"
@@ -110,7 +110,7 @@ in place. An unrelated launchd configuration is refused.
     fi
   done
   ./ait stop
-  git checkout --detach origin/build/private-peer-integration
+  git checkout --detach v0.1.46-peer.1
   /bin/bash bin/install.sh
   ./ait version
   ./ait status
@@ -120,7 +120,7 @@ in place. An unrelated launchd configuration is refused.
 The installer performs all four `npm ci` installs, builds AppView/MCP, checks
 and prepares the existing installation, then starts services. Do not skip this
 by copying `dist` or running only `npm run build`: the native dependency and
-v0.1.45 service scripts and resume fixes must move together. Do not delete an old installation
+prerelease service scripts and resume fixes must move together. Do not delete an old installation
 or regenerate its keys. Existing linked peers may show Unavailable until both
 Macs finish upgrading; use a **fresh invitation** for this test.
 
@@ -200,10 +200,10 @@ other Mac.
     echo 'STOP: an installation exists. Use route A; do not delete it.'; exit 1
   fi
   mkdir -p "$(dirname "$AIT_TEST_DIR")"
-  git clone --branch build/private-peer-integration \
+  git clone --branch v0.1.46-peer.1 \
     https://github.com/natewalton/ait-protocol.git "$AIT_TEST_DIR"
   cd "$AIT_TEST_DIR"
-  git checkout --detach origin/build/private-peer-integration
+  git checkout --detach v0.1.46-peer.1
   /bin/bash bin/install.sh
 )
 ```
@@ -216,8 +216,9 @@ ait version
 ait status
 ```
 
-Both operators should compare their full commit IDs and confirm they match.
-`ait version` should show **0.1.45** and **development**. PLC, PDS and AppView
+Both operators should compare their full commit IDs and confirm they match the
+commit behind tag `v0.1.46-peer.1`. `ait version` should show **0.1.46-peer.1**
+without a **development** marker. PLC, PDS and AppView
 must be running; Codex app-server must also be running if Codex is installed.
 The `Private peers:` section must respond, even if no peers are listed. A healthy
 local AppView alone is not enough: a missing strict native policy keeps local

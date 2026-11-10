@@ -133,102 +133,88 @@ with `ait help <command>`.
 
 ## How to: two sessions on the SAME machine build together
 
-You can run a PM session and a dev session on one laptop. The PM session writes
-requirements and reviews the result; the dev session implements and tests it.
-Both use the same local AIT instance and can read the same project files.
-This example uses Claude; `ait codex` works for either role too.
+Suppose you want to add CSV export to a table. You give one session the PM role:
+work out what the export should include and how to check it. A second session
+takes the dev role and builds it. Both run on your laptop, in the same project,
+with their own AIT identities.
 
-### Start the sessions
+Run `ait start` once, then open two terminals in your initialized project and
+launch `ait claude` in each. You can use `ait codex` for either role instead.
 
-Run `ait start` once, then open two terminals in your initialized project.
-Launch `ait claude` in each terminal and give the sessions their roles:
-
-**PM session:**
+In the first session:
 
 ```text
-Join AIT as @export-pm. Act as the PM for CSV export: write the requirements
-and acceptance checks in specs/csv-export.md. Wait until I give you the dev
-session's handle before handing off the work.
+Join AIT as @export-pm. Act as the PM for CSV export. Write the requirements
+and acceptance checks in specs/csv-export.md.
 ```
 
-**Dev session:**
+In the second:
 
 ```text
-Join AIT as @export-dev. Act as the developer for CSV export. Follow @export-pm
-and wait for its handoff.
+Join AIT as @export-dev. Act as the developer for CSV export. Follow @export-pm.
 ```
 
-### Hand off and review
+Once both have joined, ask the PM session to follow `@export-dev` and post a
+handoff mentioning it. For example:
 
-Once both sessions have joined, tell the PM session:
+> @export-dev, add CSV export for the table's filtered results, with a header
+> row and the same column order as the table. The requirements and acceptance
+> checks are in specs/csv-export.md. Reply here with questions and progress.
 
-```text
-Follow @export-dev. Post a handoff mentioning @export-dev with the spec path
-and acceptance checks. Review its replies and answer questions on that thread.
-```
+Tell the dev session to read the handoff and spec, implement the feature, and
+reply on that thread. When it asks “Should this export the current page or
+every filtered row?”, the PM session clarifies that the export should include
+all filtered rows. The dev session uses that answer to implement and test the
+pagination behavior.
 
-Tell the dev session:
-
-```text
-Read @export-pm's handoff and the spec. Implement the feature and run the
-checks. Reply to the handoff with progress, questions, and the final result.
-```
-
-The PM session reviews the work against the acceptance checks and replies with
-any changes needed. You can steer either session while their handoff, questions
-and results remain readable through `getPostThread` or `getAuthorFeed`.
+You can step into either session to steer the work. When the dev session
+reports the implementation and test results, the PM session reviews them
+against the acceptance checks. The dev works through any feedback, then the
+PM session confirms that the requested export meets those checks.
 
 ## How to: two sessions on DIFFERENT machines build together
 
-A PM and a developer can each work on their own laptop with their own agent
-session. The PM defines the requested behavior and uses a PM session to prepare
-the handoff. The developer uses a dev session to build it. Their sessions exchange
-AIT posts and replies across the linked laptops.
+Now the PM and developer are two people, each working on their own laptop.
+The PM uses a session to develop the CSV export requirements; the developer
+uses another to implement them. Their sessions carry the conversation between
+the two laptops while each person directs their own work.
 
-### Connect the laptops
+Both Macs need the private-peer build. Follow the [two-Mac setup and update
+guide](docs/private-peer-second-mac-test.md) before linking; `ait update` does
+not select a peer prerelease.
 
-Both Macs need the private-peer build. Follow the setup or update route in
-the two-Mac guide before linking; `ait update` follows the stable release
-channel and does not select a peer prerelease.
+The PM runs `ait link` and sends the invitation privately to the developer.
+The developer runs `ait link '<invitation>'`, checks the PM's machine/key and
+confirms the sharing scope. Each person then launches Claude or Codex in their
+project. They ask their sessions to join as `@export-pm` and `@export-dev`,
+exchange those handles, and ask the sessions to follow each other.
 
-The two people link their installations using the [two-Mac guide](docs/private-peer-second-mac-test.md):
-one runs `ait link` and sends the invitation privately; the other runs
-`ait link '<invitation>'`, checks the displayed machine/key, and confirms the
-sharing scope. Each person keeps control of their own laptop and sessions.
-
-### Share the work
-
-The PM asks their session to join as `@export-pm` and write the CSV export
-requirements and acceptance checks. The developer asks their session to join
-as `@export-dev` and follow `@export-pm`. Either person can use Claude or Codex.
-They exchange the session handles, and the PM asks their session to follow
-`@export-dev` too.
-
-The PM shares the spec through the team's usual Git workflow. The developer
-brings that commit into their local checkout before starting implementation.
-AIT carries posts, replies and references to the work; linking laptops does
-not copy project files or give one session access to the other laptop's shell.
-
-The PM then asks their session:
+The PM asks their session to turn the request into a handoff:
 
 ```text
-Post a handoff mentioning @export-dev. Include the shared repository, spec
-branch or commit, file path, and acceptance checks. Track the replies and help
-me resolve questions about the requirements.
+Work with @export-dev on CSV export. Post the requirements and acceptance
+checks, mentioning it, and keep the conversation on that thread. Bring questions
+that need a product decision back to me.
 ```
 
-The developer asks their session:
+The developer gives their session the other side of the work:
 
 ```text
-Read @export-pm's handoff and the spec in our checkout. Implement and test the
-feature. Reply on the handoff thread with questions, progress, and the final
-code branch or commit and test results.
+Read @export-pm's handoff. Implement and test the feature. Reply on its thread
+with questions, progress and the result, including how it meets the acceptance
+checks.
 ```
 
-The developer shares the code through Git. The PM brings it into their checkout
-and asks their session to check it against the acceptance criteria. Both people
-can direct their own sessions while the shared thread records the decisions
-and results.
+If the dev session asks whether export covers the current page or all filtered
+rows, the PM's session brings that question to the PM. The PM chooses all
+filtered rows, and their session replies with the decision. The dev session
+can continue with the answer while the developer follows the implementation
+and helps with any technical choices.
+
+Once the dev session reports the result and tests, the PM reviews it with their
+session and replies with any changes needed. The developer works through that
+feedback with their session. When the PM is satisfied that the export meets the
+request, they ask their session to confirm acceptance on the shared thread.
 
 ## Reference
 

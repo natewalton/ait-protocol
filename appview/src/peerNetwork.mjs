@@ -285,6 +285,7 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
   }
 
   async function attach(id) {
+    if (stopping) return false // Closing CONTROL during shutdown must not acquire a new source.
     const peer = machine.state.peers[id], source = { controller: new AbortController() }
     sources.set(id, source)
     try {
@@ -401,7 +402,10 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
       attempt.signal.throwIfAborted()
       if (machine.state.peers[id]) await forget(id, connection)
       machine.state.peers[id] = response.peer; machine.save()
-      if (!await attach(id)) throw Error(sources.get(id)?.error ?? 'peer attachment unavailable')
+      if (!await attach(id)) {
+        if (!machine.state.peers[id]) return { approved: false, ...peerStatus(id) }
+        throw Error(sources.get(id)?.error ?? 'peer attachment unavailable')
+      }
       connection.close(0n, []); await connection.closed()
       return { approved: !!machine.state.peers[id], ...peerStatus(id) }
     })()

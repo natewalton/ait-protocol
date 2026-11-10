@@ -20,12 +20,12 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
   let cursor = 0
   let running
   let status = { state: 'starting' }
-  let activeSocket, initialBackfillComplete = false
-  const updateConnectionStatus = () => {
+  // Consumer lifecycle and its current WebSocket connection are independent.
+  // An open stream does not establish that its cursor has caught up.
+  let activeSocket, connection = 'connecting'
+  const updateConnection = state => {
     if (status.state === 'failed' || status.state === 'stopped') return
-    status = { state: activeSocket?.readyState === 1
-      ? initialBackfillComplete ? 'running' : 'starting'
-      : 'reconnecting' }
+    connection = state
   }
   const controller = new AbortController()
   const opened = Promise.withResolvers()
@@ -35,9 +35,12 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
     // upstream reconnect an asleep peer before issuing any snapshot reads.
     finishRequest(request, websocket) {
       activeSocket = websocket
-      websocket.once('open', () => { updateConnectionStatus(); opened.resolve() })
+      websocket.once('open', () => {
+        if (activeSocket !== websocket) return
+        updateConnection('connected'); opened.resolve()
+      })
       websocket.once('close', () => {
-        if (activeSocket === websocket) updateConnectionStatus()
+        if (activeSocket === websocket && connection === 'connected') updateConnection('reconnecting')
       })
       request.end()
     },
@@ -155,8 +158,7 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       await Promise.race([opened.promise, first])
       await backfill()
       controller.signal.throwIfAborted()
-      initialBackfillComplete = true
-      updateConnectionStatus()
+      status = { state: 'running' }
       let next = await first
       while (!next.done) {
         await processMessage(next.value)
@@ -189,7 +191,10 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       controller.abort()
       await running
     },
-    getStatus() { return { ...status } },
+    getStatus() {
+      return status.state === 'failed' || status.state === 'stopped'
+        ? { ...status } : { ...status, connection }
+    },
     getCursor() { return cursor },
   }
 }

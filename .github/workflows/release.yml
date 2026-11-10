@@ -9,7 +9,7 @@ on:
         type: choice
         options: [prepare, publish]
       version:
-        description: Stable SemVer without the v prefix
+        description: SemVer without v; the peer branch uses a -peer.N prerelease
         required: true
         type: string
 permissions:
@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   validate:
-    if: github.ref == 'refs/heads/main' && inputs.operation == 'prepare'
+    if: inputs.operation == 'prepare' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/build/private-peer-integration')
     runs-on: macos-latest
     permissions:
       contents: read
@@ -43,10 +43,15 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          printf '%s' "$RELEASE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            printf '%s' "$RELEASE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+          else
+            printf '%s' "$RELEASE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-peer\.[1-9][0-9]*$'
+            test "$(uname -m)" = arm64
+          fi
           test "$(cat VERSION)" = "$RELEASE_VERSION"
-          git fetch --quiet origin main
-          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          git fetch --quiet origin "$GITHUB_REF_NAME"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/remotes/origin/$GITHUB_REF_NAME")"
           for f in install.sh ait bin/install.sh bin/update.sh bin/uninstall.sh \
             bin/lib-mcp-holders.sh bin/lib-service-pids.sh \
             bin/ait-update-test.sh bin/ait-uninstall-test.sh; do
@@ -65,6 +70,20 @@ jobs:
           npm --prefix mcp run build
           node mcp/scripts/codex-writer-ownership-test.mjs
           node mcp/scripts/session-picker-test.mjs
+          if [ "$GITHUB_REF" = refs/heads/build/private-peer-integration ]; then
+            (cd appview && node scripts/operator-identity-test.mjs)
+            (cd appview && node scripts/startup-readiness-test.mjs)
+            (cd appview && node --import tsx scripts/peer-projection-test.mjs)
+            (cd appview && node --import tsx scripts/peer-feed-test.mjs)
+            (cd appview && node --import tsx scripts/peer-lifecycle-test.mjs)
+            (cd mcp && node scripts/handles-test.mjs)
+            (cd mcp && node --import tsx scripts/peer-mentions-test.mjs)
+            brew list --versions postgresql@17 >/dev/null || brew install postgresql@17
+            node appview/scripts/peer-link-test.mjs
+            npm install --prefix "$RUNNER_TEMP/iroh-stock" --no-audit --no-fund @number0/iroh@1.2.0
+            IROH_STOCK_BINDING="$RUNNER_TEMP/iroh-stock/node_modules/@number0/iroh/index.js" node appview/scripts/peer-link-test.mjs --policy-controls
+            node appview/scripts/peer-link-test.mjs --connect-bound
+          fi
           bin/run-codex-appserver-test.sh
           node mcp/scripts/codex-sink-test.mjs
           node mcp/scripts/codex-recovery-test.mjs

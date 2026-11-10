@@ -33,6 +33,7 @@ async function main() {
   const { directory } = installationPaths(repo), control = path.join(directory, 'control.sock')
   if (operation === 'status') {
     const status = await localCommand(control, 'status', {}, AbortSignal.timeout(3000))
+    if (!status.peers.length) console.log('  No approved peers.')
     for (const peer of status.peers) console.log(`  ${formatPeerStatus(peer)}`)
     return
   }
@@ -50,7 +51,7 @@ async function main() {
     let answer
     try { answer = await prompt.question('Link this computer? [y/N] ') }
     finally { prompt.close() }
-    if (!/^y(es)?$/i.test(answer.trim())) { console.log('Not linked'); return }
+    if (!/^y(es)?$/i.test(answer.trim())) { console.log('Link request not submitted; existing approvals unchanged.'); return }
     console.log('Connecting directly…')
     const cancelled = new AbortController()
     const interrupt = () => cancelled.abort()
@@ -66,5 +67,5 @@ async function main() {
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
-  main().catch(error => { console.error(process.argv[2] === 'status' ? `Private peer status unavailable: ${error.message}` : error.name === 'AbortError' ? 'Link cancelled; no relay fallback.' : `Link failed: ${error.message}. Check ait status; application traffic will not use a relay.`); process.exitCode = error.name === 'AbortError' ? 130 : 1 })
+  main().catch(error => { console.error(process.argv[2] === 'status' ? `Private peer status unavailable: ${error.message}` : error.name === 'AbortError' ? 'Link cancelled; no relay fallback. Check ait status for saved approvals and current connection status.' : `Link failed: ${error.message}. Check ait status; application traffic will not use a relay.`); process.exitCode = error.name === 'AbortError' ? 130 : 1 })
 }

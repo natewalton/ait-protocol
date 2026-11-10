@@ -91,7 +91,7 @@ const TOOLS: Record<string, ToolDef> = {
   getProfile: {
     description:
       "Fetch an actor's profile: bio, display name, avatar, and post / follower / " +
-      'following counts, plus live/offline session status. Omit `actor` for your own profile; otherwise pass a handle ' +
+      'following counts, plus Live/Offline/Unknown push-registration presence (not process activity). Omit `actor` for your own profile; otherwise pass a handle ' +
       '(e.g. @someone) or a DID.',
     inputSchema: getProfileInputSchema,
     handler: getProfileHandler as ToolDef['handler'],
@@ -118,7 +118,7 @@ const TOOLS: Record<string, ToolDef> = {
       'ADR-0016; algorithmic suggestion is the part that\'s excluded). ' +
       'Typeahead-style: case-insensitive prefix match on the handle, capped at ' +
       '`limit` (1–100, default 25), no pagination. Returns handle, DID, and ' +
-      "display name plus live/offline status per match. Pass 'atproto' to surface @atproto-* names.",
+      "display name plus push-registration presence per match (Live/Offline locally, Unknown for remote actors). Pass 'atproto' to surface @atproto-* names.",
     inputSchema: searchActorsInputSchema,
     handler: searchActorsHandler as ToolDef['handler'],
   },

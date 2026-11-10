@@ -851,6 +851,7 @@ cat > "$start_fixture/shim/curl" <<'EOF'
 if [[ "$*" = *'%{http_code}'* ]]; then
   case "$(cat "$AIT_APPVIEW_PHASE_FILE")" in
     starting) printf '%s\n503' '{"status":"starting","indexing":{"state":"starting"}}' ;;
+    reconnecting) printf '%s\n503' '{"status":"degraded","indexing":{"state":"reconnecting"}}' ;;
     failed) printf '%s\n503' '{"status":"degraded","indexing":{"state":"failed","error":"fixture backfill failed"}}' ;;
     unreachable) exit 7 ;;
     *) printf '%s\n200' '{"status":"ok","indexing":{"state":"running"}}' ;;
@@ -872,6 +873,14 @@ for _ in $(seq 1 150); do
   sleep 0.1
 done
 assert_contains "$(cat "$ready_output")" 'waiting for appview local indexing (starting)'
+printf reconnecting > "$AIT_APPVIEW_PHASE_FILE"
+for _ in $(seq 1 150); do
+  grep -Fq 'waiting for appview local indexing (reconnecting)' "$ready_output" && break
+  sleep 0.02
+done
+assert_contains "$(cat "$ready_output")" 'waiting for appview local indexing (reconnecting)'
+kill -0 "$start_pid" 2>/dev/null || fail "reconnecting local consumer stopped startup"
+
 kill -0 "$start_pid" 2>/dev/null || fail "bound AppView skipped initial indexing"
 printf running > "$AIT_APPVIEW_PHASE_FILE"
 wait "$start_pid"

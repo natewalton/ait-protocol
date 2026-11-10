@@ -156,16 +156,26 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
   }
   const track = task => { tasks.add(task); task.then(() => tasks.delete(task), error => { tasks.delete(task); if (!stopping) console.error('private peer:', error.message) }); return task }
   const socket = value => { sockets.add(value); value.on('error', () => {}); value.once('close', () => sockets.delete(value)); return value }
+  // Approval, DATA connectivity and indexing are independent observations.
+  const peerStatus = id => ({
+    id, name: machine.state.peers[id]?.name,
+    state: !machine.state.peers[id] ? 'Unlinked' : [...connections].some(c =>
+      c.remoteId().toString() === id && Buffer.from(c.alpn()).equals(Buffer.from(DATA)) && hasPayloadPath(c))
+      ? 'Linked' : 'Unavailable',
+    indexing: sources.get(id)?.client?.getStatus() ?? null,
+    ...(sources.get(id)?.error ? { error: sources.get(id).error } : {}),
+  })
   const rememberConnection = connection => {
     connections.add(connection)
     const changed = () => {
       const id = connection.remoteId().toString()
       const source = sources.get(id)
       if (!machine.state.peers[id] || !source) return
-      const state = [...connections].some(c => c.remoteId().toString() === id && hasPayloadPath(c)) ? 'Linked' : 'Unavailable'
-      if (source.lastState !== state) console.log(`Private peer ${id}: ${state}${state === 'Unavailable' ? ': direct connection lost; no relay fallback.' : ': direct application path available.'}`)
+      const { state } = peerStatus(id)
+      if (source.lastState !== state) console.log(`Private peer ${id}: ${state}${state === 'Unavailable' ? ': no direct application connection; no relay fallback.' : ': direct application path available.'}`)
       source.lastState = state
     }
+    changed()
     const watcher = connection.watchPaths((error) => { if (!error) changed() })
     track(connection.closed().then(async () => { changed(); await watcher.stop() }))
   }
@@ -269,7 +279,7 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
   async function getPresence(did) {
     const source = db.prepare('SELECT source FROM actors WHERE did = ?').get(did)?.source
     const client = source && machine.state.peers[source] && sources.get(source)?.client
-    if (!client || ![...connections].some(c => c.remoteId().toString() === source && hasPayloadPath(c))) return undefined
+    if (!client || peerStatus(source).state !== 'Linked') return undefined
     try { return await client.getPresence(did) }
     catch { return undefined } // Unavailable, old or revoked peers are not Offline.
   }
@@ -308,7 +318,7 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
     } catch (error) {
       source.error = error instanceof Error ? error.message : String(error)
       await closeSource(source)
-      if (!stopping && machine.state.peers[id]) console.error(`Private peer ${id}: Unavailable: ${source.error}`)
+      if (!stopping && machine.state.peers[id]) console.error(`Private peer ${id}: indexing attachment failed: ${source.error}`)
       return false
     }
   }
@@ -361,11 +371,7 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
     assert.equal(address.id().toString(), expectedId); allowAddress(address)
   }
   async function command(op, body = {}, signal) {
-    if (op === 'status') return { id: machine.id, peers: Object.entries(machine.state.peers).map(([id, peer]) => ({
-      id, name: peer.name, state: [...connections].some(c => c.remoteId().toString() === id && hasPayloadPath(c)) ? 'Linked' : 'Unavailable',
-      indexing: sources.get(id)?.client?.getStatus() ?? null,
-      ...(sources.get(id)?.error ? { error: sources.get(id).error } : {}),
-    })) }
+    if (op === 'status') return { id: machine.id, peers: Object.keys(machine.state.peers).map(peerStatus) }
     if (op === 'invite') {
       const invitation = { version: 1, ticket: ownInfo().ticket, name, secret: randomBytes(32).toString('hex'), expires: Date.now() + 10 * 60 * 1000 }
       machine.state.invitation = invitation; machine.save()
@@ -397,7 +403,7 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
       machine.state.peers[id] = response.peer; machine.save()
       if (!await attach(id)) throw Error(sources.get(id)?.error ?? 'peer attachment unavailable')
       connection.close(0n, []); await connection.closed()
-      return { state: 'Linked', id, name: response.peer.name }
+      return { approved: !!machine.state.peers[id], ...peerStatus(id) }
     })()
     let abort
     try {
@@ -408,7 +414,7 @@ export async function startPeerNetwork({ directory, db, pdsUrl, plcUrl, localRes
       })])
     } catch (error) {
       if (machine.state.peers[id]) {
-        const state = [...connections].some(c => c.remoteId().toString() === id && hasPayloadPath(c)) ? 'Linked' : 'Unavailable'
+        const { state } = peerStatus(id)
         throw Error(`${error.message} Approval retained; current status: ${state}.`)
       }
       throw error

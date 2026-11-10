@@ -89,7 +89,7 @@ async function fixture(t, { repos = [], pages, messages, getRepo, getJson, sourc
     await new Promise(resolve => server.close(resolve))
     db.close()
   })
-  return { db, feed, errors, requests, resolutions }
+  return { db, feed, errors, requests, resolutions, server }
 }
 
 const failed = async feed => {
@@ -280,6 +280,46 @@ test('readiness waits for backfill and stays running when the ready stream is qu
   assert.deepEqual(f.errors, [])
 })
 
+test('a disconnected quiet feed reports reconnecting and resumes running on reopen', { timeout: 5000 }, async t => {
+  let reads = 0
+  const f = await fixture(t, { messages: [], getJson: async () => { reads++; return { repos: [] } } })
+  const running = f.feed.start()
+  await waitFor(() => f.feed.getStatus().state === 'running')
+  for (const socket of f.server.clients) socket.terminate()
+  await waitFor(() => f.feed.getStatus().state === 'reconnecting')
+  await waitFor(() => f.requests.length === 2 && f.feed.getStatus().state === 'running')
+  assert.equal(reads, 1, 'reopening the official stream retains completed backfill')
+  assert.equal(f.feed.getCursor(), 0)
+  await f.feed.destroy()
+  await running
+  assert.deepEqual(f.feed.getStatus(), { state: 'stopped' })
+  assert.deepEqual(f.errors, [])
+})
+
+test('backfill completing while disconnected cannot report running before reopen', { timeout: 5000 }, async t => {
+  const entered = Promise.withResolvers(), release = Promise.withResolvers(), completed = Promise.withResolvers()
+  const f = await fixture(t, { messages: [], getJson: async () => {
+    entered.resolve()
+    await release.promise
+    completed.resolve()
+    return { repos: [] }
+  } })
+  const running = f.feed.start()
+  await entered.promise
+  assert.deepEqual(f.feed.getStatus(), { state: 'starting' })
+  for (const socket of f.server.clients) socket.terminate()
+  await waitFor(() => f.feed.getStatus().state === 'reconnecting')
+  release.resolve()
+  await completed.promise
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(f.feed.getStatus(), { state: 'reconnecting' })
+  await waitFor(() => f.requests.length === 2 && f.feed.getStatus().state === 'running')
+  await f.feed.destroy()
+  await running
+  assert.deepEqual(f.feed.getStatus(), { state: 'stopped' })
+  assert.deepEqual(f.errors, [])
+})
+
 test('terminal backfill error remains visible and start cannot restart a dead consumer', { timeout: 5000 }, async t => {
   const cause = Error('fixture listRepos unavailable')
   let reads = 0
@@ -384,7 +424,8 @@ test('an initially sleeping peer resumes signed backfill and live delivery using
   assert.equal((await refused.promise).code, 'ECONNREFUSED')
   assert.equal(reads, 0, 'sleeping peer must not trigger a failing eager HTTP backfill')
   assert.equal(feed.getCursor(), 0)
-  assert.deepEqual(feed.getStatus(), { state: 'starting' })
+  await waitFor(() => feed.getStatus().state === 'reconnecting')
+  assert.deepEqual(feed.getStatus(), { state: 'reconnecting' })
   assert.deepEqual(errors, [])
 
   server = new WebSocketServer({ port, host: '127.0.0.1' })

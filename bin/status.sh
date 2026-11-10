@@ -87,6 +87,6 @@ else
 fi
 if [ -f "$REPO/appview/dist/peerCli.mjs" ] && [ -f "$REPO/pds/.env" ]; then
   echo "Private peers:"
-  node "$REPO/appview/dist/peerCli.mjs" status "$REPO" || echo "  unavailable (peer service not responding)"
+  node "$REPO/appview/dist/peerCli.mjs" status "$REPO" || echo "  private peer status unavailable (see error above)"
 fi
 exit "$core_status"

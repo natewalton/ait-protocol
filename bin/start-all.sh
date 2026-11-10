@@ -85,7 +85,7 @@ wait_for_appview() {
         echo "appview ready (pid $owner; local indexing running)"
         break
       fi
-    elif [ "$health" != starting ] && [ "$health" != unreachable ]; then
+    elif [ "$health" != starting ] && [ "$health" != reconnecting ] && [ "$health" != unreachable ]; then
       echo "appview $health; inspect $LOGS/ait-appview.err before restarting" >&2
       FAILED="$FAILED appview"
       break

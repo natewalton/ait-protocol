@@ -20,6 +20,13 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
   let cursor = 0
   let running
   let status = { state: 'starting' }
+  let activeSocket, initialBackfillComplete = false
+  const updateConnectionStatus = () => {
+    if (status.state === 'failed' || status.state === 'stopped') return
+    status = { state: activeSocket?.readyState === 1
+      ? initialBackfillComplete ? 'running' : 'starting'
+      : 'reconnecting' }
+  }
   const controller = new AbortController()
   const opened = Promise.withResolvers()
   const subscription = new Subscription({ service, agent, signal: controller.signal,
@@ -27,7 +34,11 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
     // Public ws option, forwarded by Subscription/WebSocketKeepAlive. Let the
     // upstream reconnect an asleep peer before issuing any snapshot reads.
     finishRequest(request, websocket) {
-      websocket.once('open', opened.resolve)
+      activeSocket = websocket
+      websocket.once('open', () => { updateConnectionStatus(); opened.resolve() })
+      websocket.once('close', () => {
+        if (activeSocket === websocket) updateConnectionStatus()
+      })
       request.end()
     },
     validate: value => lexicons.assertValidXrpcMessage(METHOD, value) })
@@ -144,7 +155,8 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       await Promise.race([opened.promise, first])
       await backfill()
       controller.signal.throwIfAborted()
-      status = { state: 'running' }
+      initialBackfillComplete = true
+      updateConnectionStatus()
       let next = await first
       while (!next.done) {
         await processMessage(next.value)

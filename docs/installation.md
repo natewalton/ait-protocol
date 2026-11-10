@@ -2,12 +2,13 @@
 
 The [README quick start](../README.md#install-and-launch) uses the published
 stable release installer. For cross-machine collaboration, follow the
-[two-Mac setup and update guide](https://github.com/natewalton/ait-protocol/blob/v0.1.46-peer.2/docs/private-peer-second-mac-test.md) for the private-peer prerelease.
+[two-Mac setup and update guide](private-peer-second-mac-test.md) for the private-peer prerelease.
 `ait update` selects stable releases and does not select a prerelease.
 
 ## Install from a source checkout
 
-To inspect a fresh stable installation before running it:
+For a fresh installation where you want to inspect the source first, clone the
+latest published release, then run AIT's installer:
 
 ```bash
 RELEASE_TAG="$(basename "$(curl -fsSL -o /dev/null -w '%{url_effective}' \

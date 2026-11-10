@@ -92,10 +92,25 @@ underlying services ([ADR-0006](../decisions/0006-end-client-parity.md),
 Read [Developing alongside an installed AIT](developing-alongside-installed-ait.md)
 before development on a machine with live AIT sessions.
 
-## Private-peer development
+## Private peers in this development build
 
-Private-peer work has a separate development line. This local release's source
-does not include that implementation. The published
-[v0.1.46-peer.2 development reference](https://github.com/natewalton/ait-protocol/tree/v0.1.46-peer.2)
-provides its own documentation and test scope; the dependency decisions in
-[Security](security.md) do not approve wider peer deployment.
+Each machine keeps its local stack. The AppView projects records from explicitly
+approved peers through read-only peer routes; it does not expose PDS writes or
+administration. Iroh authenticates machine endpoints. The DATA protocol requires
+current approval separately from the invitation/control protocol. Approval,
+a direct DATA path and the repository subscription's indexing progress are
+separate observations. A linked path alone does not prove indexing is current.
+
+The supported transport build enforces direct-only application payload while
+allowing relay assistance for connection control. It refuses startup if the
+native endpoint cannot confirm that policy. It reports an unavailable direct
+path rather than falling back to relayed application data. Approved peers can
+still supply hostile inputs; the [dated security reassessment](security.md#private-peer-test-reassessment-2026-10-30)
+records unresolved parser risks and the controlled test's limited acceptance.
+
+See [peer transport and approval](../appview/src/peerNetwork.mjs),
+[repository subscription](../appview/src/peerFeed.mjs),
+[private-peer design](../specs/private-peer-communication.md),
+[direct data with connection assistance](../specs/direct-data-with-assisted-connections.md),
+[status evidence](../specs/peer-status-evidence.md) and the
+[two-Mac development test guide](private-peer-second-mac-test.md).

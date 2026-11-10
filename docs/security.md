@@ -39,8 +39,8 @@ The pinned AT Protocol packages and existing advisory exceptions are unchanged.
 This JSON block is the single maintained exception list, read directly by the
 check. Advisory IDs refer to `https://github.com/advisories/<ID>`. Versions are
 exact, not package-wide or component-wide exemptions. Reassess a decision when
-its removal condition is met. These local-only risk decisions do not cover private-peer builds, which
-require a separate review.
+its removal condition is met. The private-peer reassessment below covers only
+the controlled two-Mac test, not general P2P deployment.
 
 <!-- advisory-exceptions -->
 ```json
@@ -119,3 +119,40 @@ Published fix versions and advisory scope were
 checked against the npm registry and advisory database on the review date.
 These decisions cover that default installation, not an assertion that custom
 SMTP, AWS, externally reachable listeners, or the P2P build are safe.
+
+## Private-peer test reassessment (2026-10-30)
+
+Historical scope: the controlled private-peer test line, initially reviewed at
+`26ef0b4`, including the presence-read extension reviewed on 2026-11-09. The existing
+exception JSON is unchanged.
+A passing advisory gate matches IDs and versions; it does not establish that
+the network exposure is safe.
+
+- **Approval boundary:** Iroh authenticates the machine, data streams require
+  current approval, and the peer front exposes read-only routes, not PDS writes
+  or administration ([`appview/src/peerNetwork.mjs`](../appview/src/peerNetwork.mjs)). A malicious or
+  compromised **approved** machine can still supply hostile parser input;
+  signatures and endpoint binding do not remove that risk.
+- **Zod is reachable:** peer PLC logs enter `validateOperationLog`, followed by
+  DID-document and repository parsing. HTTP responses retain safeFetch's
+  512 KiB default except `getRepo`, which permits 100 MiB
+  ([`appview/src/peerClient.mjs`](../appview/src/peerClient.mjs)). The WSS subscription does **not** use that
+  HTTP cap; it retains the installed `ws` client's 100 MiB message default
+  ([`appview/src/peerFeed.mjs`](../appview/src/peerFeed.mjs), reviewed at line 24, `appview/node_modules/ws/lib/websocket.js:675`).
+  These are byte limits, not proof against CPU/allocation exhaustion or an
+  aggregate memory bound. The Zod denial-of-service risk remains unresolved.
+- **file-type:** peer sync reads repository CARs and serves stored blobs through
+  GET routes. It does not upload peer blobs into the local PDS or invoke its
+  blob-upload MIME sniffer. That parser remains on the authenticated local
+  `uploadBlob` path, not `getBlob` (`pds/node_modules/@atproto/pds/dist/api/com/atproto/repo/uploadBlob.js:17`,
+  `pds/node_modules/@atproto/pds/dist/api/com/atproto/sync/getBlob.js:22`). A user
+  re-uploading a received blob locally can still reach the existing risk.
+- **Other exceptions:** peer projection does not add a MySQL database, SMTP
+  transport, AWS KMS/blob store, or caller-controlled HTML conversion options.
+  The documented Kysely, Nodemailer, deepmerge and elliptic conditions remain;
+  no new claim of parser unreachability is made.
+
+Disposition: retain the exact documented exceptions for this controlled,
+approved-peer test only. Do not treat approval or response caps as a fix for
+malicious-peer denial of service. Wider deployment needs a fresh risk decision
+and compatible dependency remediation; this note is not a production release GO.

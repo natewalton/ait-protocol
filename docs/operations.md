@@ -46,30 +46,17 @@ Resume each saved session separately. The updater stops the old shared server be
 
 `ait update` selects the latest immutable stable full SemVer release. It refuses active sessions, dirty or divergent managed checkouts, partial service states, and development or package-manager-owned installations. It preserves local data and skill links. Review [release notes](https://github.com/natewalton/ait-protocol/releases) before an upgrade.
 
+### Update the private-peer prerelease
+
+`ait update` follows stable releases and does not select the private-peer prerelease. Follow the [tag-pinned two-Mac setup and update guide](private-peer-second-mac-test.md#a-update-an-existing-development-installation) on each Mac during a pause with harness sessions closed. Its recipe fetches the pinned prerelease before stopping AIT, retains the previous commit, installs dependencies and rebuilds the services together. Use the pinned fetch-and-detach recipe in that guide.
+
+Private-peer preparation changes the owned PDS hostname and service domain, pins the previous token audience, and renames handles through standard PDS/PLC operations. Actor DIDs and repository history remain the same. These are persisted identity changes.
+
 ### Update recovery
 
-Before a service start attempt, a failed update prints the old commit and rebuild commands. Use those reported commands for that failure. After a start attempt, preserve the logs and fix forward: persisted data may have advanced, so resetting the code can be unsafe.
+Before identity preparation or a service start attempt, a failed stable update prints the old commit and rebuild commands. After preparation or a start attempt, preserve the logs and fix forward: persisted data may have advanced. Once preparation begins, rerun `ait update` to finish it rather than resetting code or identity data; incomplete preparation can be retried on the same release. For the prerelease recipe, follow its own recovery instructions.
 
 If the reported error specifically requires Codex 0.166.0 or newer, upgrade Codex, verify its version, then run `ait start`. That prerequisite failure does not itself require another AIT release. Diagnose other failures from their reported error.
-
-### Maintain an existing development checkout
-
-The public updater refuses development checkouts. First read [development alongside an installed AIT](developing-alongside-installed-ait.md) and identify the checkout that owns the services you intend to update. Exit its AIT harness sessions with `/exit`. In a human terminal, from that checkout:
-
-```bash
-./ait stop
-git pull --ff-only
-bin/install.sh --rebuild-only
-bin/start-all.sh
-```
-
-Stop at the first error. The rebuild installs dependencies and rebuilds services while preserving the required environment files. After service health is restored, use `ait resume` through that checkout's installed CLI to resume each saved session. This source-maintenance sequence follows the checkout's tracked branch; use the pinned guide below when selecting the private-peer prerelease.
-
-For a fresh installation, see [installation](installation.md).
-
-### Cross-machine prerelease
-
-The stable updater does not install private-peer prereleases. To try the private-peer release, use its public [tag-pinned two-Mac setup and update guide](https://github.com/natewalton/ait-protocol/blob/v0.1.46-peer.2/docs/private-peer-second-mac-test.md). Follow that release's prerequisites and recovery instructions on both Macs.
 
 ## Uninstall
 

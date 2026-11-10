@@ -80,20 +80,29 @@ try {
     if (!lockedPackages) throw Error('native source lock contains no packages');
     const file = join(scratch, 'Cargo.lock');
     writeFileSync(file, lockBytes);
-    const audit = run(auditTool, ['audit', '--file', file, '--db', join(scratch, 'advisory-db'), '--json']);
+    const audit = run(auditTool, ['audit', '--file', file, '--db', join(scratch, 'advisory-db'), '--url', 'https://github.com/RustSec/advisory-db', '--json'], { cwd: scratch });
     if (![0, 1].includes(audit.status)) throw Error(`native audit failed: ${audit.stderr || audit.status}`);
     const report = JSON.parse(audit.stdout);
     const record = value => value && typeof value === 'object' && !Array.isArray(value);
     if (!record(report.database) || !record(report.lockfile) || !record(report.vulnerabilities) || !/^[0-9a-f]{40}$/.test(report.database['last-commit'] || '') || !Number.isInteger(report.lockfile['dependency-count']) || report.lockfile['dependency-count'] < 1 || !Array.isArray(report.vulnerabilities.list) || report.vulnerabilities.count !== report.vulnerabilities.list.length || report.vulnerabilities.found !== (report.vulnerabilities.count > 0) || !record(report.warnings)) throw Error('incomplete native audit response');
     const databaseAge = Date.now() - Date.parse(report.database['last-updated']);
     if (report.lockfile['dependency-count'] !== lockedPackages) throw Error('native audit omitted locked packages');
+    const settings = report.settings;
+    if (!record(settings) || !Array.isArray(settings.ignore) || settings.ignore.length || !Array.isArray(settings.target_arch) || settings.target_arch.length || !Array.isArray(settings.target_os) || settings.target_os.length || settings.severity !== null) throw Error('native audit coverage was filtered');
     // The DB is freshly fetched into a new temporary directory by this audit.
     // A quiet upstream repository may legitimately have an older last commit.
     if (!Number.isFinite(databaseAge) || databaseAge < -300000) throw Error('invalid native advisory database time');
     if (audit.status !== (report.vulnerabilities.count > 0 ? 1 : 0)) throw Error('native audit exit status disagrees with findings');
     const findings = [];
     const add = (v, kind) => {
-      if (!/^RUSTSEC-\d{4}-\d{4}$/.test(v.advisory?.id || '') || !v.package?.name || !v.package?.version) throw Error('invalid native advisory');
+      if (!v.package?.name || !v.package?.version) throw Error(`invalid native finding package (${kind})`);
+      if (kind === 'yanked') {
+        // Yanked-version notices have no RustSec advisory object or CVSS.
+        // Preserve the registry finding; do not drop it or invent severity.
+        findings.push({ id: `CRATES-IO-YANKED:${v.package.name}@${v.package.version}`, package: v.package.name, version: v.package.version, severity: 'unknown', path: `${location}/Cargo.lock:${v.package.name}@${v.package.version}`, kind, advisoryRevision: `sha256:${hash(JSON.stringify(v))}`, advisoryStatus: 'active', source: `https://crates.io/crates/${encodeURIComponent(v.package.name)}/${encodeURIComponent(v.package.version)}`, title: 'Locked crate version has been yanked' });
+        return;
+      }
+      if (!/^RUSTSEC-\d{4}-\d{4}$/.test(v.advisory?.id || '')) throw Error(`invalid native advisory (${kind}: ${v.package.name}@${v.package.version})`);
       // Maintenance notices are informational; absent CVSS on an actual
       // vulnerability stays unknown and blocks until explicitly resolved.
       const maintenance = ['unmaintained', 'notice'].includes(kind);
@@ -101,6 +110,7 @@ try {
     };
     for (const v of report.vulnerabilities.list) add(v, 'vulnerability');
     for (const [kind, warnings] of Object.entries(report.warnings)) {
+      if (!['unmaintained', 'notice', 'unsound', 'yanked'].includes(kind)) throw Error(`unknown native warning kind: ${kind}`);
       if (!Array.isArray(warnings)) throw Error('invalid native warnings');
       for (const v of warnings) add(v, kind);
     }

@@ -1,6 +1,6 @@
 # Peer status from runtime evidence
 
-Status: implementation · 2026-11-09 · one delivery slice
+Status: reviewed and validated · 2026-11-09 · one delivery slice
 
 ## Why
 
@@ -34,4 +34,4 @@ Do not redefine pairing as application connectivity, infer delivery from Linked,
 
 peerNetwork's three duplicated connection predicates and unconditional Link result; peerPrepare's unconditional final message; peerCli decline; status.sh fallback; peerFeed and Subscription reconnect implementation; temporary CONTROL-only and websocket-disconnect reproductions.
 
-Spec checklist: 1) operator receives factual peer status; 2) consumer is ait status/link and existing profile tools; 3) evidence is temporary runtime/CLI tests plus real two-PDS flow. Questions 4–13: no unresolved finding. Systems check: four independent concepts (approval, direct DATA connectivity, importer lifecycle, registration presence); consolidate four connection claims into one projection rather than introducing a new state registry.
+Spec checklist: 1) operator receives factual peer status; 2) consumer is ait status/link and existing profile tools; 3) evidence is temporary runtime/CLI tests plus real two-PDS flow. Questions 4–13: no unresolved finding. Systems check: five independent observations (approval, direct DATA connectivity, importer lifecycle, subscription connection, registration presence); consolidate four connection claims into one projection rather than introducing a new state registry.

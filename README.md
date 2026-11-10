@@ -84,9 +84,12 @@ AIT is ready. Use the command overview below, or continue to
 
 ### Command overview
 
-Run CLI commands in your terminal. Claude and Codex sessions collaborate
-through the AIT tools. After either setup recipe, use these commands from an
-initialized project.
+Run CLI commands in your terminal. Claude and Codex sessions should use the
+AIT tools. To discourage agents from managing sessions or the installation,
+launch, resume, link, unlink and uninstall commands reject recognized agent
+shells. These checks are a guardrail, not a security boundary.
+
+After either setup recipe, use these commands from an initialized project.
 
 #### Projects and sessions
 

@@ -6,7 +6,7 @@ Scope: one focused security release followed by continuous enforcement. This spe
 
 ## Why
 
-AIT users need a security release they can install with preserved accounts and sessions, and a maintainer who learns when a supported release becomes vulnerable. Today the advisory gate accepts matching recorded findings, including High findings. It does not enforce current applicability, severity, expiry or deployment exposure, and nothing scans supported releases between publication events.
+AIT users need a security release they can install with preserved accounts and sessions, and fresh security checks when changes are reviewed or a release is published. Today the advisory gate accepts matching recorded findings, including High findings. It does not enforce current applicability, severity, expiry or deployment exposure, and publication does not require a fresh scan. This proposal makes checks part of active development and release work; it does not promise ongoing monitoring of installed releases.
 
 The 2026-11-10 lockfile audits found five unique High advisories across three packages and no Critical npm finding. Stable had 52 affected-package findings; peer had 54. These are inherited package findings, not 52 or 54 independent vulnerabilities. Shipped native dependency status is unknown.
 
@@ -17,7 +17,7 @@ The 2026-11-10 lockfile audits found five unique High advisories across three pa
 | Kysely's advisory requires a database behavior absent from inspected PostgreSQL/SQLite paths | Installed PLC/PDS database constructors; advisory below. Applies to both dependency graphs. | Preserve a narrowly tested non-applicability decision; do not force a database-generation upgrade to change a scanner count. **Fix the decision evidence.** |
 | Existing matches ignore changed severity, paths, owner, expiry and exposure | `bin/check-advisories.sh:19-32,65-74`. Every matching advisory/package/version receives the old decision. | A future expanded exposure can inherit an obsolete decision. **Fix.** |
 | Publication does not refresh the audit; peer publication is manual | `.github/workflows/release.yml:24,89,93,205-226`. Preparation audits; publish skips validation. | A disclosure after preparation can miss the publication decision. **Fix both channels.** |
-| No scheduled/PR security workflow; alerts disabled | `.github` contains only `release.yml`; GitHub vulnerability-alerts API returned “Vulnerability alerts are disabled” on 2026-11-10. | Supported installed releases can drift without an actionable alert. **Fix.** |
+| No PR security workflow | `.github` contains only `release.yml` on 2026-11-10. | Dependency and exposure changes can reach preparation without a required security result. **Fix.** |
 
 A passing result means **no unresolved, reachable High/Critical issue within the declared coverage**, with source-backed non-applicability or verified mitigation where appropriate. It does not mean zero npm warnings. Issue [#28](https://github.com/natewalton/ait-protocol/issues/28)'s clean High/Critical audit goal stays open while those findings remain.
 
@@ -52,7 +52,7 @@ Retain **four concepts**: candidate, finding, disposition and current verificati
 
 **Exposure does not equal release channel.** All new stable and peer candidates use the conservative union of supported local and approved-peer exposure. There is no caller-supplied `--scope` override, source-string grep or inference that “stable” means local-only. Only explicitly reviewed historical releases may have narrower exposure, mapped to their immutable commits in current policy. New independent local-only packaging is outside this spec.
 
-Migrate the existing exception rows rather than grandfathering them. Give High/Critical exceptions at most **30 days** before evidence review; a shorter review period is allowed. Version, advisory severity/status, path, embedded/native source identity, supported exposure or expiry changes invalidate the old decision until reviewed. Bind each verification to the candidate commit, affected component identity, test revision and result; a passing test of HEAD cannot authorize an older supported tag. Run candidate-applicable regressions in a disposable isolated checkout with no reporting or publication credentials. A fixed evidence URL with no verified regression does not establish mitigation. Preserve the current rule that newly discovered lower-severity findings also need review.
+Migrate the existing exception rows rather than grandfathering them. Give High/Critical exceptions at most **30 days** of validity for publication; a shorter period is allowed. Expiry requires renewed evidence at the next PR/release check, not a calendar-driven review task. Version, advisory severity/status, path, embedded/native source identity, supported exposure or expiry changes invalidate the old decision until reviewed. Bind each verification to the candidate commit, affected component identity, test revision and result; a passing test of HEAD cannot authorize an older supported tag. Run candidate-applicable regressions in a disposable isolated checkout with no reporting or publication credentials. A fixed evidence URL with no verified regression does not establish mitigation. Preserve the current rule that newly discovered lower-severity findings also need review.
 
 The checker prints separate scanner totals and release-policy results. Example meanings:
 
@@ -64,19 +64,20 @@ PASS: 0 unresolved release blockers; <n> scanner findings remain under current d
 
 A pass must identify the candidate, coverage and expiring decisions. It must not say “no vulnerabilities” when findings remain.
 
-### C. Keep supported releases under review
+### C. Check changes and publication when work happens
 
-Use the same checker and policy at three decision points:
+Use the same checker and policy at two decision points:
 
-1. **Pull requests:** required checks for dependency, input/exposure, native component, checker/policy and release-workflow changes. Use read-only unprivileged PR jobs, including fork PRs; do not use `pull_request_target` to execute submitted code with secrets. Security policy/workflow edits need maintainer review. Repository rules make the check required.
+1. **Pull requests:** required checks for dependency, input/exposure, native component, checker/policy and release-workflow changes. Use read-only unprivileged PR jobs, including fork PRs; do not use `pull_request_target` to execute submitted code with secrets. Security policy/workflow edits need maintainer review. Repository rules make the check required. Keep the required status present on every PR; irrelevant changes can report an explicit no-op rather than leave a path-filtered required check pending.
 2. **Immediately before publishing:** stable and peer publication both depend on a fresh check of the exact draft commit and artifact identities. Preserve immutable asset/digest verification. A new advisory after preparation blocks publication, including an already-created draft. Provide the peer channel a supported checked publication path with `prerelease: true` and `latest: false`; stable remains full SemVer. Direct API publication outside that path does not qualify as compliant. Administrator credentials can bypass repository automation; do not represent CI as an account-security boundary.
-3. **Daily supported-tag scan:** trusted checker/policy from the default branch checks clean, immutable target checkouts. Audit current stable and peer releases, including previously deployed peer builds until explicitly retired. Initial inventory: stable `v0.1.45` at `c976d1b29740784456803cee21da116ee5dea7d2`, peer.1 at `e16094956f1d122a89b6090cc4ef1224ea56cfd9`, peer.2 at `3fe1681b06f2de0fa98402f0dac5594dee7a62ba`. Verify each tag/commit before scanning. Historical local-only scope applies only to the explicitly mapped stable commit. An older release is not removed merely because HEAD passes.
 
-Keep supported tags/commits, historical mappings and native source/artifact identity in versioned policy data in `docs/security.md`, separate from disposition entries. Unknown target identity fails. Scans use the current trusted policy, not the policy in the old tag. Land the shared checker, policy, tests and workflows on `main` as well as the peer branch; scheduling is not active merely because the workflow exists on the peer branch. Verify a default-branch scheduled/manual run against both channel inventories before declaring monitoring delivered. This does not require merging P2P runtime code. Enable GitHub vulnerability alerts; version-update bots are optional and do not replace these checks.
+At release preparation, compare the replacement candidate with the existing supported channel releases using the current trusted checker/policy and clean immutable target checkouts. Initial inventory: stable `v0.1.45` at `c976d1b29740784456803cee21da116ee5dea7d2`, peer.1 at `e16094956f1d122a89b6090cc4ef1224ea56cfd9`, peer.2 at `3fe1681b06f2de0fa98402f0dac5594dee7a62ba`. Verify each tag/commit before scanning. Historical local-only scope applies only to the explicitly mapped stable commit. An older release is not removed merely because HEAD passes. Findings in an older release must appear in the release assessment and replacement/update guidance; they do not block publishing a replacement that resolves them and independently passes its own gate.
 
-One scheduled workflow reports scan failure, expired decisions and incomplete coverage to a named maintainer through a deduplicated security issue containing affected supported tags, evidence and next action. Do not create an issue on every successful run or repeat the same alert each day. Use issue-write permission only in the trusted reporting job; scans need read access. Initial accountable maintainer: repository owner `@natewalton`, until reassigned explicitly. Critical triage target: the same workday; High: two business days. New publication blocks immediately regardless of the response target.
+Keep supported tags/commits, historical mappings and native source/artifact identity in versioned policy data in `docs/security.md`, separate from disposition entries. Unknown target identity fails. Checks use the current trusted policy, not the policy in the old tag. Land the shared checker, policy, tests and workflows on `main` as well as the peer branch and verify both channel paths. This does not require merging P2P runtime code.
 
-For an affected supported release, the maintainer must provide a patch/effective mitigation through that release's supported update route or explicitly retire support and notify affected users. Do not alter live installations automatically. A source-branch fix without an adoptable release and recovery instructions does not finish the remediation.
+There is **no scheduled monitoring**, automatic issue creation, alert queue or response-time commitment in this spec. No scheduled job, dormant monitoring implementation or optional monitoring switch is added. Results appear in the PR/release workflow that prompted the check. A pass describes that candidate at that time; it provides no ongoing assurance for installations between checks. Repository vulnerability-alert settings are unchanged by this work.
+
+For an affected release assessed during preparation, provide the patch/effective mitigation through its supported update route or explicitly retire support and explain the change in release/update guidance. Do not alter live installations automatically. A source-branch fix without an adoptable release and recovery instructions does not finish the remediation.
 
 ## Files touched
 
@@ -92,15 +93,15 @@ For an affected supported release, the maintainer must provide a patch/effective
 | `bin/check-advisories-test.mjs` (new) | Fail-closed policy/candidate fixtures |
 | `docs/security.md` | Current dispositions, evidence, owners/expiry, supported targets/native provenance and operating procedure |
 | `.github/workflows/release.yml` | Fresh checked publication for stable and peer with artifact verification |
-| `.github/workflows/security.yml` (new) | Required PR checks and daily supported-tag monitoring/reporting |
+| `.github/workflows/security.yml` (new) | Required event-driven PR security checks |
 
-This crosses dependency, runtime-validation and CI/release boundaries and requires systems and independent security review. Runtime input-control files or native fixes are not pre-approved as a vague open-ended list: the validation stage must name and count the actual changes here before implementation, with no release permitted while those findings remain unresolved. Repository alert/rules/maintainer assignment are settings changes with verified readback, not extra code files.
+This crosses dependency, runtime-validation and CI/release boundaries and requires systems and independent security review. Runtime input-control files or native fixes are not pre-approved as a vague open-ended list: the validation stage must name and count the actual changes here before implementation, with no release permitted while those findings remain unresolved. Repository required-check rules are settings changes with verified readback, not extra code files.
 
 ## Out of scope
 
 - Blanket PDS/PLC/AT generation upgrades, a forced Zod4 migration, or claiming a zero-High npm graph through exceptions. Issue #28 remains distinct.
 - Stable P2P promotion, a new public service, payload relay fallback, new runtime permissions, identity/schema migration or automatic installed updates.
-- A new audit/capability registry, monitoring dashboard, bespoke evidence database or automatic dependency repair.
+- Scheduled monitoring, dormant monitoring code, automatic security issues, response-time commitments, changes to vulnerability-alert settings, a new audit/capability registry, monitoring dashboard, bespoke evidence database or automatic dependency repair.
 - Claiming certification or complete security from a scanner pass. Externally maintained Node/PostgreSQL/OpenSSL remain explicit prerequisites; they are not covered by four npm locks.
 - Implementing or publishing as part of spec authoring. Runtime changes, settings, notifications and releases remain unperformed at this stage.
 
@@ -123,18 +124,19 @@ bin/check-advisories.sh --candidate "$CANDIDATE_CHECKOUT"
 | Candidate → fresh audit → policy → publication attempt | New High/Critical, changed severity/status/path/component, expiry, unknown scope/severity, missing owner, missing evidence or incomplete native coverage block before release mutation. A legitimate current disposition passes with scanner counts still visible. |
 | Invalid audit/native source | Cyclic/missing inherited roots, malformed/incomplete JSON, unsupported schema, network timeout/outage, wrong artifact/source-lock digest and unresolved native applicability fail closed without changing candidate locks. |
 | Prepare succeeds → advisory changes → publish | Publication is blocked and draft retained for repair; old scan cannot authorize it. Future stable candidates receive peer exposure rules. |
-| Supported immutable tag → current trusted checker → scheduled failure → reporting | Old tag's permissive policy is not executed; named maintainer receives one updated actionable issue with affected tags, without duplicates or success spam. Wrong tag/commit or absent current policy blocks. |
+| Release preparation → supported immutable tags → current trusted checker → release assessment | Old tag's permissive policy is not executed; findings identify affected releases and replacement guidance. Wrong tag/commit or absent current policy blocks the assessment. Older findings do not prevent a clean replacement from shipping. |
+| PR trigger → required security status | Relevant changes run checks; irrelevant changes return an explicit no-op. No schedule trigger, monitoring job, issue-write permission or dormant monitoring switch is introduced. |
 | Native finding for unused target/build path | Explicit current applicability evidence tied to the actual packaged build; no blanket “all Rust clean” claim. Missing audit tooling remains a blocker. |
 
 Retain relevant existing checks: isolated CLI/install/update/uninstall tests, startup/operator tests, authenticated peer projection/feed tests, real two-PDS post/reply/notification/unlink/relink, native policy-off refusal and pending-connect cancellation. Run the full contract when dependency/control changes affect it; do not mirror implementation with redundant fixtures.
 
-**Completion evidence:** exact candidate/artifact identities; fresh npm and native findings/dispositions; passing actual mail/resource/integration regressions; publication through the checked path; a safe, observed supported-tag monitoring/reporting fixture; verified repository alert/rule settings; and an adoptable release with installation/recovery notes. A real scheduled failure need not be manufactured: demonstrate reporting with a controlled, clearly labelled fixture issue or a real finding, without fabricating a vulnerability or contacting unrelated recipients.
+**Completion evidence:** exact candidate/artifact identities; fresh npm and native findings/dispositions; passing actual mail/resource/integration regressions; publication through the checked path; an observed release-time comparison against supported tags; verified required-check rules; and an adoptable release with installation/recovery notes. Verify the PR and publication results through controlled fixtures without creating monitoring issues or contacting recipients.
 
 ## Sequencing or rollout
 
 1. **Bounded validation:** reproduce the current inventory, inspect deployed bundles, establish ingress test budgets/valid fixtures, and audit the exact native lock. Update this counted scope with concrete controls/fixes if any required bound fails or native blocker is found. Publish no security-readiness claim from the small research probes.
-2. **Focused release:** implement/test the mailer candidate and necessary controls; record current Kysely/Zod decisions; enforce fresh publication checks and peer artifact handling. Independent review covers the actual changed runtime/security boundary. Verify the real released surface through an authorized maintenance window, preserving sessions and state. Scheduling infrastructure is not a prerequisite for this patch's user value.
-3. **Continuous enforcement:** activate required PR checks, alerts and supported-tag daily scans/reporting. This independently prevents unsafe publication and alerts maintainers even while remediation is open. No valid current decision means a blocked release, not an automatic extension. The overall spec is complete only when both the adoptable patch and ongoing checks are delivered.
+2. **Focused release:** implement/test the mailer candidate and necessary controls; record current Kysely/Zod decisions; enforce fresh publication checks and peer artifact handling. Independent review covers the actual changed runtime/security boundary. Verify the real released surface through an authorized maintenance window, preserving sessions and state. No monitoring infrastructure is part of this release.
+3. **Event-driven enforcement:** activate required PR checks and verify fresh publication checks for both channels. Results reach the maintainer during active work. No valid current decision means a blocked release, not an automatic extension. The overall spec is complete only when both the adoptable patch and these checks are delivered; there is no monitoring cadence to activate or maintain.
 
 Deploy first through the existing peer prerelease channel; do not silently publish a stable P2P release. Common mail/policy fixes may be delivered on stable without unrelated peer code. No release numbering is reserved by this spec. Rollback of code must preserve any advanced persisted state; dependency testing uses disposable copies until authorized installation.
 
@@ -146,7 +148,8 @@ Deploy first through the existing peer prerelease channel; do not silently publi
 - Severity-only zeroing, renamed packages to suppress alerts, permanent exceptions, broad accepted-risk waivers and scope overrides to pass the gate.
 - Treating branch/version labels as exposure or adding an audit-only capability descriptor. Use conservative new-candidate rules and immutable historical mappings.
 - Running an old tag's checker/policy, scanning HEAD alone, or relying on preparation's old audit for publication.
-- Building a monitoring service or automating live upgrades. One checker, current policy and ordinary GitHub workflow output/issues reach the required consumers.
+- Scheduled scans, automatic issue reporting or dormant monitoring infrastructure: the maintainer has no committed response cadence. One checker, current policy and PR/release workflow results reach the maintainer when work is happening.
+- Automating live upgrades: installation remains an explicit operator action.
 
 ## Sources
 
@@ -161,3 +164,5 @@ Verified 2026-11-10; recheck external advisory/package data during implementatio
 - Native [immutable release](https://github.com/natewalton/iroh-ffi/releases/tag/iroh-direct-v0.1.0-experimental.1), [source lock](https://github.com/natewalton/iroh-ffi/blob/adce3ea5c33209a9052fa2c57d8269d7f32419dc/Cargo.lock), [locked build script](https://github.com/natewalton/iroh-ffi/blob/adce3ea5c33209a9052fa2c57d8269d7f32419dc/iroh-js/build-package.sh).
 - Reproduction: in each `plc`, `pds`, `appview`, `mcp` workspace run `npm audit --json --package-lock-only --include=dev --include=optional --include=peer`. The 2026-11-10 results were stable High 5/27/15/5 and peer 5/27/17/5, Critical 0 in all eight. Temporary metadata-only models held PDS 0.4.226 or 0.5.55 with Nodemailer10.5.0: three High mail roots disappeared, while Zod remained. No model established runtime compatibility.
 - Existing clean-audit outcome: [issue #28](https://github.com/natewalton/ait-protocol/issues/28). Research artefacts supplement this spec; they are not required inputs to its acceptance tests.
+
+Revision 2026-11-10: Removed scheduled monitoring and response commitments at the maintainer’s request. Checks run on PRs and publication, with supported-release comparison during preparation.

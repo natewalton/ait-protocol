@@ -8,7 +8,7 @@ An operator needs to distinguish saved peer approval, an open direct application
 
 ## Proposed work
 
-Derive Linked from an approved peer's open DATA connection with an eligible direct path. Reuse that projection in status, Link results, logs, and retained-approval errors. Pairing CONTROL connections remain usable for pairing but cannot establish application connectivity. Successful Link reports saved approval plus its current runtime snapshot; concurrent Unlink returns approved:false and Unlinked. Keep indexing and presence separate; expose consumer reconnection using the subscription's existing lifecycle hooks. Startup waits through recoverable local reconnection and status displays it. Remove unconditional preparation/decline/failure claims. Clarify the CLI, agent tool descriptions, and current operator guide.
+Derive Linked from an approved peer's open DATA connection with an eligible direct path. Reuse that projection in status, Link results, logs, and retained-approval errors. Pairing CONTROL connections remain usable for pairing but cannot establish application connectivity. Successful Link reports saved approval plus its current runtime snapshot; concurrent Unlink returns approved:false and Unlinked. Keep indexing and presence separate; expose subscription connection separately using its existing lifecycle hooks. Local readiness continues to depend on completed backfill and consumer lifecycle; a websocket interruption does not invalidate a ready projection. Remove unconditional preparation/decline/failure claims. Clarify the CLI, agent tool descriptions, and current operator guide.
 
 ## Files touched
 

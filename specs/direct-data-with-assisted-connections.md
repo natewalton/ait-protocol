@@ -97,7 +97,7 @@ a requirement for a new status enum, durable state or terminal framework.
 | --- | --- | --- |
 | Establishing a connection or awaiting a direct path | No successful application result yet | `Connecting directly…` |
 | Direct path available and application round trip succeeds | Link can report success | `Linked` |
-| Direct path becomes unusable while assistance remains | Sync is unavailable; queued streams use existing bounded flow control and fail on closure/cancellation | `Unavailable: direct connection lost; no relay fallback.` |
+| Direct path becomes unusable while assistance remains | Sync is unavailable; queued streams use existing bounded flow control and fail on closure/cancellation | `Unavailable: no direct application connection; no relay fallback.` |
 | Connection closes or the Link attempt deadline expires | Surface the error; stop waiting | `Unavailable: could not establish a direct connection.` |
 | Peer is explicitly unlinked | End subscriptions and refuse further peer operations | Existing `Unlinked` behavior |
 

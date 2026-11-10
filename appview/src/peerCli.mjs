@@ -24,7 +24,7 @@ export function localCommand(socketPath, operation, body = {}, signal) {
 }
 export function formatPeerStatus(peer) {
   const indexing = peer.indexing
-    ? `indexing ${peer.indexing.state}${peer.indexing.error ? `: ${peer.indexing.error}` : ''}`
+    ? `indexing ${peer.indexing.state}${peer.indexing.connection ? ` (subscription ${peer.indexing.connection})` : ''}${peer.indexing.error ? `: ${peer.indexing.error}` : ''}`
     : `indexing not started${peer.error ? `: ${peer.error}` : ''}`
   return `${peer.state} ${JSON.stringify(peer.name)} ${peer.id} ${indexing}`
 }
@@ -56,7 +56,11 @@ async function main() {
     const cancelled = new AbortController()
     const interrupt = () => cancelled.abort()
     process.once('SIGINT', interrupt)
-    try { console.log(JSON.stringify(await localCommand(control, 'link', { invitation: value }, cancelled.signal))) }
+    try {
+      const result = await localCommand(control, 'link', { invitation: value }, cancelled.signal)
+      console.log(result.approved ? 'Approval saved; check ait status for current DATA connectivity and indexing.' : 'Approval removed; current state is Unlinked.')
+      console.log(JSON.stringify(result))
+    }
     finally { process.off('SIGINT', interrupt) }
   } else {
     const status = await localCommand(control, 'status')

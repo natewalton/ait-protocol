@@ -266,3 +266,29 @@ test('unlink while pairing finishes cannot leave a stale approval in its reply',
   assert.equal(result.state, 'Unlinked')
   assert.deepEqual((await second.command('status')).peers, [])
 })
+
+
+test('unlink while attachment is acquiring its listener returns the current Unlinked snapshot', { timeout: 15000 }, async t => {
+  const a = fixture(t), b = fixture(t)
+  const first = await startPeerNetwork(a.options)
+  t.after(() => first.close())
+  const second = await startPeerNetwork(b.options)
+  t.after(() => second.close())
+  const listen = net.Server.prototype.listen, entered = Promise.withResolvers()
+  net.Server.prototype.listen = function (...args) {
+    if (!(this instanceof https.Server) && args[0] === 0 && args[1] === '127.0.0.1') {
+      entered.resolve(); return this
+    }
+    return listen.apply(this, args)
+  }
+  t.after(() => { net.Server.prototype.listen = listen })
+  const { invitation } = await first.command('invite')
+  const pending = second.command('link', { invitation })
+  await entered.promise
+  net.Server.prototype.listen = listen // Only hold this attachment, not the reciprocal one.
+  await second.command('unlink', { id: first.id })
+  const result = await pending
+  assert.equal(result.approved, false)
+  assert.equal(result.state, 'Unlinked')
+  assert.deepEqual((await second.command('status')).peers, [])
+})

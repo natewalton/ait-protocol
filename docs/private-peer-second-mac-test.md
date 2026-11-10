@@ -270,10 +270,11 @@ ait status
 means none is currently open; approval may still be saved. A short request can
 close its connection and change this status. During sustained repository sync,
 watch status and the AppView log; the conversation below is the useful proof.
-Indexing is separate: starting covers initial backfill, reconnecting means the
-subscription disconnected, running means the consumer is active after initial
-backfill, and failed includes its error. Running does not prove complete
-synchronization or message delivery.
+Indexing is separate: starting covers initial backfill; running means the
+consumer is active after that backfill; failed includes its error. Subscription
+connection is reported separately as connecting, connected or reconnecting.
+A ready local projection remains available during a subscription interruption.
+Running does not prove complete synchronization or message delivery.
 Mac 1 logs peer state changes, rather than printing into a Terminal whose
 `ait link` command has already exited:
 

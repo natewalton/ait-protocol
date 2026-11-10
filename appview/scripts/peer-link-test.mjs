@@ -530,7 +530,7 @@ try {
     gateOpen = false
     await within(new Promise(resolve => {
       const ready = () => {
-        if (a.output.slice(outputStart).includes('Unavailable: direct connection lost')) {
+        if (a.output.slice(outputStart).includes('Unavailable: no direct application connection')) {
           a.events.off('output', ready); resolve()
         }
       }
@@ -548,7 +548,12 @@ try {
     const stateBeforeStatus = fs.readFileSync(machineFile, 'utf8')
     fs.copyFileSync(path.join(repo,'bin/status.sh'),path.join(a.repo,'bin/status.sh'))
     fs.copyFileSync(path.join(repo,'bin/lib-service-pids.sh'),path.join(a.repo,'bin/lib-service-pids.sh'))
-    fs.writeFileSync(path.join(a.repo,'bin/curl'), '#!/bin/sh\nprintf "{}"\n', {mode:0o755})
+    fs.writeFileSync(path.join(a.repo,'bin/curl'), `#!/bin/sh
+case "$*" in
+  *%{http_code}*) printf '%s\\n200' '{"status":"ok","indexing":{"state":"running"}}' ;;
+  *) printf '{}' ;;
+esac
+`, {mode:0o755})
     fs.symlinkSync(process.execPath,path.join(a.repo,'bin/node'))
     const statusText = execFileSync('/bin/bash', [path.join(a.repo,'bin/status.sh')], {encoding:'utf8', env:{...process.env,
       HOME:path.join(a.repo,'home'), AIT_CODEX_SHARED_SOCKET:path.join(a.repo,'no-codex.sock'), PATH:`${path.join(a.repo,'bin')}:/usr/bin:/bin`}})

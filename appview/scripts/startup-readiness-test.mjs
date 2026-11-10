@@ -213,7 +213,7 @@ test('starting and failed local projections cannot provide authoritative names o
   const state = await fixture(t)
   const starting = await state.health()
   assert.equal(starting.status, 503); assert.equal(starting.body.status, 'starting')
-  assert.deepEqual(starting.body.indexing, { state: 'starting' })
+  assert.deepEqual(starting.body.indexing, { state: 'starting', connection: 'connected' })
   await assertNamedUnavailable(state)
   await assertExplicitHistoryAndRetirement(state)
   const { createPost } = await import('../../mcp/dist/aitty/agent.js')
@@ -251,7 +251,7 @@ test('quiet completed backfill is healthy and local operator remains bound despi
   const ready = await until(async () => {
     const health = await state.health(); return health.status === 200 && health
   }, 'quiet backfill ready')
-  assert.deepEqual(ready.body, { status: 'ok', indexing: { state: 'running' } })
+  assert.deepEqual(ready.body, { status: 'ok', indexing: { state: 'running', connection: 'connected' } })
   assert.equal(state.reads, 1)
   const ambiguous = await state.call('com.atproto.identity.resolveHandle', { handle: 'terminal-observer.test' })
   assert.equal(ambiguous.status, 400); assert.equal(ambiguous.body.error, 'AmbiguousHandle')
@@ -295,5 +295,26 @@ test('invalid operator configuration warns without disabling startup or self-ret
   })
   assert.equal(other.status, 400); assert.equal(other.body.error, 'NotOperator')
   assert.equal((await state.health()).status, 200)
+  await state.stop()
+})
+
+
+test('a local subscription blip reports its connection without invalidating the ready projection', async t => {
+  const state = await fixture(t, { held: false })
+  await until(async () => (await state.health()).status === 200, 'initial projection ready')
+  for (const socket of state.wss.clients) socket.terminate()
+  const reconnecting = await until(async () => {
+    const health = await state.health()
+    return health.body.indexing.connection === 'reconnecting' && health
+  }, 'subscription reconnect detail')
+  assert.equal(reconnecting.status, 200)
+  assert.equal(reconnecting.body.status, 'ok')
+  assert.equal(reconnecting.body.indexing.state, 'running')
+  const canonical = await state.call('com.atproto.identity.resolveHandle', { handle: localHandle })
+  assert.equal(canonical.status, 200)
+  assert.equal(canonical.body.did, A)
+  const ambiguous = await state.call('com.atproto.identity.resolveHandle', { handle: 'terminal-observer.test' })
+  assert.equal(ambiguous.body.error, 'AmbiguousHandle')
+  await until(async () => (await state.health()).body.indexing.connection === 'connected', 'subscription reopened')
   await state.stop()
 })

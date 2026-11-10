@@ -310,7 +310,7 @@ such connection is open. It is not session presence or proof that a message was
 received. Successful pairing reports `approved: true` with the current connection
 snapshot; it can still be Unavailable while the data connection starts. A
 concurrent Unlink returns `approved: false` and `Unlinked`. Indexing
-reports the importer lifecycle separately; running does not prove delivery or
+reports the importer lifecycle and subscription connection separately; running does not prove delivery or
 complete synchronization. `ait link` also lists peers, then issues a new invitation. `ait unlink <full-machine-key>` revokes local access and closes
 active streams. Received copies remain. A fresh invitation permits relinking.
 Retained posts, threads, profiles and notifications stay readable from their

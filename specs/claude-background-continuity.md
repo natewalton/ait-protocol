@@ -1,6 +1,6 @@
 # Keep the same AIT account when Claude backgrounds a session
 
-Status: systems and independent AIT design GO; isolated implementation and acceptance checks pass, independent code review pending. No live changes.
+Status: systems and independent AIT code review GREEN on0e88328; isolated acceptance and inherited CLI checks pass. Delivery is held outside the security drafts. No live changes.
 Date: 2026-11-11
 Base: private-peer18c941d (security integration; original investigation base98df264). Automatic background activation is separate in claude-background-activation.md.
 
@@ -277,3 +277,8 @@ discovery. Empty own-transcript lists are not cached indefinitely, because the
 harness may create that file after MCP starts. No extra invalidation watcher or
 timer is added. A vanished binding/source file is contained per account; the
 picker's binding stat now shares its guarded read and cannot blank sibling rows.
+
+Independent closeout: @ait-skills-dev approved0e88328 after a fresh git-archive
+build and passing consumer, picker and channel regressions. All five final
+mutation controls failed as intended. The inherited CLI suite also passes.
+This is an isolated build GO, not deployment or background-activation approval.

@@ -28,6 +28,12 @@ Fixes require review, relevant regression tests, and a release. Parent packages
 flagged only because they depend on a vulnerable package do not need separate
 exceptions; the underlying advisory is checked on that dependency.
 
+The 0.1.46 candidate pins the PDS's transitive `fast-xml-parser` to 5.12.0
+to fix [GHSA-474x-hrwr-fgx4](https://github.com/advisories/GHSA-474x-hrwr-fgx4).
+The AWS XML consumer, XML builder round trip, malformed stop-node input and
+PDS module import are checked by `node pds/scripts/xml-parser-test.cjs`.
+The pinned AT Protocol packages and existing advisory exceptions are unchanged.
+
 ## Reviewed exceptions
 
 This JSON block is the single maintained exception list, read directly by the

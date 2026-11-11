@@ -10,7 +10,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ait-session-picker-'))
+const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ait-session-picker-')))
 const home = path.join(root, 'home')
 const xdg = path.join(root, 'xdg')
 const bin = path.join(root, 'bin')

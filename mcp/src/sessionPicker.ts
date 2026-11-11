@@ -244,6 +244,7 @@ export async function discoverSessions(signal?: AbortSignal): Promise<SessionDis
       : [[session.did, session.handle.split('.')[0].toLocaleLowerCase() + '.'] as const],
   ))
   for (const [did, query] of joined) {
+    signal?.throwIfAborted()
     // Search the label prefix across old/new namespaces, then join by DID.
     // A namesake is never evidence that this local session is live.
     const listed = (await searchActors(query, false, signal)).find(

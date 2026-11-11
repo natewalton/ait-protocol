@@ -2,7 +2,7 @@
 
 Status: Implemented on the security branch with passing local fixtures and independent source review. Runtime refresh and exact experimental.3 local integration pass. The user authorized native publication and adoption on 2026-11-11; hosted checks, required repository rules and AIT release delivery remain pending.
 
-Scope: one focused security release followed by continuous enforcement. This spec adds one file; the implementation has thirty-one declared AIT files, listed below. Refresh base: private-peer `98df264`; stable comparison: `8cadfd3` (v0.1.46).
+Scope: one focused security release followed by continuous enforcement. This spec adds one file; the implementation has thirty-two declared AIT files, listed below. Refresh base: private-peer `98df264`; stable comparison: `8cadfd3` (v0.1.46).
 
 ## Why
 
@@ -81,7 +81,7 @@ For an affected release assessed during preparation, provide the patch/effective
 
 ## Files touched
 
-**Specification:** this file only. **Declared implementation: thirty-one AIT files.**
+**Specification:** this file only. **Declared implementation: thirty-two AIT files.**
 
 | File | Outcome |
 | --- | --- |
@@ -96,6 +96,7 @@ For an affected release assessed during preparation, provide the patch/effective
 | `appview/src/server.ts` | Connect the stable server to the bounded local feed |
 | `appview/tsconfig.json` | Include the shared JavaScript feed controls in the stable build |
 | `appview/src/peerFeed.mjs` | Apply bounds to snapshots and stream frames before existing authenticated validation |
+| `appview/scripts/peer-lifecycle-test.mjs` | Exercise the compiled production CLI with unchanged lifecycle deadlines and useful subprocess diagnostics |
 | `appview/scripts/peer-feed-test.mjs` | Signed malformed snapshot/commit admission regression tests |
 | `appview/scripts/input-bounds-test.mjs` (new) | Positive protocol fixtures and structural rejection boundaries |
 | `pds/package.json` | Reviewed exact mailer candidate, existing PDS generation |
@@ -222,3 +223,5 @@ MCP ownership clarification 2026-11-11: When the SDK closes an offending stdio t
 Push startup cancellation amendment 2026-11-11: Read-only independent review found that transport closure could stop the listener while HTTP bind was pending, before startup published its server/generation. Move the existing generation claim before asynchronous bind and close that same pending server if its generation was cancelled before publication. Add the named push module (thirty-one AIT implementation files total); reuse its existing cancellation concept and add a controlled bind-window regression in the already-declared push-mode fixture. Do not add a new ownership registry or interrupt other services.
 
 Authorized native adoption 2026-11-11: The user approved publishing the reviewed experimental.3 prerelease and continuing AIT adoption/checks. The native source PR is merged and the public immutable prerelease, source commit, artifact SHA256, npm integrity and Cargo.lock SHA256 are verified. Pin the exact public URL/integrity in the peer candidate; remove its no-longer-used direct ws-client declaration after adopting the shared bounded stream. Conservative graph identities and fresh regression requirements remain unchanged. This authorization does not update either laptop or publish an AIT release.
+
+Release-fixture amendment 2026-11-11: Hosted preparation reached the peer-state assertions but killed two CLI children at the existing five-second fixture deadline; earlier children took about 4.3 seconds, while two local full-suite runs passed. The fixture launches source through a fresh TSX loader although actual ait link and status callers use the compiled CLI. Add the existing lifecycle fixture (thirty-two AIT implementation files total) to run that same built entry point, explicitly require the build, and retain elapsed time, first-output time, exit signal and output on failure. Keep the five-second child deadline and all runtime/security/resource limits unchanged. This corrects the consumer fixture; the prior log alone does not establish a retained-handle defect.

@@ -15,6 +15,10 @@ import { loadState } from '../src/peerState.mjs'
 import { openDb } from '../src/db.ts'
 import { localCommand } from '../src/peerCli.mjs'
 
+// Match ait link/unlink and bin/status.sh: release validation builds first.
+const cliPath = new URL('../dist/peerCli.mjs', import.meta.url).pathname
+assert(fs.existsSync(cliPath), 'build AppView before running lifecycle CLI checks')
+
 function fixture(t) {
   const root = fs.mkdtempSync('/private/tmp/ait-peer-life-')
   const directory = path.join(root, 'appview/data/peers')
@@ -32,19 +36,20 @@ function fixture(t) {
   } }
 }
 async function runCli(root) {
-  const child = spawn(process.execPath, ['--import', 'tsx',
-    new URL('../src/peerCli.mjs', import.meta.url).pathname, 'status', root], {
+  const started = performance.now()
+  const child = spawn(process.execPath, [cliPath, 'status', root], {
     env: { ...process.env, HOME: root, XDG_DATA_HOME: path.join(root, 'xdg') },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  let stdout = '', stderr = ''
-  child.stdout.on('data', chunk => { stdout += chunk })
+  let stdout = '', stderr = '', firstOutputMs = null
+  child.stdout.on('data', chunk => { firstOutputMs ??= performance.now() - started; stdout += chunk })
   child.stderr.on('data', chunk => { stderr += chunk })
   const timeout = setTimeout(() => child.kill('SIGKILL'), 5000)
   const [code, signal] = await once(child, 'exit')
   clearTimeout(timeout)
-  assert.equal(signal, null, stderr)
-  assert.equal(code, 0, stderr)
+  const diagnostic = JSON.stringify({ elapsedMs: performance.now() - started, firstOutputMs, code, signal, stdout, stderr })
+  assert.equal(signal, null, diagnostic)
+  assert.equal(code, 0, diagnostic)
   return stdout
 }
 function savePeer(directory, relay) {
@@ -222,16 +227,18 @@ test('successful pairing reports approval without inventing a DATA connection', 
   assert.equal(result.id, first.id)
   assert.equal((await second.command('status')).peers[0].state, result.state)
   // Declining a second request is a no-op, regardless of retained approval.
-  const child = spawn(process.execPath, ['--import', 'tsx',
-    new URL('../src/peerCli.mjs', import.meta.url).pathname, 'link', b.root, invitation], {
+  const started = performance.now()
+  const child = spawn(process.execPath, [cliPath, 'link', b.root, invitation], {
     env: { ...process.env, HOME: b.root }, stdio: ['pipe', 'pipe', 'pipe'],
   })
-  let output = '', errors = ''
-  child.stdout.on('data', chunk => { output += chunk; if (output.includes('[y/N]')) child.stdin.end('n\n') })
+  let output = '', errors = '', firstOutputMs = null
+  child.stdout.on('data', chunk => { firstOutputMs ??= performance.now() - started; output += chunk; if (output.includes('[y/N]')) child.stdin.end('n\n') })
   child.stderr.on('data', chunk => { errors += chunk })
   const timeout = setTimeout(() => child.kill('SIGKILL'), 5000)
-  const [code] = await once(child, 'exit'); clearTimeout(timeout)
-  assert.equal(code, 0, errors)
+  const [code, signal] = await once(child, 'exit'); clearTimeout(timeout)
+  const diagnostic = JSON.stringify({ elapsedMs: performance.now() - started, firstOutputMs, code, signal, stdout: output, stderr: errors })
+  assert.equal(signal, null, diagnostic)
+  assert.equal(code, 0, diagnostic)
   assert.match(output, /Link request not submitted; existing approvals unchanged/)
   assert.equal((await second.command('status')).peers.length, 1)
 })

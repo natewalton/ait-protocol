@@ -201,6 +201,15 @@ export async function runCodexSession(): Promise<void> {
             // A previous owner can finish between selection and resume. Let
             // Codex arbitrate one safe retry; never stop a writer or delete locks.
             if (recheckAvailable && !owner) {
+              // The launcher captures ordinary logs until startup finishes.
+              // Write synchronously to its inherited notice channel first.
+              try {
+                fs.writeSync(process.env.AIT_CODEX_STARTUP_NOTICE_FD === '3' ? 3 : 2,
+                  'ait codex session: no external writer is visible; retrying this conversation once.\n')
+              } catch (noticeError) {
+                console.error(`ait codex session: could not display the recovery notice; resume was not retried: ${errMessage(noticeError)}`)
+                process.exit(1)
+              }
               try {
                 started = await client.threadResume({ threadId, ...threadParams, excludeTurns: true })
                 console.error('ait codex session: previous writer released the thread; resume recovered')

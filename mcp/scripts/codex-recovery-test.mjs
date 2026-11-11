@@ -343,9 +343,11 @@ for (const [label, error, transient] of [
 }
 console.log('ok - production host retries structured shutdown, not arbitrary -32600')
 
-for (const releases of [true, false]) {
+for (const [releases, noticeAvailable] of [[true, true], [false, true], [true, false]]) {
   let attempts = 0
-  const endpoint = await fakeAppServer(path.join(root, `writer-race-${releases}.sock`), {
+  const noticePath = path.join(root, `writer-notice-${releases}-${noticeAvailable}.txt`)
+  const noticeFd = noticeAvailable ? fs.openSync(noticePath, 'w') : undefined
+  const endpoint = await fakeAppServer(path.join(root, `writer-race-${releases}-${noticeAvailable}.sock`), {
     onRequest(message) {
       if (message.method === 'initialize') return { result: { codexHome: path.join(root, 'writer-home') } }
       if (message.method === 'server/diagnostics') return { result: { process: { id: process.pid } } }
@@ -353,20 +355,25 @@ for (const releases of [true, false]) {
       assert.equal(message.params.threadId, testThread)
       assert.equal(message.params.excludeTurns, true)
       attempts++
+      if (attempts === 2) assert.match(fs.readFileSync(noticePath, 'utf8'), /no external writer is visible; retrying this conversation once/,
+        'user notice must be written before the retry reaches the server')
       if (attempts === 1 || !releases) return { error: { code: -32600, message: `thread ${testThread} already has an active writer` } }
       return { result: threadResult() }
     },
   })
-  const driver = launchDriver(endpoint.socketPath)
+  const driver = launchDriver(endpoint.socketPath, { AIT_CODEX_STARTUP_NOTICE_FD: '3' }, noticeFd)
   try {
-    await waitUntil(() => releases ? driver.output.includes('→ thread') : driver.child.exitCode !== null, 'bounded writer race recovery')
-    assert.equal(attempts, 2, 'only one verified ownership recheck/retry')
-    if (releases) assert.match(driver.output, /resume recovered/)
+    await waitUntil(() => releases && noticeAvailable ? driver.output.includes('→ thread') : driver.child.exitCode !== null, 'bounded writer race recovery')
+    assert.equal(attempts, noticeAvailable ? 2 : 1, 'only retry after displaying the notice')
+    if (!noticeAvailable) {
+      assert.equal(driver.child.exitCode, 1)
+      assert.match(driver.output, /could not display the recovery notice; resume was not retried/)
+    } else if (releases) assert.match(driver.output, /resume recovered/)
     else {
       assert.equal(driver.child.exitCode, 1)
       assert.match(driver.output, /finish and close only that conversation/)
     }
-  } finally { await driver.close(); await endpoint.close() }
+  } finally { await driver.close(); await endpoint.close(); if (noticeFd !== undefined) fs.closeSync(noticeFd) }
 }
 console.log('ok - released writer recovers automatically; repeated ownership refusal stays bounded')
 
@@ -508,11 +515,11 @@ async function waitUntil(check, label) {
   }
   assert.fail(`${label} did not complete`)
 }
-function launchDriver(socket, overrides = {}) {
+function launchDriver(socket, overrides = {}, noticeFd) {
   const child = spawn(process.execPath, [fileURLToPath(new URL('../dist/server.js', import.meta.url)), '--resume', testThread], {
     cwd: root,
     env: { ...process.env, HOME: path.join(root, 'home'), CODEX_HOME: path.join(root, 'codex'), AIT_NOTIFICATION_MODE: 'codex', AIT_CODEX_SHARED_SOCKET: socket, PDS_URL: 'http://127.0.0.1:1', APPVIEW_URL: 'http://127.0.0.1:1', ...overrides },
-    stdio: ['ignore', 'ignore', 'pipe'],
+    stdio: ['ignore', 'ignore', 'pipe', ...(noticeFd === undefined ? [] : [noticeFd])],
   })
   const driver = { child, output: '', async close() {
     if (child.exitCode !== null || child.signalCode !== null) return

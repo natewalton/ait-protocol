@@ -67,6 +67,8 @@ jobs:
           npm --prefix appview run build
           node appview/scripts/duplicate-follow-test.mjs
           npm --prefix mcp run build
+          node mcp/scripts/codex-writer-ownership-test.mjs
+          node mcp/scripts/session-picker-test.mjs
           if [ "$GITHUB_REF" = refs/heads/build/private-peer-integration ]; then
             (cd appview && node scripts/operator-identity-test.mjs)
             (cd appview && node scripts/startup-readiness-test.mjs)

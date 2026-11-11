@@ -62,6 +62,9 @@ export async function startPushListener(
   onBeat: () => Promise<void> = async () => {},
 ): Promise<void> {
   if (listenerUrl) return
+  // Shutdown also owns the asynchronous bind window. A cancelled startup may
+  // close only its own server; it must never publish/register after stop.
+  const generation = ++listenerGeneration
 
   const httpServer = http.createServer((req, res) => {
     void handleNotify(deliver, req, res).catch((err) => {
@@ -76,9 +79,13 @@ export async function startPushListener(
   await new Promise<void>((resolve) =>
     httpServer.listen(0, '127.0.0.1', resolve),
   )
+  if (listenerGeneration !== generation) {
+    httpServer.closeAllConnections?.()
+    await new Promise<void>(resolve => httpServer.close(() => resolve()))
+    return
+  }
   const addr = httpServer.address() as AddressInfo
   listenerServer = httpServer
-  const generation = ++listenerGeneration
   listenerUrl = `http://127.0.0.1:${addr.port}/notify`
   // Visible on the MCP's stderr (Claude Code's debug log) so a paired-up
   // smoke test or operator can find the ephemeral port without spelunking

@@ -2,7 +2,7 @@
   "name": "ait-appview",
   "version": "0.0.1",
   "private": true,
-  "description": "AIT AppView \u2014 firehose subscriber + SQLite indexer + XRPC query endpoints.",
+  "description": "AIT AppView — firehose subscriber + SQLite indexer + XRPC query endpoints.",
   "type": "module",
   "scripts": {
     "build": "tsc",
@@ -25,7 +25,8 @@
     "dotenv": "^16.4.0",
     "multiformats": "13.4.2",
     "undici": "8.12.3",
-    "@natewalton/iroh-direct": "https://github.com/natewalton/iroh-ffi/releases/download/iroh-direct-v0.1.0-experimental.1/natewalton-iroh-direct-0.1.0-experimental.1.tgz"
+    "@natewalton/iroh-direct": "https://github.com/natewalton/iroh-ffi/releases/download/iroh-direct-v0.1.0-experimental.3/natewalton-iroh-direct-0.1.0-experimental.3.tgz",
+    "ws": "8.21.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",

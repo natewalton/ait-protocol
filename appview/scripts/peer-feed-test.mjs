@@ -9,7 +9,7 @@ import { WebSocketServer } from 'ws'
 import { Secp256k1Keypair } from '@atproto/crypto'
 import { MemoryBlockstore, Repo, concatBytesAsync, getFullRepo } from '@atproto/repo'
 import { AtUri } from '@atproto/syntax'
-import { MessageFrame, Subscription } from '@atproto/xrpc-server'
+import { MessageFrame } from '@atproto/xrpc-server'
 import { createVerifiedFeed } from '../src/peerFeed.mjs'
 import { openDb } from '../src/db.ts'
 import { getRecord } from '../src/queries/getRecord.ts'
@@ -359,21 +359,13 @@ test('destroy aborts an in-flight backfill read without reporting terminal failu
   assert.deepEqual(f.errors, [])
 })
 
-test('unexpected normal iterator completion is a terminal failure', async t => {
-  const iterator = Subscription.prototype[Symbol.asyncIterator]
-  Subscription.prototype[Symbol.asyncIterator] = async function * () {}
-  t.after(() => { Subscription.prototype[Symbol.asyncIterator] = iterator })
-  const db = openDb(':memory:'), errors = []
-  t.after(() => db.close())
-  const feed = createVerifiedFeed({ db, idResolver: {}, service: 'ws://127.0.0.1:9',
-    getJson: async () => ({ repos: [] }), getRepo: async () => { throw Error('unexpected repository read') },
-    onError: error => errors.push(error),
-  })
-  const error = await failed(feed)
+test('unexpected normal iterator completion is a terminal failure', { timeout: 5000 }, async t => {
+  const f = await fixture(t, { messages: [] })
+  f.server.on('connection', socket => socket.close(1000))
+  const error = await failed(f.feed)
   assert.equal(error.message, 'subscription ended unexpectedly')
-  assert.deepEqual(feed.getStatus(), { state: 'failed', error: error.message })
-  assert.deepEqual(errors, [error])
-  await feed.destroy().catch(() => {})
+  assert.deepEqual(f.feed.getStatus(), { state: 'failed', error: error.message })
+  assert.deepEqual(f.errors, [error])
 })
 
 test('an initially sleeping peer resumes signed backfill and live delivery using native reconnect', { timeout: 10000 }, async t => {
@@ -452,4 +444,27 @@ test('an initially sleeping peer resumes signed backfill and live delivery using
   assert.equal(feed.getCursor(), 1)
   assert.equal((await getRecord(db, { repo: A, collection: POST, rkey: 'live' })).value.text, 'signed live')
   assert.equal(reads, 1)
+})
+
+
+test('signed malformed snapshot records never admit identity or earlier valid records', { timeout: 5000 }, async t => {
+  for (const writes of [[post('bad', [])], [post('a-valid', 'valid but must not write'), post('z-bad', [])]]) {
+    await t.test(`${writes.length} records`, async sub => {
+      const value = await signed(A, writes)
+      const f = await fixture(sub, { repos: [value], pages: { '': { repos: [listing(value)] } }, messages: [] })
+      const error = await failed(f.feed)
+      assert.match(error.message, /text|Record/)
+      for (const table of ['actors', 'posts', 'profiles', 'follows']) assert.equal(f.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0, table)
+      assert.equal(f.feed.getCursor(), 0)
+    })
+  }
+})
+
+test('signed malformed commit records are all validated before projection', { timeout: 5000 }, async t => {
+  const value = await signed(A, [post('a-valid', 'must not write'), post('z-bad', [])])
+  const f = await fixture(t, { repos: [value], messages: [await commit(value, 1)] })
+  const error = await failed(f.feed)
+  assert.match(error.message, /text|Record/)
+  for (const table of ['actors', 'posts', 'profiles', 'follows']) assert.equal(f.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0, table)
+  assert.equal(f.feed.getCursor(), 0)
 })

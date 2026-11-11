@@ -4,12 +4,15 @@ import { Lexicons } from '@atproto/lexicon'
 import { cborToLexRecord, parseDataKey, verifyRepoCar } from '@atproto/repo'
 import { parseAccount, parseCommitAuthenticated, parseIdentity } from '@atproto/sync'
 import { AtUri } from '@atproto/syntax'
-import { Subscription } from '@atproto/xrpc-server'
+import { ensureChunkIsMessage } from '@atproto/xrpc-server'
+import { boundedStream } from './boundedStream.mjs'
+import { assertRepoCarBounds, assertFrameBounds } from './inputBounds.mjs'
 import { handleEvent } from './indexer.js'
+import { AIT_LEXICONS } from './aitLexicons.js'
 
 const METHOD = 'com.atproto.sync.subscribeRepos'
 const LIST = 'com.atproto.sync.listRepos'
-const lexicons = new Lexicons(schemas)
+const lexicons = new Lexicons([...schemas, ...AIT_LEXICONS])
 const collections = new Set(['ait.feed.post', 'ait.graph.follow', 'ait.actor.profile'])
 
 // idResolver and both readers must be bound to this approved source. The
@@ -29,10 +32,10 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
   }
   const controller = new AbortController()
   const opened = Promise.withResolvers()
-  const subscription = new Subscription({ service, agent, signal: controller.signal,
-    method: METHOD, getParams: () => ({ cursor }),
-    // Public ws option, forwarded by Subscription/WebSocketKeepAlive. Let the
-    // upstream reconnect an asleep peer before issuing any snapshot reads.
+  const stream = boundedStream({ agent, signal: controller.signal,
+    getUrl: async () => `${service}/xrpc/${METHOD}?cursor=${cursor}`,
+    // Observe the socket through the public ws option. Reconnect an asleep
+    // peer before issuing any snapshot reads.
     finishRequest(request, websocket) {
       activeSocket = websocket
       websocket.once('open', () => {
@@ -43,8 +46,18 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
         if (activeSocket === websocket && connection === 'connected') updateConnection('reconnecting')
       })
       request.end()
-    },
-    validate: value => lexicons.assertValidXrpcMessage(METHOD, value) })
+    } })
+  async function* boundedMessages() {
+    for await (const chunk of stream) {
+      assertFrameBounds(chunk)
+      const message = ensureChunkIsMessage(chunk)
+      const body = message.body
+      assert(body && typeof body === 'object' && !Array.isArray(body), 'Invalid subscription body')
+      const type = message.header.t
+      const value = type === undefined ? body : { ...body, $type: type.startsWith('#') ? METHOD + type : type }
+      yield lexicons.assertValidXrpcMessage(METHOD, value)
+    }
+  }
 
   async function boundDocument(did, refresh = false) {
     controller.signal.throwIfAborted()
@@ -76,19 +89,24 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
   async function reconcile(did, meta, doc) {
     doc ??= await boundDocument(did)
     const key = await idResolver.did.resolveAtprotoKey(did)
-    const { creates, commit } = await verifyRepoCar(await getRepo(did, controller.signal), did, key)
+    const { creates, commit } = await verifyRepoCar(assertRepoCarBounds(await getRepo(did, controller.signal)), did, key)
     const base = { ...meta, did, commit: commit.cid, blocks: commit.newBlocks, rev: commit.rev }
     const present = new Set()
-    // Verify the whole snapshot before making any projection changes.
-    await account(did, doc, true, undefined, meta)
+    // Authenticate and validate every selected record before admitting this
+    // snapshot, including its identity/account metadata.
+    const records = []
     for (const entry of creates) {
       if (!collections.has(entry.collection)) continue
       const uri = AtUri.make(did, entry.collection, entry.rkey)
       present.add(uri.toString())
       const bytes = commit.newBlocks.get(entry.cid)
       assert(bytes, `Verified snapshot is missing ${uri}`)
-      await project({ ...base, ...entry, uri, event: 'create', record: cborToLexRecord(bytes) })
+      const record = cborToLexRecord(bytes)
+      lexicons.assertValidRecord(entry.collection, record)
+      records.push({ ...base, ...entry, uri, event: 'create', record })
     }
+    await account(did, doc, true, undefined, meta)
+    for (const record of records) await project(record)
     const previous = db.prepare(
       'SELECT uri FROM posts WHERE did = ? UNION SELECT uri FROM follows WHERE did = ? UNION SELECT uri FROM follow_duplicates WHERE did = ?',
     ).all(did, did, did)
@@ -131,9 +149,13 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
     if (message.$type === `${METHOD}#sync` || message.tooBig === true) {
       await reconcile(did, message, doc)
     } else if (message.$type === `${METHOD}#commit`) {
+      if (message.blocks?.length) assertRepoCarBounds(message.blocks)
       const events = await parseCommitAuthenticated(idResolver, message, col => collections.has(col))
       const expected = message.ops.filter(op => collections.has(parseDataKey(op.path).collection))
       assert.equal(events.length, expected.length, `Incomplete authenticated commit for ${did}`)
+      for (const event of events) {
+        if (event.event === 'create' || event.event === 'update') lexicons.assertValidRecord(event.collection, event.record)
+      }
       for (const event of events) await project(event)
     } else if (message.$type === `${METHOD}#identity`) {
       const event = await parseIdentity(idResolver, message)
@@ -149,8 +171,8 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
   }
 
   async function consume() {
-    const iterator = subscription[Symbol.asyncIterator]()
-    const first = iterator.next() // Open the official stream before taking snapshots.
+    const iterator = boundedMessages()[Symbol.asyncIterator]()
+    const first = iterator.next() // Open the bounded stream before taking snapshots.
     void first.catch(error => controller.abort(error))
     try {
       // A quiet but open stream must backfill too. The read also propagates

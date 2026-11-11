@@ -1,8 +1,8 @@
 # Release AIT with verified security decisions and continuous checks
 
-Status: Proposed for implementation and validation. Release remains blocked until all acceptance criteria pass. 2026-11-10.
+Status: Implemented on the security branch with passing local fixtures and independent source review. Runtime refresh and exact experimental.3 local integration pass. The user authorized native publication and adoption on 2026-11-11; hosted checks, required repository rules and AIT release delivery remain pending.
 
-Scope: one focused security release followed by continuous enforcement. This spec adds one file; the implementation has nine declared files, listed below. Base: private-peer `d9e43e2`; stable comparison: `ce427fb`.
+Scope: one focused security release followed by continuous enforcement. This spec adds one file; the implementation has thirty-one declared AIT files, listed below. Refresh base: private-peer `98df264`; stable comparison: `8cadfd3` (v0.1.46).
 
 ## Why
 
@@ -35,7 +35,7 @@ Preserve the current PDS generation, database format, account DIDs, stored repos
 
 Start the implementation with the real ingress fixtures: PLC HTTP JSON, PDS JSON/record writes, peer log/profile responses, peer CAR/MST parsing, WebSocket subscription messages and MCP stdio framing. Verify whether existing limits constrain decoded content before expensive validation; include chunked/compressed input, invalid collections within the byte limit, malformed CAR/MST structures and concurrent requests. A signature failure must not be mistaken for a parsing resource bound.
 
-For each ingress, the test fixture must publish concrete byte/work/in-flight limits and a finite parent timeout and child memory limit. Establish and commit those values against valid representative fixtures **before accepting an adversarial result**; do not recalibrate them automatically to make the candidate pass. Required outcomes: valid supported workloads still complete; rejected inputs do not terminate the service, admit identity/projection writes, cause continuing memory growth, or prevent a subsequent health/read request. Capture peak RSS and response latency. A small standalone validator benchmark is supporting evidence only.
+For each ingress, the test fixture must publish concrete byte/work/in-flight limits and a finite parent timeout and child memory limit. Establish and commit those values against valid representative fixtures **before accepting an adversarial result**; do not recalibrate them automatically to make the candidate pass. Required outcomes: valid supported workloads still complete; rejected inputs do not terminate the service, admit identity/projection writes, cause continuing memory growth, or prevent a subsequent health/read request. Capture peak RSS and response latency. For MCP, malformed tool arguments must leave the same session usable. A framing-limit violation may close only the offending stdio transport, as the SDK specifies; verify the explicit size-limit error, unchanged application state, bounded resource use and a successful fresh MCP initialization/list/read. It must not interrupt shared AIT services. A small standalone validator benchmark is supporting evidence only.
 
 If current bounds fail, amend the counted file list with the actual ingress/control changes and their tests before editing those runtime files. This is not permission to waive a failing result. No candidate can pass on “test not implemented,” “limit inherited,” “trusted peer,” or an unmeasured resource budget. Source-backed advisory disagreement is recorded in the decision; effective bounds must be verified wherever that decision depends on them.
 
@@ -81,15 +81,37 @@ For an affected release assessed during preparation, provide the patch/effective
 
 ## Files touched
 
-**Specification:** this file only. **Declared implementation: nine files.**
+**Specification:** this file only. **Declared implementation: thirty-one AIT files.**
 
 | File | Outcome |
 | --- | --- |
+| `plc/launcher.js` | Explicit JSON parsing/error boundary preserving the existing 100KiB decoded limit and loopback binding |
+| `plc/package.json` | Declare the Express4 dependency used by that boundary |
+| `plc/package-lock.json` | Reproducible parser dependency |
+| `appview/package.json` | Declare the existing pinned official WebSocket client for pre-decode frame checks |
+| `appview/package-lock.json` | Reproducible direct client dependency |
+| `appview/src/inputBounds.mjs` (new) | Bound CBOR/CAR structure before object materialization |
+| `appview/src/boundedStream.mjs` (new) | Shared public WebSocket stream with one buffered frame, explicit payload bound, heartbeat/reconnect and cancellation |
+| `appview/src/localFeed.mjs` (new) | Bound stable local feed decoding and selected-record admission using existing official parsers |
+| `appview/src/server.ts` | Connect the stable server to the bounded local feed |
+| `appview/tsconfig.json` | Include the shared JavaScript feed controls in the stable build |
+| `appview/src/peerFeed.mjs` | Apply bounds to snapshots and stream frames before existing authenticated validation |
+| `appview/scripts/peer-feed-test.mjs` | Signed malformed snapshot/commit admission regression tests |
+| `appview/scripts/input-bounds-test.mjs` (new) | Positive protocol fixtures and structural rejection boundaries |
 | `pds/package.json` | Reviewed exact mailer candidate, existing PDS generation |
 | `pds/package-lock.json` | Reproducible resolved candidate |
 | `pds/scripts/mailer-security-test.mjs` (new) | Actual PDS mail composition/transport compatibility and security fixtures |
+| `mcp/src/boundedStdio.ts` (new) | Bound raw JSON structure before materialization and coalesce stdio frame fragments once before official SDK validation |
+| `mcp/src/server.ts` | Pass the bounded public input stream into the SDK without changing Codex driver mode |
+| `mcp/src/push.ts` | Extend existing listener cancellation ownership across asynchronous bind startup |
+| `mcp/scripts/push-mode-test.mjs` | Restore the existing push/EOF fixture to the released friendly-handle output contract |
+| `bin/ait-test.sh` | Keep the protected PLC launcher fixture and package-script callers under regression coverage |
 | `bin/security-input-test.mjs` (new) | Real ingress/resource and database-scope fixtures in isolated processes |
 | `bin/check-advisories.sh` | One policy evaluator for candidate npm/native findings |
+| `bin/check-advisories.mjs` (new) | Structured candidate/policy evaluator behind the shell entry point |
+| `bin/check-native-advisories.mjs` (new) | Exact shipped native artifact/source-lock verification and fresh RustSec audit |
+| `bin/check-native-advisories-test.mjs` (new) | Actual native helper verification against isolated malformed/provenance fixtures |
+| `bin/security-workflow-test.mjs` (new) | Checked publication and PR workflow regression fixtures |
 | `bin/check-advisories-test.mjs` (new) | Fail-closed policy/candidate fixtures |
 | `docs/security.md` | Current dispositions, evidence, owners/expiry, supported targets/native provenance and operating procedure |
 | `.github/workflows/release.yml` | Fresh checked publication for stable and peer with artifact verification |
@@ -166,3 +188,37 @@ Verified 2026-11-10; recheck external advisory/package data during implementatio
 - Existing clean-audit outcome: [issue #28](https://github.com/natewalton/ait-protocol/issues/28). Research artefacts supplement this spec; they are not required inputs to its acceptance tests.
 
 Revision 2026-11-10: Removed scheduled monitoring and response commitments at the maintainer’s request. Checks run on PRs and publication, with supported-release comparison during preparation.
+
+Implementation scope amendment 2026-11-10: The shared evaluator and native/workflow fixtures add three named AIT files (twelve total). Initial RustSec audit of the immutable native lock found RUSTSEC-2026-0384 (Tokio 1.54.0; patched 1.54.1) and RUSTSEC-2026-0385 (ctutils 0.4.3; patched 0.4.4), plus maintenance warnings. Validate the actual build graph before any non-applicability decision. Native remediation is scoped to `Cargo.lock` and `iroh-js/package.json` in an isolated iroh-ffi source checkout, its existing locked build/package scripts and direct-only transport contract tests. No native or AIT release is published by this implementation step; replacement artifact publication and adoption require verified immutable source/digest identities.
+
+Input-control scope amendment 2026-11-10: Actual PLC HTTP testing found that oversized decoded JSON reaches the published error handler before request logging exists, producing a stack-bearing 500. Add the three named PLC files above (fifteen AIT files total): an explicit Express4 parsing/error boundary around the upstream application, retaining its 100KiB limit and loopback binding. Verify malformed/chunked/compressed/oversized rejection, valid signed operations, no writes on rejection and subsequent availability through the actual launcher. This is an error-response defect, not a demonstrated exhaustion exploit.
+
+Protocol acceptance clarification 2026-11-10: The installed MCP SDK explicitly closes the offending stdio transport when its 10MiB ReadBuffer limit is exceeded (`@modelcontextprotocol/sdk/dist/esm/server/stdio.js:18-21`, `shared/stdio.js:2,10-15`). Keep that protocol boundary and verify fresh-session recovery; malformed ordinary tool calls still require same-session availability. This is not permission for a shared service to exit or for invalid data to be admitted.
+
+Native validation amendment 2026-11-10: Add `bin/check-native-advisories-test.mjs` (sixteen AIT implementation files total) to verify the actual helper against malformed reports, inconsistent exit status, stale/future databases, unknown artifacts and digest mismatches without network access.
+
+Decoded-input scope amendment 2026-11-10: The isolated CAR fixture exhausted its capped heap below the existing 100MiB byte ceiling. Add the five named AppView files above (twenty-one AIT implementation files total), retaining the official WebSocket connection/reconnect implementation while checking raw frames before CBOR decoding and CAR structures before repository verification. Declare concrete decoded-work/depth/block/header limits, preserve supported valid snapshots, expose a clear feed failure for rejected input and verify no admission plus subsequent permitted operation. Do not mark Zod/resource mitigation verified until the revised bounded fixtures pass.
+
+Build/runtime validation distinction 2026-11-10: The TypeScript compiler exceeds the service fixture’s 256MiB old-space limit on the positive build workload. Compile deployed MCP JavaScript first under a separate 1024MiB/60-second build budget and temporary home, then measure actual MCP runtime under the unchanged 128MiB child heap and 768MiB aggregate fixture RSS limit. Do not count compiler memory as malformed-input runtime behavior or raise parser budgets to cover it.
+
+Admission amendment 2026-11-10: Independent review reproduced partial identity admission from a small signed repository containing an invalid AIT record. Validate every selected snapshot/commit record against the AIT and standard lexicons before any record or account projection. Add the existing peer-feed test file to scope (twenty-two AIT implementation files total), including a valid record preceding an invalid one; rejection must preserve identity/projection rows and cursor.
+
+Launcher-fixture amendment 2026-11-10: Add `bin/ait-test.sh` (twenty-three AIT implementation files total) so the existing isolated launcher fixture models the explicit Express boundary and asserts both npm start/dev use the protected loopback launcher. No test may invoke installed services.
+
+Refresh amendment 2026-11-11: Include immutable stable v0.1.46 (`8cadfd3d7bbd54c46622ebe120678911d73986fb`) in supported-release assessment under the conservative local-and-approved-peer rule; retain prior releases until explicitly retired. Preserve its XML parser patch and writer recovery checks during both security branch rebases. Record the already-replayed peer.2 history as a merge parent without changing candidate files, retaining the existing immutable ancestry and schema gates.
+
+Buffering scope amendment 2026-11-11: Inspection found the official ws-client uses an object-mode stream with a sixteen-frame high-water mark, while stable Firehose also schedules MemoryRunner tasks without awaiting them. At the existing 100 MiB per-frame ceiling this does not establish the committed service-memory bound. Add the four named AppView files above (twenty-seven AIT files total), use the public WebSocket stream with one buffered frame and serial processing, and preserve official protocol parsers, existing transport/security policy, heartbeat, reconnect and cancellation. Apply the shared buffering control to both local and peer feeds. Extend the bounded harness with an actual stable server/index/read journey and bursts during slow processing; choose the runtime implementation under test without narrowing exposure or treating missing runtime files as passing coverage. Positive representative workloads, rejected admission, subsequent availability and fixed memory/deadline budgets remain required.
+
+Native refresh amendment 2026-11-11: A fresh full-lock audit of the prepared experimental.2 found RUSTSEC-2026-0486 (rustix 1.1.5 unsoundness; patched 1.1.6). Retain it as a blocker until the same declared native lock scope is patched and the exact packed experimental.3 replacement passes fresh audit, package tests and strict/default transport proofs. Do not reuse the prior draft identity or present yesterday's result as current. No native/AIT publication or live installation is authorized by this build step.
+
+MCP allocation amendment 2026-11-11: The full stable resource run exceeded the unchanged 768 MiB aggregate watchdog (771 MiB). Measurement isolated repeated SDK ReadBuffer Buffer.concat allocation while accumulating a fragmented 10 MiB frame: the actual MCP child peaked at 681 MiB and the fixture at about 80 MiB. Add the two named MCP files above (twenty-nine AIT files total). Coalesce bounded newline frames once using public stream APIs before the official transport; retain the SDK default byte limit, JSON-RPC validation and explicit overflow error/transport closure. Forward an overflow signal as at most limit+1 bytes to the SDK rather than inventing an alternate protocol error. Preserve CRLF/multiple frames, raw stdin EOF and Codex driver mode; verify ordinary malformed-call recovery, overflow/fresh-session behavior and fixed resource budgets without private prototype changes in production. No budget increase is allowed.
+
+MCP decoded-work amendment 2026-11-11: Independent actual-server testing found a second issue below the SDK byte ceiling: a 9,500,086-byte tool request with 500,000 unknown argument keys aborts the 128 MiB MCP child during SDK deserialization/materialization (NameDictionary allocation), while smaller cases return validation errors. The same declared boundedStdio module must therefore scan raw bounded JSON without materializing objects, reject more than 65,536 value/key tokens or depth beyond 64, and preserve opaque string payload capacity. Structural rejection returns an explicit correlated JSON-RPC resource error and keeps this same MCP session usable; it is not an SDK byte-limit overflow. Safely identify only the top-level primitive request id, including escaped id keys and an id after the rejected argument object, without decoding that object or matching nested id fields. The official SDK remains responsible for JSON and JSON-RPC semantic validation on admitted frames. Add the real large-object case and same-session subsequent read, depth, escaped-string/id and fragmented near-byte-limit positive regressions under unchanged heap/RSS/deadline budgets.
+
+Push compatibility fixture amendment 2026-11-11: The existing offline push-mode suite checks transport/EOF ownership but retained an obsolete @bob.test author expectation. Released v0.1.46 already uses displayHandle and emits @bob. Add the named fixture file (thirty AIT implementation files total) to assert the released behavior while retaining its actual SDK initialize, push delivery and stdin-EOF lifecycle journey. No notification formatting changes are introduced.
+
+MCP ownership clarification 2026-11-11: When the SDK closes an offending stdio transport, invoke the existing push-listener cleanup as well as pausing the bounded input. A dead transport must not continue renewing a push target or retain its HTTP listener. Ordinary structural request rejection keeps the transport/listener alive; byte overflow and raw stdin EOF affect only this conversation's MCP process.
+
+Push startup cancellation amendment 2026-11-11: Read-only independent review found that transport closure could stop the listener while HTTP bind was pending, before startup published its server/generation. Move the existing generation claim before asynchronous bind and close that same pending server if its generation was cancelled before publication. Add the named push module (thirty-one AIT implementation files total); reuse its existing cancellation concept and add a controlled bind-window regression in the already-declared push-mode fixture. Do not add a new ownership registry or interrupt other services.
+
+Authorized native adoption 2026-11-11: The user approved publishing the reviewed experimental.3 prerelease and continuing AIT adoption/checks. The native source PR is merged and the public immutable prerelease, source commit, artifact SHA256, npm integrity and Cargo.lock SHA256 are verified. Pin the exact public URL/integrity in the peer candidate; remove its no-longer-used direct ws-client declaration after adopting the shared bounded stream. Conservative graph identities and fresh regression requirements remain unchanged. This authorization does not update either laptop or publish an AIT release.

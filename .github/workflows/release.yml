@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   validate:
-    if: inputs.operation == 'prepare' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/build/private-peer-integration')
+    if: (inputs.operation == 'prepare' || inputs.operation == 'publish') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/build/private-peer-integration')
     runs-on: macos-latest
     permissions:
       contents: read
@@ -29,6 +29,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24
@@ -38,6 +39,38 @@ jobs:
             pds/package-lock.json
             appview/package-lock.json
             mcp/package-lock.json
+      - name: Assess supported releases during preparation
+        if: inputs.operation == 'prepare'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { execFileSync } from 'node:child_process';
+          import { loadPolicy, checkCandidate } from './bin/check-advisories.mjs';
+          const git = args => execFileSync('git', args, { encoding: 'utf8', timeout: 60000 }).trim();
+          const policy = loadPolicy(process.cwd());
+          if (!policy.supportedReleases.length) throw Error('supported release inventory is empty');
+          for (const release of policy.supportedReleases) {
+            const ref = `refs/ait-security/${release.tag}`;
+            git(['fetch', '--no-tags', 'origin', `refs/tags/${release.tag}:${ref}`]);
+            if (git(['rev-parse', `${ref}^{commit}`]) !== release.commit) throw Error(`moved supported tag: ${release.tag}`);
+            const directory = path.join(process.env.RUNNER_TEMP, `security-${release.tag}`);
+            git(['worktree', 'add', '--detach', directory, release.commit]);
+            try {
+              // Lock/native audits require no dependency installation or execution
+              // of the historical tag's checker, policy or lifecycle scripts.
+              const report = await checkCandidate(directory);
+              console.log(JSON.stringify({ supportedTag: release.tag, ...report }));
+              if (Object.keys(report.scannerTotals).length !== 4 || report.native?.status !== 'complete' || report.native.errors.length) throw Error(`incomplete supported-release audit: ${release.tag}`);
+              const highs = Object.values(report.scannerTotals).reduce((sum, totals) => sum + totals.high + totals.critical, 0);
+              fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n${release.tag}: ${report.status}; ${highs} High/Critical affected-package findings. See assessment log for findings and unverified runtime regressions.\n`);
+              // Older findings are reported, never used to waive candidate blockers.
+            } finally { git(['worktree', 'remove', '--force', directory]); }
+          }
+          NODE
       - name: Validate candidate and run gates
         env:
           RELEASE_VERSION: ${{ inputs.version }}
@@ -68,6 +101,7 @@ jobs:
           npm --prefix appview run build
           node appview/scripts/duplicate-follow-test.mjs
           npm --prefix mcp run build
+          node mcp/scripts/push-mode-test.mjs
           node mcp/scripts/codex-writer-ownership-test.mjs
           node mcp/scripts/session-picker-test.mjs
           if [ "$GITHUB_REF" = refs/heads/build/private-peer-integration ]; then
@@ -89,11 +123,15 @@ jobs:
           node mcp/scripts/codex-recovery-test.mjs
           bin/codex-native-contract-test.sh
           bin/check-single-lexicon.sh
-          bin/check-advisories.sh
+          node pds/scripts/mailer-security-test.mjs
+          node bin/check-advisories-test.mjs
+          node bin/security-workflow-test.mjs
+          node bin/check-native-advisories-test.mjs
+          GITHUB_TOKEN="${{ github.token }}" bin/check-advisories.sh --candidate "$GITHUB_WORKSPACE"
 
   release:
     needs: validate
-    if: ${{ always() && github.ref == 'refs/heads/main' && ((inputs.operation == 'prepare' && needs.validate.result == 'success') || (inputs.operation == 'publish' && needs.validate.result == 'skipped')) }}
+    if: needs.validate.result == 'success' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/build/private-peer-integration')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -105,13 +143,14 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Prepare exact release asset
         id: asset
         run: |
           set -euo pipefail
           tag="v$RELEASE_VERSION"
-          git fetch --quiet origin main
-          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          git fetch --quiet origin "$GITHUB_REF_NAME"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/remotes/origin/$GITHUB_REF_NAME")"
           asset="$RUNNER_TEMP/install.sh"
           sed -e "s/__AIT_RELEASE_TAG__/$tag/g" \
               -e "s/__AIT_RELEASE_COMMIT__/$(git rev-parse HEAD)/g" \
@@ -139,10 +178,17 @@ jobs:
           fi
           latest_json="$RUNNER_TEMP/latest-release.json"
           gh api "repos/$GITHUB_REPOSITORY/releases/latest" > "$latest_json"
-          previous_release="$(node - "$latest_json" <<'NODE'
+          if [ "$GITHUB_REF_NAME" = build/private-peer-integration ]; then
+            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '[.[] | select(.prerelease and (.draft | not) and (.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-peer\\.[1-9][0-9]*$")))] | first' > "$RUNNER_TEMP/previous-channel.json"
+          else
+            cp "$latest_json" "$RUNNER_TEMP/previous-channel.json"
+          fi
+          previous_release="$(node - "$RUNNER_TEMP/previous-channel.json" <<'NODE'
           const fs = require('fs');
           const r = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-          if (!/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(r.tag_name || '') || !/^[0-9a-f]{40}$/.test(r.target_commitish || '') || r.draft || r.prerelease || r.immutable !== true) process.exit(1);
+          const peer = process.env.GITHUB_REF_NAME === 'build/private-peer-integration';
+          const version = peer ? /^v[0-9]+\.[0-9]+\.[0-9]+-peer\.[1-9][0-9]*$/ : /^v[0-9]+\.[0-9]+\.[0-9]+$/;
+          if (!r || !version.test(r.tag_name || '') || !/^[0-9a-f]{40}$/.test(r.target_commitish || '') || r.draft || r.prerelease !== peer || r.immutable !== true) process.exit(1);
           process.stdout.write(`${r.tag_name}\t${r.target_commitish}`);
           NODE
             )"
@@ -155,7 +201,7 @@ jobs:
         if: env.RELEASE_OPERATION == 'prepare'
         run: |
           set -euo pipefail
-          latest_json="$RUNNER_TEMP/latest-release.json"
+          latest_json="$RUNNER_TEMP/previous-channel.json"
           previous="$(node - "$latest_json" <<'NODE'
           const fs = require('fs');
           process.stdout.write(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')).tag_name || '');
@@ -190,8 +236,10 @@ jobs:
             exit "$rc"
           }
           trap on_prepare_failure EXIT
-          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
-          gh release create "$RELEASE_TAG" "$RELEASE_ASSET#install.sh" \
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/remotes/origin/$GITHUB_REF_NAME")"
+          channel_args=(--latest=false)
+          if [ "$GITHUB_REF_NAME" = build/private-peer-integration ]; then channel_args+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" "$RELEASE_ASSET#install.sh" "${channel_args[@]}" \
             --draft --generate-notes --target "$(git rev-parse HEAD)" \
             --title "AIT $RELEASE_TAG"
           draft_created=1
@@ -202,7 +250,7 @@ jobs:
           const [raw, expectedCommit, expectedDigest] = process.argv.slice(2);
           const r = JSON.parse(raw);
           const a = (r.assets || []).find(x => x.name === 'install.sh');
-          if (!r.draft || r.prerelease || r.target_commitish !== expectedCommit || !a || a.digest !== `sha256:${expectedDigest}`) process.exit(1);
+          if (!r.draft || r.prerelease !== (process.env.GITHUB_REF_NAME === 'build/private-peer-integration') || r.target_commitish !== expectedCommit || !a || a.digest !== `sha256:${expectedDigest}`) process.exit(1);
           NODE
           gh release view "$RELEASE_TAG" --json url,tagName,targetCommitish,isDraft
       - name: Publish inspected immutable release
@@ -212,7 +260,7 @@ jobs:
           RELEASE_ASSET: ${{ steps.asset.outputs.asset }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/remotes/origin/$GITHUB_REF_NAME")"
           draft_target="$(gh release view "$RELEASE_TAG" --json databaseId,targetCommitish,isDraft --jq '(.databaseId|tostring)+"\t"+.targetCommitish+"\t"+(.isDraft|tostring)')"
           draft_id="${draft_target%%$'\t'*}"
           draft_target="${draft_target#*$'\t'}"
@@ -224,14 +272,21 @@ jobs:
           const [raw, expectedCommit, expectedDigest] = process.argv.slice(2);
           const r = JSON.parse(raw);
           const a = (r.assets || []).find(x => x.name === 'install.sh');
-          if (!r.draft || r.prerelease || r.target_commitish !== expectedCommit || !a || a.digest !== `sha256:${expectedDigest}`) process.exit(1);
+          if (!r.draft || r.prerelease !== (process.env.GITHUB_REF_NAME === 'build/private-peer-integration') || r.target_commitish !== expectedCommit || !a || a.digest !== `sha256:${expectedDigest}`) process.exit(1);
           NODE
-          gh release edit "$RELEASE_TAG" --draft=false
-          release_json="$(curl -fsSL -H 'X-GitHub-Api-Version: 2026-03-10' "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest")"
+          if [ "$GITHUB_REF_NAME" = build/private-peer-integration ]; then
+            latest_before="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.id')"
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease=true --latest=false
+            test "$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.id')" = "$latest_before"
+            release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$draft_id")"
+          else
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest=true
+            release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest")"
+          fi
           node - "$release_json" "$RELEASE_TAG" "$(git rev-parse HEAD)" "$(shasum -a 256 "$RELEASE_ASSET" | awk '{print $1}')" <<'NODE'
           const [raw, expectedTag, expectedCommit, expected] = process.argv.slice(2);
           const r = JSON.parse(raw);
-          if (r.tag_name !== expectedTag || r.draft || r.prerelease || r.immutable !== true || r.target_commitish !== expectedCommit || r.html_url !== `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/tag/${expectedTag}`) process.exit(1);
+          if (r.tag_name !== expectedTag || r.draft || r.prerelease !== (process.env.GITHUB_REF_NAME === 'build/private-peer-integration') || r.immutable !== true || r.target_commitish !== expectedCommit || r.html_url !== `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/tag/${expectedTag}`) process.exit(1);
           const a = (r.assets || []).find(x => x.name === 'install.sh');
           if (!a || a.digest !== `sha256:${expected}`) process.exit(1);
           NODE

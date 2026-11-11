@@ -1,5 +1,6 @@
 import 'dotenv/config'
-import { Firehose, MemoryRunner, type Event } from '@atproto/sync'
+import type { Event } from '@atproto/sync'
+import { createLocalFeed } from './localFeed.mjs'
 import { IdResolver, MemoryCache } from '@atproto/identity'
 import {
   AuthRequiredError,
@@ -58,16 +59,10 @@ async function main() {
   // replaying from 0 on every restart is safe; durability/persistence of a
   // cursor can come later if replay time becomes meaningful.
   //
-  // We pass a MemoryRunner (with startCursor: 0) rather than the bare
-  // `getCursor: () => 0` option because @atproto/sync's getParams builder
-  // returns the getCursor *function itself* (not its result) when no runner is
-  // set, which fails query-param encoding. Observed on 0.1.40 and retained
-  // through the 0.3 upgrade (the AppView still replays from seq 0 cleanly).
-  const runner = new MemoryRunner({ startCursor: 0 })
-  const firehose = new Firehose({
+  // A bounded stream applies backpressure while one event is projected.
+  const firehose = createLocalFeed({
     idResolver,
     service: PDS_WS_URL,
-    runner,
     handleEvent: async (evt: Event) => {
       try {
         // idResolver carries the cache for #identity invalidation AND is
@@ -83,9 +78,6 @@ async function main() {
       const cause = (err as Error & { cause?: unknown }).cause
       console.error('firehose error:', err.message, cause instanceof Error ? cause.message : cause)
     },
-    filterCollections: ['ait.feed.post', 'ait.graph.follow', 'ait.actor.profile'],
-    unauthenticatedCommits: true,
-    unauthenticatedHandles: true,
   })
 
   firehose.start()

@@ -108,6 +108,16 @@ source commit, source-lock digest and exact crate path/version.
       "tag": "v0.1.46-peer.2",
       "commit": "3fe1681b06f2de0fa98402f0dac5594dee7a62ba",
       "exposure": "local-and-approved-peer"
+    },
+    {
+      "tag": "v0.1.47",
+      "commit": "70b45aa6778a4ff821119981189943d275e71632",
+      "exposure": "local-and-approved-peer"
+    },
+    {
+      "tag": "v0.1.46-peer.3",
+      "commit": "7a20b018bd98246bc69524a0e052bfc75f95307c",
+      "exposure": "local-and-approved-peer"
     }
   ],
   "nativeArtifacts": [

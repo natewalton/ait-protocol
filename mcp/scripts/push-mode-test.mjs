@@ -239,6 +239,39 @@ if (!eofResult) {
 check('(g) stdin EOF exits Claude MCP', listenerUp && eofResult?.code === 0 && eofResult?.signal === null,
   `code=${eofResult?.code} signal=${eofResult?.signal}`)
 
+// (h) Close during asynchronous HTTP bind: startup must not publish a late
+// listener after its owner has already stopped. Only this owned fixture binds.
+const { Server: HttpServer } = await import('node:http')
+const { startPushListener, stopPushListener } = await import('../dist/push.js')
+const originalListen = HttpServer.prototype.listen
+let releaseBind, boundServer
+let boundResolve
+const bound = new Promise(resolve => { boundResolve = resolve })
+HttpServer.prototype.listen = function (...args) {
+  const callback = args.at(-1)
+  args[args.length - 1] = () => {
+    boundServer = this
+    releaseBind = () => callback.call(this)
+    boundResolve()
+  }
+  return originalListen.apply(this, args)
+}
+try {
+  const starting = startPushListener(async () => {}, () => false)
+  await bound
+  const port = boundServer.address().port
+  await stopPushListener()
+  releaseBind()
+  await starting
+  let closed = false
+  try { await fetch(`http://127.0.0.1:${port}/notify`, { signal: AbortSignal.timeout(1000) }) }
+  catch { closed = true }
+  check('(h) cancelled bind never leaves a late push listener', closed)
+} finally {
+  HttpServer.prototype.listen = originalListen
+  await stopPushListener()
+}
+
 rmSync(IDENT_PATH)
 rmSync(XDG_DATA_HOME, { recursive: true, force: true })
 

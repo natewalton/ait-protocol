@@ -2,7 +2,7 @@
 
 Status: This copy describes the private-peer implementation and its passing local fixtures/source review. The main branch contains only the draft shared controls; stable AppView validation is incomplete. Runtime refresh and exact experimental.3 local integration pass; native publication/adoption, hosted checks, required repository rules and release delivery remain pending. 2026-11-11.
 
-Scope: one focused security release followed by continuous enforcement. This spec adds one file; the implementation has thirty declared AIT files, listed below. Refresh base: private-peer `98df264`; stable comparison: `8cadfd3` (v0.1.46).
+Scope: one focused security release followed by continuous enforcement. This spec adds one file; the implementation has thirty-one declared AIT files, listed below. Refresh base: private-peer `98df264`; stable comparison: `8cadfd3` (v0.1.46).
 
 ## Why
 
@@ -81,7 +81,7 @@ For an affected release assessed during preparation, provide the patch/effective
 
 ## Files touched
 
-**Specification:** this file only. **Declared implementation: thirty AIT files.**
+**Specification:** this file only. **Declared implementation: thirty-one AIT files.**
 
 | File | Outcome |
 | --- | --- |
@@ -103,6 +103,7 @@ For an affected release assessed during preparation, provide the patch/effective
 | `pds/scripts/mailer-security-test.mjs` (new) | Actual PDS mail composition/transport compatibility and security fixtures |
 | `mcp/src/boundedStdio.ts` (new) | Bound raw JSON structure before materialization and coalesce stdio frame fragments once before official SDK validation |
 | `mcp/src/server.ts` | Pass the bounded public input stream into the SDK without changing Codex driver mode |
+| `mcp/src/push.ts` | Extend existing listener cancellation ownership across asynchronous bind startup |
 | `mcp/scripts/push-mode-test.mjs` | Restore the existing push/EOF fixture to the released friendly-handle output contract |
 | `bin/ait-test.sh` | Keep the protected PLC launcher fixture and package-script callers under regression coverage |
 | `bin/security-input-test.mjs` (new) | Real ingress/resource and database-scope fixtures in isolated processes |
@@ -217,3 +218,5 @@ MCP decoded-work amendment 2026-11-11: Independent actual-server testing found a
 Push compatibility fixture amendment 2026-11-11: The existing offline push-mode suite checks transport/EOF ownership but retained an obsolete @bob.test author expectation. Released v0.1.46 already uses displayHandle and emits @bob. Add the named fixture file (thirty AIT implementation files total) to assert the released behavior while retaining its actual SDK initialize, push delivery and stdin-EOF lifecycle journey. No notification formatting changes are introduced.
 
 MCP ownership clarification 2026-11-11: When the SDK closes an offending stdio transport, invoke the existing push-listener cleanup as well as pausing the bounded input. A dead transport must not continue renewing a push target or retain its HTTP listener. Ordinary structural request rejection keeps the transport/listener alive; byte overflow and raw stdin EOF affect only this conversation's MCP process.
+
+Push startup cancellation amendment 2026-11-11: Read-only independent review found that transport closure could stop the listener while HTTP bind was pending, before startup published its server/generation. Move the existing generation claim before asynchronous bind and close that same pending server if its generation was cancelled before publication. Add the named push module (thirty-one AIT implementation files total); reuse its existing cancellation concept and add a controlled bind-window regression in the already-declared push-mode fixture. Do not add a new ownership registry or interrupt other services.

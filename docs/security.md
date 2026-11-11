@@ -60,18 +60,18 @@ Malformed ordinary MCP tool calls leave their session usable. Raw JSON preflight
 
 The refreshed Node24 fixtures passed five stable groups and seven peer groups, retaining the fixed 256 MiB old-space/768 MiB aggregate RSS and 32 MiB retained-growth limits; actual MCP runtime uses 128 MiB old-space. Peak measured aggregate RSS was 596 MiB for stable and 484 MiB for peer, with maximum retained growth below 9 MiB. Actual MCP server peaks were 231/214 MiB after bounded framing and JSON preflight, versus 681 MiB in the earlier fragmented-frame diagnostic. Positive compilation retains its separate 1024 MiB/60-second build budget. Tests cover real stable server/index/HTTP-read behavior, a signed 32-post snapshot and structural 100 MiB CAR/frame acceptance separately; this is not a full semantic 100 MiB repository/message compatibility claim.
 
-## Prepared native replacement
+## Published native replacement
 
 [Native patch PR](https://github.com/natewalton/iroh-ffi/pull/1) updates Tokio 1.54.0 → 1.54.1, ctutils 0.4.3 → 0.4.4 and rustix 1.1.5 → 1.1.6 in the exact source lock. The locally packed experimental.3 addon passed 28 package tests and controlled-network strict/default transport proofs. A fresh full-workspace audit covers 464 locked packages: zero vulnerabilities, no unsoundness warning, and the same three unmaintained notices recorded below as informational residual risks. This does not clear unrelated bundled native libraries.
 
-The exact packed experimental.3 also passed all 14 outcomes of the isolated two-PDS collaboration journey, including post/reply/notification readback, UDP outage recovery, unlink/relink, native policy refusal and pending-connect cancellation. That is supporting local artifact proof: the candidate dependency still declares experimental.1.
+The exact packed experimental.3 also passed all 14 outcomes of the isolated two-PDS collaboration journey, including post/reply/notification readback, UDP outage recovery, unlink/relink, native policy refusal and pending-connect cancellation. That initial journey is supporting local artifact proof; the adopted candidate must pass its own fresh gate and release regressions.
 
-The replacement is **not published or adopted**. The existing experimental.2 draft is superseded by this build after the fresh audit found [RUSTSEC-2026-0486](https://github.com/RustSec/advisory-db/blob/main/crates/rustix/RUSTSEC-2026-0486.md). The current experimental.1 dependency remains blocked. The experimental.3 policy identity authorizes neither substituted bytes nor an unpublished download: the checker must retrieve and verify the exact artifact/source lock, and installed dependency correspondence must hold before candidate regressions can apply. No release or live installation is performed by these changes.
+[Experimental.3](https://github.com/natewalton/iroh-ffi/releases/tag/iroh-direct-v0.1.0-experimental.3) is published as an immutable prerelease at the exact source/digest identity below. Anonymous public asset and source-lock readback matched the reviewed bytes. The peer security candidate now pins its exact URL/integrity; stable has no peer transport dependency. The unpublished experimental.2 draft is superseded after the fresh audit found RUSTSEC-2026-0486. Older experimental.1 releases remain blocked. Every adopted candidate still requires current package/source correspondence, native audit and runtime evidence; publication alone is not candidate approval. No AIT release or live installation is performed by this change.
 
 ## Maintained policy
 
 This is the single active machine-readable policy. The old decisions below are
-historical evidence, not authorization. Current Kysely decisions require actual dialect regressions; current Zod mitigation requires the entire bounded ingress suite to pass. Nodemailer findings are absent from the fresh upgraded graph and have no maintained exception. Affected historical releases remain blocked by the current checker. The published native transport remains blocked until its patched replacement is published and adopted. Reviewed lower-severity
+historical evidence, not authorization. Current Kysely decisions require actual dialect regressions; current Zod mitigation requires the entire bounded ingress suite to pass. Nodemailer findings are absent from the fresh upgraded graph and have no maintained exception. Affected historical releases remain blocked by the current checker. The published experimental.3 transport must match its exact reviewed source/artifact and pass a fresh audit; older experimental.1 releases remain blocked. Reviewed lower-severity
 residual risks may use explicit accepted-risk decisions; they are not mitigations. Expired blocked records
 remain useful explanations; they never authorize publication. A real approved
 disposition needs its exact advisory revision/status and actual current passing
@@ -402,7 +402,7 @@ source commit, source-lock digest and exact crate path/version.
       "components": [
         {
           "path": "node_modules/zod",
-          "dependencyFingerprint": "sha256:d7174b627f2c72db399a2aa7aca9e2a8021cf3561b30ee37e70b7b4eac3aa276"
+          "dependencyFingerprint": "sha256:5962dc6fa177d99ed869e9b35f4a3f379b54117d45529fda45b5713e29726b21"
         },
         {
           "path": "node_modules/zod",

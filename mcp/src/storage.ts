@@ -93,7 +93,7 @@ export function canonicalUuid(raw: string | null | undefined): string | null {
 // (no module-level memoization). Override is shape-validated the same
 // way the production sources are — an asymmetric trust gap would let a
 // malformed value silently produce a stable-but-wrong identity file.
-function resolveSessionUuid(): string {
+export function resolveSessionUuid(): string {
   const rawOverride = process.env.AIT_MCP_TEST_SESSION_ID
   if (rawOverride !== undefined) {
     const override = canonicalUuid(rawOverride)
@@ -224,12 +224,12 @@ function decryptInner(
   return JSON.parse(pt.toString('utf8')) as EncryptedInner
 }
 
-export function loadIdentity(): PersistedIdentity | null {
+export function loadIdentity(capturedUuid?: string): PersistedIdentity | null {
   // Resolver failure → no identity (rather than crashing the MCP child on
   // module init). Callers see this as "first run, please call join".
   let uuid: string
   try {
-    uuid = resolveSessionUuid()
+    uuid = capturedUuid ?? resolveSessionUuid()
   } catch (err) {
     if (err instanceof MissingSessionIdError || err instanceof ClaudeHandoverPending) return null
     throw err
@@ -263,11 +263,11 @@ export function loadIdentity(): PersistedIdentity | null {
   }
 }
 
-export function saveIdentity(identity: Identity): void {
+export function saveIdentity(identity: Identity, capturedUuid?: string): void {
   // Resolve once at entry, thread the UUID through path + key derivation,
   // so a mid-call mtime fluctuation can't split path-from-key. Throws on
   // unresolvable session — surface to caller (test-misconfig contract).
-  const uuid = resolveSessionUuid()
+  const uuid = capturedUuid ?? resolveSessionUuid()
   const p = identityPath(uuid)
   fs.mkdirSync(path.dirname(p), { recursive: true, mode: 0o700 })
   // Preserve the notification cursor across rewrites: saveIdentity is called

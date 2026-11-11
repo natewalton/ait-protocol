@@ -34,18 +34,18 @@ let identity: Identity | null = (() => {
   }
 })()
 
-export function getIdentity(): Identity | null {
+export function getIdentity(capturedUuid?: string): Identity | null {
   if (!identity) {
-    ensureSessionIdentityReady()
-    const saved = loadIdentity()
+    if (!capturedUuid) ensureSessionIdentityReady()
+    const saved = loadIdentity(capturedUuid)
     if (saved) identity = saved
   }
   return identity
 }
 
-export function setIdentity(id: Identity) {
+export function setIdentity(id: Identity, capturedUuid?: string) {
   identity = id
-  saveIdentity(id)
+  saveIdentity(id, capturedUuid)
 }
 
 // Re-resolve identity from disk against the CURRENT environment, replacing the

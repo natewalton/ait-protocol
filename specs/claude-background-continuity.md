@@ -31,16 +31,19 @@ non-bare2.1.322 /bg fixture also uses a prewarmed bg-spare process with no
 source in argv. If no durable binding exists, search only this Claude
 configuration's transcript metadata for a continued-in targeting that UUID.
 Validate the record's source sessionId against its source filename. Only source
-sessions already owning an AIT identity or verified binding can supply that
-identity. Reject multiple conflicting roots rather than choosing a recent file.
+sessions already owning an AIT identity or verified binding can supply an old
+identity. A verified handover from a never-joined source permits the worker's own
+explicit first join; it does not supply credentials. Reject multiple conflicting roots rather than choosing a recent file.
 Do not interpret copied message bodies as lifecycle records. A successful
 interactive /fork and a manual fork produced no outgoing continuation record.
 
-Scope discovery to the effective Claude project where available; an explicit
-source path must stay in that configuration's native projects/jobs tree. A
-prewarmed process must not be assumed to have source argv. Enumerate only
-existing AIT-bound candidates in the applicable configuration; do not inspect
-other installations. Read metadata with bounded memory, then persist the
+Scope discovery to the effective CLAUDE_CONFIG_DIR projects/jobs tree. The exact
+continued-in UUID is authoritative even if the conversation moved into a worktree;
+do not use the source's first cwd (or first 64KB) as an authorization filter. A
+prewarmed process must not be assumed to have source argv. Traverse existing AIT-bound sources in that configuration. For a claimed
+handover with no AIT-owned root, inspect recently modified native metadata
+(mtime >= job.createdAt minus two seconds), within the same configuration,
+for the exact incoming continuation. Do not inspect other installations. Read metadata with bounded memory, then persist the
 binding so ordinary storage calls and worker respawns never repeat discovery.
 The large-project proof must report bytes read, elapsed time and RSS; sparse
 fixtures alone do not establish cold physical-disk performance. Missing or
@@ -50,8 +53,8 @@ matching sessionId/forkSessionId and forkParentSessionId identifies an independe
 /fork; it cannot authorize the parent identity. A job with interactiveLineage=true
 and no fork marker but no verified continuation yet is pending, not a new account.
 Never persist a miss. Keep only in-memory size/mtime fingerprints per candidate
-after a miss; the next identity call rereads only changed files, not the whole
-project. Retry source resolution on the next identity call, and
+after a miss; the next identity call rereads only changed files, not whole
+transcript histories. Retry source resolution on the next identity call, and
 refuse join/account creation while that handover is pending. Do not cache a
 module-start null identity permanently. Ordinary fresh background jobs have no
 interactive continuation claim and remain eligible to join as a new account. Do not mint a new account
@@ -87,7 +90,10 @@ and are not channel evidence. A matching native job uses its env UUID; an active
 job needs respawnFlags naming server:ait-protocol for requested push to remain
 push. The measured stopped state preserves a new foreground launch's declared
 mode; all other states, including unknown values, use the job's flags.
-Unreadable partial job state stays pending/poll until a later read succeeds.
+Only a readable job whose sessionId equals the env UUID selects this path. An
+unreadable or mismatched job is not native-job evidence: ordinary resolution and
+declared mode remain unchanged. A bad identity binding stays a tool error rather
+than killing MCP.
 Reuse existing poll mode when an active native job drops the channel flag. A continued worker in that mode keeps
 the identity but does not claim push delivery, register/renew a push callback,
 or advance its push checkpoint.
@@ -184,7 +190,7 @@ Implementation evidence (2026-11-11):
 
 - `npm --prefix mcp run build`; `node mcp/scripts/claude-background-test.mjs`:
   late metadata in the same MCP, original authenticated DID, pending notifications,
-  durable respawn, fork/config/project isolation, verified successive transitions,
+  durable respawn, native-fork/config isolation, cross-worktree continuity, verified successive transitions,
   old registration/listener retirement, and foreground replay all PASS.
 - `node mcp/scripts/channel-sink-test.mjs`, `node mcp/scripts/cursor-test.mjs`,
   `node mcp/scripts/push-mode-test.mjs`, `node mcp/scripts/session-picker-test.mjs`,
@@ -223,8 +229,8 @@ Review amendments (2026-11-11):
   declared mode remain unchanged. No Desktop live test or new version gate is
   claimed. Manual foreground --fork-session identity behavior is not repaired.
 - A never-joined native source can authorize a first explicit join at the worker's
-  own UUID. To find it without guessing by age, scan recent same-project source
-  metadata (mtime at least job.createdAt minus two seconds for filesystem
+  own UUID. To find it without guessing by age, scan recent source
+  metadata in the effective configuration (mtime at least job.createdAt minus two seconds for filesystem
   granularity). This narrow non-AIT-source discovery is the exception to
   AIT-owned history traversal; full metadata scan remains bounded in memory and
   cached per file. A tail-only optimization was rejected because later writes
@@ -246,3 +252,28 @@ Review amendments (2026-11-11):
 - No shared paths module was added merely to remove three small existing path
   derivations; storage imports this resolver, so importing storage back would
   create a cycle. The consumer asserts the unchanged encrypted file/cursor path.
+
+Final review corrections (2026-11-11):
+
+- Joined-account first-cwd matching was removed; a 70KB first message and a
+  worktree move both resolve by the exact native UUID edge. Recent non-AIT
+  candidates use the same exact edge and mtime scope, without cwd filtering.
+- Native-job selection requires a readable matching env-UUID job. Neither an
+  unreadable job nor a job for the argv-resume UUID can change ordinary identity
+  or declared push. Regression covers stale env, malformed/mismatched jobs,
+  active native jobs, stopped jobs, and unknown worker state.
+- First join captures one resolved UUID for the identity read and later write
+  across createAccount. A source that joins concurrently cannot redirect that
+  write. No self-binding or additional persisted state was added.
+- Negative controls cover ordinary argv precedence, job UUID matching, mtime
+  scoping, pre-POST eligibility, native fork isolation, post-response cursor
+  retirement, and the asynchronous join target. The consumer exposes each
+  removed behavior with a specific failed assertion.
+
+Deferred low-impact work: until identity is bound or a transcript exists, repeated
+calls may re-enumerate metadata filenames/stat fingerprints. Unchanged transcript
+bytes are not reread (asserted), and a successful binding/first join ends identity
+discovery. Empty own-transcript lists are not cached indefinitely, because the
+harness may create that file after MCP starts. No extra invalidation watcher or
+timer is added. A vanished binding/source file is contained per account; the
+picker's binding stat now shares its guarded read and cannot blank sibling rows.

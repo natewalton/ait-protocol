@@ -175,12 +175,15 @@ async function claudeSessions(): Promise<ResumableSession[]> {
   for (const binding of current.values()) {
     if (conflicts.has(binding.identity)) continue
     if (!existingDirectory(binding.project)) continue
-    let identity
-    try { identity = readPublicIdentity(binding.runtime) }
+    let identity, modifiedAt
+    try {
+      identity = readPublicIdentity(binding.runtime)
+      modifiedAt = fs.statSync(path.join(STORAGE_DIR, `claude-thread-${binding.runtime}.json`)).mtimeMs
+    }
     catch (error) { process.stderr.write(`Claude session ${binding.runtime} skipped: ${(error as Error).message}\n`); continue }
     if (!identity) continue
     sessions.push({ did: identity.did, handle: identity.handle, harness: 'claude', project: binding.project,
-      identifier: binding.runtime, modifiedAt: fs.statSync(path.join(STORAGE_DIR, `claude-thread-${binding.runtime}.json`)).mtimeMs })
+      identifier: binding.runtime, modifiedAt })
   }
   return sessions
 }

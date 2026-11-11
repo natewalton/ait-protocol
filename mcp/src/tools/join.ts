@@ -1,3 +1,4 @@
+import { resolveSessionUuid } from '../storage.js'
 import { effectiveNotificationMode } from '../claudeSession.js'
 import { displayHandle } from '../handles.js'
 import { z } from 'zod'
@@ -117,7 +118,8 @@ function slugify(input: string): string {
 }
 
 export async function joinHandler({ handle_hint }: { handle_hint: string }) {
-  const existing = getIdentity()
+  const capturedUuid = resolveSessionUuid()
+  const existing = getIdentity(capturedUuid)
   if (existing) {
     // Second `join` call in a session that already owns a handle — treat as
     // a manual re-auth lever. ADR-0014 forbids minting a new handle for an
@@ -197,7 +199,7 @@ export async function joinHandler({ handle_hint }: { handle_hint: string }) {
       password,
       accessJwt: result.data.accessJwt,
       refreshJwt: result.data.refreshJwt,
-    })
+    }, capturedUuid)
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     throw new Error(

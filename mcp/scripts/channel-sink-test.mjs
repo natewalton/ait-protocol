@@ -72,6 +72,15 @@ check(
 await sink(view)
 check('(d) successful URI dedupes in process', calls === 2)
 
+// Registration's predicate can change during checkpoint preparation. It must
+// be rechecked before sending the POST, separately from the post-response CAS.
+const push = await import('../dist/push.js')
+await push.startPushListener(async () => {}, () => false)
+let eligibilityChecks = 0, registerPosts = 0
+await push.tryRegister(() => ++eligibilityChecks === 1, async () => { registerPosts++; return { status: 'ok', cursor: 'unsafe-baseline' } })
+check('(d.2) no register POST after eligibility changes', registerPosts === 0)
+await push.stopPushListener()
+
 // Handover during the awaited channel write must leave the durable cursor for
 // the new runtime, even if the old transport accepted the notification.
 delete process.env.AIT_MCP_TEST_SESSION_ID

@@ -29,7 +29,7 @@ function state(id, extra={}) {
 function continued(from,to) { fs.appendFileSync(transcript(from),JSON.stringify({type:'continued-in',sessionId:from,continuedInSessionId:to})+'\n') }
 seed(source);state(child)
 const calls=[], clients=[]
-let registerGate=null
+let registerGate=null, createAccountHook=null
 const pds=http.createServer(async(req,res)=>{
  const url=new URL(req.url,'http://fixture'), chunks=[];for await(const c of req)chunks.push(c)
  calls.push({path:url.pathname,actor:url.searchParams.get('actor'),data:chunks.length?JSON.parse(Buffer.concat(chunks)):null})
@@ -37,7 +37,7 @@ const pds=http.createServer(async(req,res)=>{
  if(url.pathname.endsWith('registerPushTarget') && registerGate) await registerGate()
  switch(url.pathname){
   case '/xrpc/com.atproto.server.describeServer':body={availableUserDomains:['.'+'a'.repeat(52)+'.aitproto.com'],did:'did:web:fixture'};break
-  case '/xrpc/com.atproto.server.createAccount':body={did,handle,accessJwt:jwt,refreshJwt:jwt,active:true};break
+  case '/xrpc/com.atproto.server.createAccount':body=createAccountHook?createAccountHook():{did,handle,accessJwt:jwt,refreshJwt:jwt,active:true};break
   case '/xrpc/com.atproto.server.getSession':body={did,handle,email:'fixture@example.com',emailConfirmed:true,active:true};break
   case '/xrpc/com.atproto.server.refreshSession':case '/xrpc/com.atproto.server.createSession':body={did,handle,accessJwt:jwt,refreshJwt:jwt,active:true};break
   case '/xrpc/ait.feed.getAuthorFeed':body={feed:[]};break
@@ -95,6 +95,17 @@ try{
  assert(!fs.existsSync(path.join(store,`claude-thread-${unjoined}.json`)),'no inherited identity was invented')
  await newAccount.client.close()
  console.log('PASS a continued conversation that never joined may explicitly create its first AIT account')
+ const raceSource=randomUUID(),raceWorker=randomUUID(),newDid='did:plc:'+'b'.repeat(24);state(raceWorker)
+ fs.writeFileSync(transcript(raceSource),JSON.stringify({sessionId:raceSource,cwd:project})+'\n');continued(raceSource,raceWorker)
+ const race=await connect(raceWorker)
+ createAccountHook=()=>{const history=fs.readFileSync(transcript(raceSource));seed(raceSource);fs.writeFileSync(transcript(raceSource),history);return {did:newDid,handle,accessJwt:jwt,refreshJwt:jwt,active:true}}
+ result=await call(race.client,'join',{handle_hint:'race-worker'});assert(!result.isError,text(result));createAccountHook=null
+ assert.equal(JSON.parse(fs.readFileSync(identityFile(raceSource))).did,did,'concurrent source join keeps its credentials')
+ assert.equal(JSON.parse(fs.readFileSync(identityFile(raceWorker))).did,newDid,'new account writes the UUID captured before createAccount')
+ assert(!fs.existsSync(path.join(store,`claude-thread-${raceWorker}.json`)),'no identity retargeting during createAccount')
+ await race.client.close()
+ console.log('PASS async first join cannot overwrite an account created concurrently at the old source')
+
  const lateSource=randomUUID(),latePush=randomUUID();seed(lateSource);state(latePush,{respawnFlags:['--channels','server:ait-protocol']})
  const lateCount=calls.filter(c=>c.path.endsWith('registerPushTarget')).length
  const lateClient=await connect(latePush,true)
@@ -104,7 +115,7 @@ try{
  while(calls.filter(c=>c.path.endsWith('registerPushTarget')).length===lateCount){assert(Date.now()<lateDeadline,lateClient.errors());await new Promise(r=>setTimeout(r,10))}
  await lateClient.client.close()
  const partial=randomUUID();state(partial);const partialFile=path.join(config,'jobs',partial.slice(0,8),'state.json');fs.writeFileSync(partialFile,'{')
- const partialClient=await connect(partial);result=await call(partialClient.client,'getAuthorFeed');assert.equal(result.isError,true);assert.match(text(result),/continuation record/)
+ const partialClient=await connect(partial);result=await call(partialClient.client,'getAuthorFeed');assert.equal(result.isError,true);assert.match(text(result),/No actor|No identity/)
  state(partial,{interactiveLineage:false});result=await call(partialClient.client,'getAuthorFeed');assert.equal(result.isError,true);assert.match(text(result),/No actor|No identity/);await partialClient.client.close()
  const bad=randomUUID();state(bad);fs.writeFileSync(path.join(store,`claude-thread-${bad}.json`),'{')
  const badClient=await connect(bad);result=await call(badClient.client,'getAuthorFeed');assert.equal(result.isError,true);await badClient.client.close();fs.unlinkSync(path.join(store,`claude-thread-${bad}.json`))
@@ -139,8 +150,8 @@ try{
  fs.appendFileSync(transcript(mismatchSource),JSON.stringify({type:'continued-in',sessionId:randomUUID(),continuedInSessionId:mismatched})+'\n')
  const mismatch=await connect(mismatched);result=await call(mismatch.client,'getAuthorFeed');assert.equal(result.isError,true);assert.match(text(result),/continuation record/);await mismatch.client.close()
  const resolverUrl=new URL('../dist/claudeSession.js',import.meta.url).href
- function resolveProbe(id,code,extra={}) {
-   const checked=spawnSync(process.execPath,['--input-type=module','-e',`import assert from 'node:assert/strict';import fs from 'node:fs';const m=await import(${JSON.stringify(resolverUrl)});${code}`],{env:{...environment(id),...extra},cwd:project,encoding:'utf8'})
+ function resolveProbe(id,code,extra={},command) {
+   const checked=spawnSync(process.execPath,['--input-type=module','-e',`import assert from 'node:assert/strict';import fs from 'node:fs';import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';${command?`cp.execFileSync=()=>${JSON.stringify(command)};syncBuiltinESMExports();`:''}const m=await import(${JSON.stringify(resolverUrl)});${code}`],{env:{...environment(id),...extra},cwd:project,encoding:'utf8'})
    assert.equal(checked.status,0,checked.stderr+checked.stdout)
  }
  const role=randomUUID()
@@ -149,13 +160,25 @@ try{
   resolveProbe(role,`assert.equal(m.effectiveNotificationMode(),${JSON.stringify(expected)});`)
  }
  const ordinary=randomUUID();resolveProbe(ordinary,`assert.equal(m.effectiveNotificationMode(),'push');`)
+ const ordinaryResume=randomUUID(),staleEnv=randomUUID(),otherJob=randomUUID()
+ resolveProbe(staleEnv,`assert.equal(m.claudeRuntimeUuid(),${JSON.stringify(ordinaryResume)});assert.equal(m.effectiveNotificationMode(),'push');`,{},'claude --resume '+ordinaryResume)
+ state(staleEnv,{sessionId:otherJob})
+ resolveProbe(staleEnv,`assert.equal(m.claudeRuntimeUuid(),${JSON.stringify(ordinaryResume)});assert.equal(m.effectiveNotificationMode(),'push');`,{},'claude --resume '+ordinaryResume)
+ state(staleEnv);fs.writeFileSync(path.join(config,'jobs',staleEnv.slice(0,8),'state.json'),'{')
+ resolveProbe(staleEnv,`assert.equal(m.claudeRuntimeUuid(),${JSON.stringify(ordinaryResume)});assert.equal(m.effectiveNotificationMode(),'push');`,{},'claude --resume '+ordinaryResume)
+ const outdatedSource=randomUUID(),recentWorker=randomUUID();state(recentWorker,{createdAt:new Date(Date.now()+10000).toISOString()})
+ fs.writeFileSync(transcript(outdatedSource),JSON.stringify({type:'continued-in',sessionId:outdatedSource,continuedInSessionId:recentWorker})+'\n')
+ resolveProbe(recentWorker,`assert.throws(()=>m.resolveClaudeIdentity(${JSON.stringify(recentWorker)}),m.ClaudeHandoverPending);`)
+ const largeSource=randomUUID(),largeWorker=randomUUID();state(largeWorker)
+ fs.writeFileSync(transcript(largeSource),JSON.stringify({type:'user',sessionId:largeSource,cwd:root,text:'x'.repeat(70000)})+'\n');continued(largeSource,largeWorker)
+ resolveProbe(largeWorker,`assert.equal(m.resolveClaudeIdentity(${JSON.stringify(largeWorker)}),${JSON.stringify(largeWorker)});`)
  const middle=randomUUID(),latest=randomUUID(),chainSource=randomUUID();seed(chainSource);state(latest)
  fs.writeFileSync(transcript(middle),JSON.stringify({sessionId:middle,cwd:project})+'\n')
  continued(chainSource,middle);continued(middle,latest)
  resolveProbe(latest,`assert.equal(m.resolveClaudeIdentity(${JSON.stringify(latest)}),${JSON.stringify(chainSource)});`)
  const foreignProject=randomUUID(),foreignSource=randomUUID();state(foreignProject);seed(foreignSource)
  fs.writeFileSync(transcript(foreignSource),JSON.stringify({sessionId:foreignSource,cwd:root})+'\n');continued(foreignSource,foreignProject)
- resolveProbe(foreignProject,`assert.throws(()=>m.resolveClaudeIdentity(${JSON.stringify(foreignProject)}),m.ClaudeHandoverPending);`)
+ resolveProbe(foreignProject,`assert.equal(m.resolveClaudeIdentity(${JSON.stringify(foreignProject)}),${JSON.stringify(foreignSource)});`)
  const wrongName=randomUUID(),jobSource=randomUUID();state(wrongName);seed(jobSource)
  fs.unlinkSync(transcript(jobSource));state(jobSource)
  fs.writeFileSync(path.join(config,'jobs',jobSource.slice(0,8),`${randomUUID()}.jsonl`),JSON.stringify({type:'continued-in',sessionId:jobSource,continuedInSessionId:wrongName})+'\n')

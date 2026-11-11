@@ -26,7 +26,7 @@ export function claudeParentCommand(): string {
 }
 export function claudeRuntimeUuid(): string | null {
   const own = uuid(process.env.CLAUDE_CODE_SESSION_ID)
-  if (own && job(own) !== null) return own
+  if (own && job(own)) return own
   // Ordinary sessions retain the existing Desktop/CLI resume resolution.
   const resumed = uuid(/--resume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(claudeParentCommand())?.[1])
   return resumed ?? own
@@ -42,8 +42,7 @@ export function claudeChannelsRequested(): boolean {
   // Claude rewrites its process title, so argv cannot prove channel activation.
   // A normal foreground launch retains the declared mode. Native jobs expose
   // the flags they actually inherit, independent of foreground title changes.
-  const runtime = claudeRuntimeUuid(), state = runtime ? job(runtime) : null
-  if (state === undefined) return false
+  const own = uuid(process.env.CLAUDE_CODE_SESSION_ID), state = own ? job(own) : null
   if (!state || state.state === 'stopped') return true
   const args = state.respawnFlags ?? []
   for (let i = 0; i < args.length; i++) {
@@ -83,30 +82,23 @@ export function claudeIdentityUuid(id: string): string {
 }
 interface Continuation { type: string; sessionId: string; continuedInSessionId: string }
 interface Candidate { id: string; file: string }
-interface ReadState { size: number; mtime: number; ino: number; next: string | null; project?: string }
+interface ReadState { size: number; mtime: number; ino: number; next: string | null }
 const reads = new Map<string, ReadState>()
 // Fixed memory blocks; only candidate metadata is decoded. A growing file is
 // read from its previous size, not scanned again. Misses are not persisted.
-function continuedTo(candidate: Candidate, tailOnly = false): string | null {
+function continuedTo(candidate: Candidate): string | null {
   let stat: fs.Stats
   try { stat = fs.lstatSync(candidate.file) }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error }
   if (!stat.isFile() || stat.isSymbolicLink()) return null
-  const key = candidate.file + (tailOnly ? ':tail' : '')
+  const key = candidate.file
   const previous = reads.get(key)
   if (previous?.size === stat.size && previous.mtime === stat.mtimeMs && previous.ino === stat.ino) return previous.next
   const unchangedPrefix = previous?.ino === stat.ino && previous.size < stat.size
-  const lower = Math.max(tailOnly ? stat.size - 65536 : 0, unchangedPrefix ? previous!.size - 8192 : 0, 0)
+  const lower = unchangedPrefix ? Math.max(0, previous!.size - 8192) : 0
   const fd = fs.openSync(candidate.file, 'r'), block = Buffer.allocUnsafe(65536 + 8192)
   let position = stat.size, suffix: Buffer = Buffer.alloc(0), next = unchangedPrefix ? previous!.next : null
-  let project = unchangedPrefix ? previous!.project : undefined
   try {
-    if (!unchangedPrefix) {
-      const n = fs.readSync(fd, block, 0, Math.min(65536, stat.size), 0)
-      for (const line of block.subarray(0, n).toString('utf8').split('\n')) {
-        try { const value = JSON.parse(line); if (typeof value.cwd === 'string' && path.isAbsolute(value.cwd)) { project = absolute(value.cwd); break } } catch { /* partial or non-metadata record */ }
-      }
-    }
     while (position > lower) {
       const n = Math.min(position - lower, 65536); position -= n
       const read = fs.readSync(fd, block, 0, n, position); suffix.copy(block, read)
@@ -125,24 +117,24 @@ function continuedTo(candidate: Candidate, tailOnly = false): string | null {
       suffix = Buffer.from(block.subarray(0, Math.min(read, 8192)))
     }
   } finally { fs.closeSync(fd) }
-  reads.set(key, { size: stat.size, mtime: stat.mtimeMs, ino: stat.ino, next, project })
+  reads.set(key, { size: stat.size, mtime: stat.mtimeMs, ino: stat.ino, next })
   return next
 }
 function entries(dir: string): fs.Dirent[] {
   try { return fs.readdirSync(dir, { withFileTypes: true }) }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
 }
-function job(id: string): { sessionId?: string; state?: string; forkSessionId?: string; forkParentSessionId?: string; interactiveLineage?: boolean; cwd?: string; respawnFlags?: string[]; createdAt?: string } | null | undefined {
+function job(id: string): { sessionId?: string; state?: string; forkSessionId?: string; forkParentSessionId?: string; interactiveLineage?: boolean; cwd?: string; respawnFlags?: string[]; createdAt?: string } | null {
   const file = path.join(config(), 'jobs', id.slice(0, 8), 'state.json')
   try {
     const value = JSON.parse(fs.readFileSync(file, 'utf8'))
-    if (!value || typeof value !== 'object') return undefined
-    if (value.respawnFlags !== undefined && (!Array.isArray(value.respawnFlags) || !value.respawnFlags.every((flag: unknown) => typeof flag === 'string'))) return undefined
-    if (value.cwd !== undefined && typeof value.cwd !== 'string') return undefined
-    return uuid(value.sessionId) === id ? value : null
+    if (!value || typeof value !== 'object') return null
+    if (value.respawnFlags !== undefined && (!Array.isArray(value.respawnFlags) || !value.respawnFlags.every((flag: unknown) => typeof flag === 'string'))) return null
+    if (value.cwd !== undefined && typeof value.cwd !== 'string') return null
+    return uuid(value.sessionId) === id ? { ...value, sessionId: id } : null
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-    return undefined // Incomplete or unreadable native state grants no identity or push.
+    return null // Incomplete or unreadable native state grants no identity or push.
   }
 }
 function candidates(): Candidate[] {
@@ -174,8 +166,8 @@ export function resolveClaudeIdentity(id: string): string {
   const existing = readClaudeBinding(id)
   if (existing) return claudeIdentityUuid(id)
   if (fs.existsSync(identityFile(id))) return id // Never reassign an already joined account.
-  const state = job(id)
-  if (state === undefined) throw new ClaudeHandoverPending()
+  const own = uuid(process.env.CLAUDE_CODE_SESSION_ID)
+  const state = own === id ? job(own) : null
   if (!state) return id
   // Independent /fork is explicitly identified by Claude's own job metadata.
   if (uuid(state?.forkSessionId) === id && uuid(state?.forkParentSessionId)) return id
@@ -200,8 +192,6 @@ export function resolveClaudeIdentity(id: string): string {
       if (visited.has(source.id)) throw new Error('Claude continuation binding cycle')
       visited.add(source.id)
       const next = continuedTo(source)
-      const sourceProject = reads.get(source.file)?.project
-      if (sourceProject && sourceProject !== project) break
       if (next === id) { roots.set(root, source.id); break }
       if (!next) break
       source = files.find(candidate => candidate.id === next)
@@ -229,10 +219,9 @@ export function resolveClaudeIdentity(id: string): string {
   // missing evidence. Its continued worker may perform its own first join.
   for (const candidate of files) {
     const createdAt = Date.parse(state.createdAt ?? '')
-    if (Number.isFinite(createdAt) && fs.statSync(candidate.file).mtimeMs < createdAt - 2000) continue
-    continuedTo(candidate, true)
-    const sourceProject = reads.get(candidate.file + ':tail')?.project
-    if (sourceProject === project && continuedTo(candidate) === id) return id
+    try { if (Number.isFinite(createdAt) && fs.statSync(candidate.file).mtimeMs < createdAt - 2000) continue }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error }
+    if (continuedTo(candidate) === id) return id
   }
   if (state.interactiveLineage && !state.forkParentSessionId) throw new ClaudeHandoverPending()
   return id

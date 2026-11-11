@@ -97,6 +97,11 @@ source commit, source-lock digest and exact crate path/version.
       "exposure": "local"
     },
     {
+      "tag": "v0.1.46",
+      "commit": "8cadfd3d7bbd54c46622ebe120678911d73986fb",
+      "exposure": "local-and-approved-peer"
+    },
+    {
       "tag": "v0.1.46-peer.1",
       "commit": "e16094956f1d122a89b6090cc4ef1224ea56cfd9",
       "exposure": "local-and-approved-peer"

@@ -1331,6 +1331,11 @@ chmod +x "$lifecycle/bin/codex-session.sh"
 cat > "$lifecycle/shim/node" <<'EOF'
 #!/bin/bash
 printf '%s' "$$" > "$AIT_DRIVER_PID_FILE"
+if [ "${AIT_DRIVER_STARTUP_NOTICE:-}" = 1 ]; then
+  [ "${AIT_CODEX_STARTUP_NOTICE_FD:-}" = 3 ] || exit 1
+  echo 'fixture: retrying this conversation once' >&3
+  grep -Fq 'fixture: retrying this conversation once' "$AIT_STARTUP_NOTICE_OUTPUT" || exit 1
+fi
 if [ "${AIT_DRIVER_WAIT_FOR_MCP:-}" = 1 ]; then
   echo "ait codex session: ${AIT_DRIVER_STAGE:-checking MCP server readiness}" >&2
   echo 'ait codex session: @fixture joined — registering push target' >&2
@@ -1503,6 +1508,13 @@ driver_fixture_pid="$(cat "$lifecycle/driver.pid")"
 process_alive "$driver_fixture_pid" && fail "closed terminal left the driver running"
 assert_contains "$(cat "$lifecycle/closed-terminal.output")" 'session stopped'
 pass "unavailable controlling terminal cannot abort session-driver cleanup"
+AIT_DRIVER_STARTUP_NOTICE=1 AIT_STARTUP_NOTICE_OUTPUT="$lifecycle/startup-notice.output" \
+  PATH="$lifecycle/shim:/usr/bin:/bin" \
+  "$lifecycle/bin/codex-session.sh" --resume 11111111-1111-4111-8111-111111111111 \
+  >"$lifecycle/startup-notice.output" 2>&1
+assert_contains "$(cat "$lifecycle/startup-notice.output")" 'fixture: retrying this conversation once'
+assert_not_contains "$(cat "$lifecycle/startup-notice.output")" 'session driver exited during startup'
+pass "startup recovery notice reaches caller before driver continues"
 PATH="$lifecycle/shim:/usr/bin:/bin" "$lifecycle/bin/codex-session.sh" --resume 11111111-1111-4111-8111-111111111111 >/dev/null 2>&1
 AIT_DRIVER_WAIT_FOR_MCP=1 AIT_MCP_WAIT_OUTPUT="$lifecycle/mcp-wait.output" \
   AIT_FAST_SLEEP=1 PATH="$lifecycle/shim:/usr/bin:/bin" \

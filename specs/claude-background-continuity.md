@@ -2,7 +2,7 @@
 
 Status: systems and independent AIT design GO; isolated implementation and acceptance checks pass, independent code review pending. No live changes.
 Date: 2026-11-11
-Base: private-peer98df264. Automatic background activation is separate in claude-background-activation.md.
+Base: private-peer18c941d (security integration; original investigation base98df264). Automatic background activation is separate in claude-background-activation.md.
 
 ## Why
 
@@ -102,7 +102,7 @@ specific refusal. Keep native/org channel policy boundaries unchanged.
 
 ## Files touched
 
-Thirteen implementation paths: new mcp/src/claudeSession.ts (native context and
+Twelve implementation paths: new mcp/src/claudeSession.ts (native context and
 binding); mcp/src/storage.ts (canonical identity/checkpoint); mcp/src/server.ts
 (lifecycle and visible warning); mcp/src/push.ts (pre-delivery retirement);
 mcp/src/sessionPicker.ts (continued-runtime discovery); new
@@ -110,8 +110,8 @@ mcp/scripts/claude-background-test.mjs (isolated consumer regression); new
 mcp/scripts/claude-native-background-test.py (owned native fixture);
 mcp/src/session.ts (retry a late identity binding); mcp/src/tools/join.ts
 (shared notification mode); mcp/scripts/channel-sink-test.mjs;
-mcp/scripts/session-picker-test.mjs; mcp/scripts/push-mode-test.mjs
-(correct its stale full-suffix author expectation); README.md.
+mcp/scripts/session-picker-test.mjs; README.md. The security base already corrects
+the stale full-suffix expectation in mcp/scripts/push-mode-test.mjs.
 Two spec files are additional design documents. Recount if the agreed mechanism
 changes. This cross-layer boundary requires general-systems review.
 
@@ -214,8 +214,7 @@ Systems check: runtime UUID, verified native continuation edge, canonical encryp
 account/checkpoint, and existing callback lifecycle remain the four responsibilities.
 The sole added persisted object is a successful identifier binding; no credentials,
 negative lookup, new supervisor, or new heartbeat is persisted. Registration and
-channel delivery recheck retirement; ordinary forks never use a source resume UUID
-as their own ID. Independent review must also reconcile security's concurrent
+channel delivery recheck retirement; native /fork workers keep their own UUID. Independent review must also reconcile security's concurrent
 stdio/listener-generation changes before any combined delivery.
 
 Review amendments (2026-11-11):

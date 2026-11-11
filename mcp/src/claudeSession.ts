@@ -142,8 +142,7 @@ function job(id: string): { sessionId?: string; state?: string; forkSessionId?: 
     return uuid(value.sessionId) === id ? value : null
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-    if (error instanceof SyntaxError) return undefined
-    throw error
+    return undefined // Incomplete or unreadable native state grants no identity or push.
   }
 }
 function candidates(): Candidate[] {

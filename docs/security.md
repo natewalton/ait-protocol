@@ -6,7 +6,7 @@ a process that can read both the UUID and the credential file under the same
 Unix user. See [Architecture](architecture.md#trust-and-record-semantics) for the
 scope of those controls.
 
-## Current release rule (2026-11-10)
+## Current release rule (2026-11-11)
 
 A release requires no unresolved reachable High/Critical finding in its supported
 configuration within the declared four npm locks and packaged transport Cargo graph. Non-applicability and effective
@@ -50,22 +50,24 @@ not ongoing assurance between checks.
 
 The existing decoded limits remain: PLC JSON 100 KiB; PDS ordinary JSON 150 KiB and record writes 1,000,000 bytes; peer ordinary reads 512 KiB, CAR downloads and WebSocket frames 100 MiB; MCP stdio framing 10 MiB. The checked PLC parser returns 413 for oversized bodies and 400 for malformed JSON without stack traces, including chunked/compressed requests. Both npm start/dev and service wrappers use that launcher.
 
-Repository/feed decoding additionally rejects headers over 1 KiB, block payloads over 1,000,000 bytes, more than 65,536 CAR blocks, more than 4,096 CBOR nodes per block or 1,048,576 per CAR, more than 65,536 nodes per stream frame, or nesting beyond 64. These are AIT application limits, not AT Protocol maxima; unusually large record arrays/facets can now be rejected. Rejection appears in indexing status as `Peer input limit: ...`; shared AppView continues serving. All selected records must pass their registered lexicons before snapshot/commit projection. Invalid records cannot partially admit an identity, earlier valid records or a cursor.
+Repository/feed decoding additionally rejects headers over 1 KiB, block payloads over 1,000,000 bytes, more than 65,536 CAR blocks, more than 4,096 CBOR nodes per block or 1,048,576 per CAR, more than 65,536 nodes per stream frame, or nesting beyond 64. These are AIT application limits, not AT Protocol maxima; unusually large record arrays/facets can now be rejected. Rejection appears in indexing status as `Feed input limit: ...`; shared AppView continues serving. All selected records must pass their registered lexicons before snapshot/commit projection. Invalid records cannot partially admit an identity, earlier valid records or a cursor.
 
-Malformed ordinary MCP tool calls leave their session usable. An oversized stdio frame closes only the offending transport; the client must reconnect. This does not restart shared AIT services. Fixtures verify fresh-session recovery.
+Malformed ordinary MCP tool calls leave their session usable. Raw JSON preflight additionally rejects more than 65,536 value/key tokens or nesting beyond 64 before object materialization; it returns a correlated resource error and keeps that session usable. Bounded 64 KiB slabs coalesce a newline frame once before the SDK parses it. The unchanged SDK 10 MiB byte ceiling still closes only the offending transport on overflow; the client must reconnect. Shared AIT services are not restarted. Fixtures cover dense/deep inputs, escaped and late request IDs, notifications, exact-limit CRLF frames, EOF and fresh-session recovery.
 
-The bounded Node24 fixtures passed all seven ingress/database groups, with fixed 256 MiB old-space/768 MiB aggregate RSS and 32 MiB retained-growth limits; actual MCP runtime uses 128 MiB old-space. Positive compilation uses its separate 1024 MiB/60-second build budget. Largest observed retained growth was below 5 MiB and aggregate MCP RSS was 722 MiB. Tests cover a signed 32-post snapshot and structural 100 MiB CAR/frame acceptance separately; this is not a full semantic 100 MiB repository/message compatibility claim.
+The refreshed Node24 fixtures passed five stable groups and seven peer groups, retaining the fixed 256 MiB old-space/768 MiB aggregate RSS and 32 MiB retained-growth limits; actual MCP runtime uses 128 MiB old-space. Peak measured aggregate RSS was 596 MiB for stable and 484 MiB for peer, with maximum retained growth below 9 MiB. Actual MCP server peaks were 231/214 MiB after bounded framing and JSON preflight, versus 681 MiB in the earlier fragmented-frame diagnostic. Positive compilation retains its separate 1024 MiB/60-second build budget. Tests cover real stable server/index/HTTP-read behavior, a signed 32-post snapshot and structural 100 MiB CAR/frame acceptance separately; this is not a full semantic 100 MiB repository/message compatibility claim.
 
 ## Prepared native replacement
 
-[Native patch PR](https://github.com/natewalton/iroh-ffi/pull/1) updates Tokio 1.54.0 → 1.54.1 and ctutils 0.4.3 → 0.4.4 in the exact source lock. The locally packed experimental.2 addon passed 28 package tests plus controlled-network strict/default transport proofs. Its full-workspace RustSec audit reports zero vulnerabilities and three unmaintained notices, recorded below as informational residual risks. This does not clear unrelated bundled native libraries.
+[Native patch PR](https://github.com/natewalton/iroh-ffi/pull/1) updates Tokio 1.54.0 → 1.54.1, ctutils 0.4.3 → 0.4.4 and rustix 1.1.5 → 1.1.6 in the exact source lock. The locally packed experimental.3 addon passed 28 package tests and controlled-network strict/default transport proofs. A fresh full-workspace audit covers 464 locked packages: zero vulnerabilities, no unsoundness warning, and the same three unmaintained notices recorded below as informational residual risks. This does not clear unrelated bundled native libraries.
 
-The replacement artifact is **not published or adopted**. The current experimental.1 dependency is still blocked by RUSTSEC-2026-0384/0385. The experimental.2 policy identity below authorizes neither a substituted tarball nor an unpublished download: the checker must retrieve and verify the exact bytes/source lock, and installed dependency correspondence must hold before regression evidence can apply. No release or live installation is performed by these changes.
+The exact packed experimental.3 also passed all 14 outcomes of the isolated two-PDS collaboration journey, including post/reply/notification readback, UDP outage recovery, unlink/relink, native policy refusal and pending-connect cancellation. That is supporting local artifact proof: the candidate dependency still declares experimental.1.
+
+The replacement is **not published or adopted**. The existing experimental.2 draft is superseded by this build after the fresh audit found [RUSTSEC-2026-0486](https://github.com/RustSec/advisory-db/blob/main/crates/rustix/RUSTSEC-2026-0486.md). The current experimental.1 dependency remains blocked. The experimental.3 policy identity authorizes neither substituted bytes nor an unpublished download: the checker must retrieve and verify the exact artifact/source lock, and installed dependency correspondence must hold before candidate regressions can apply. No release or live installation is performed by these changes.
 
 ## Maintained policy
 
 This is the single active machine-readable policy. The old decisions below are
-historical evidence, not authorization. Current Kysely decisions require actual dialect regressions; current Zod mitigation requires the entire bounded ingress suite to pass. Historical Nodemailer findings remain blocked and disappear from the upgraded graph. The published native transport remains blocked until its patched replacement is published and adopted. Reviewed lower-severity
+historical evidence, not authorization. Current Kysely decisions require actual dialect regressions; current Zod mitigation requires the entire bounded ingress suite to pass. Nodemailer findings are absent from the fresh upgraded graph and have no maintained exception. Affected historical releases remain blocked by the current checker. The published native transport remains blocked until its patched replacement is published and adopted. Reviewed lower-severity
 residual risks may use explicit accepted-risk decisions; they are not mitigations. Expired blocked records
 remain useful explanations; they never authorize publication. A real approved
 disposition needs its exact advisory revision/status and actual current passing
@@ -121,12 +123,12 @@ source commit, source-lock digest and exact crate path/version.
     },
     {
       "package": "@natewalton/iroh-direct",
-      "version": "0.1.0-experimental.2",
-      "url": "https://github.com/natewalton/iroh-ffi/releases/download/iroh-direct-v0.1.0-experimental.2/natewalton-iroh-direct-0.1.0-experimental.2.tgz",
-      "digest": "sha256:1dd9be3d211ba4926858d956e349dd9be52d4df1f0e08bcbd6b082b30268a1d7",
-      "sourceCommit": "90b4158edca03ac90d9a940d01d7003d756c6874",
+      "version": "0.1.0-experimental.3",
+      "url": "https://github.com/natewalton/iroh-ffi/releases/download/iroh-direct-v0.1.0-experimental.3/natewalton-iroh-direct-0.1.0-experimental.3.tgz",
+      "digest": "sha256:ea3d644d3523480be02708f434c41340905f8cc7668e07dfd7f843a6080fd3b3",
+      "sourceCommit": "d50c2b7de23ac8872db630056897742518d9706d",
       "sourceRepo": "https://github.com/natewalton/iroh-ffi",
-      "lockDigest": "sha256:9f9b2b2d61028170494e8a5ae7d7ae512e5a1e9ba59b438cef53fba0d05c8c9d",
+      "lockDigest": "sha256:3423a54d6c121664edc1f6b6af7339183e23a1fbcc3c1322b5f408ec72194653",
       "target": "aarch64-apple-darwin"
     }
   ],
@@ -349,411 +351,6 @@ source commit, source-lock digest and exact crate path/version.
       "advisoryRevision": "2026-03-27T20:57:34Z"
     },
     {
-      "id": "pds-nodemailer-GHSA-p6gq-j5cr-w38f",
-      "workspace": "pds",
-      "package": "nodemailer",
-      "version": "10.5.0",
-      "advisory": "GHSA-p6gq-j5cr-w38f",
-      "reviewedSeverity": "high",
-      "decision": "blocked",
-      "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
-      "reason": "Historical mailer risk acceptance is not carried forward. Upgrade the exact candidate and pass actual PDS mail regressions; no reachable High acceptance qualifies.",
-      "exposures": [
-        "local-and-approved-peer"
-      ],
-      "components": [
-        {
-          "path": "node_modules/nodemailer",
-          "dependencyFingerprint": "sha256:29c03ce5aedf170300b66e7cd57773a8ce45f413bb3ac909d8e334326ebab755"
-        }
-      ],
-      "evidence": [
-        "https://github.com/advisories/GHSA-p6gq-j5cr-w38f"
-      ],
-      "regressions": [],
-      "ecosystem": "npm"
-    },
-    {
-      "id": "pds-nodemailer-GHSA-8m3c-c648-2xjj",
-      "workspace": "pds",
-      "package": "nodemailer",
-      "version": "10.5.0",
-      "advisory": "GHSA-8m3c-c648-2xjj",
-      "reviewedSeverity": "moderate",
-      "decision": "blocked",
-      "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
-      "reason": "Historical mailer risk acceptance is not carried forward. Upgrade the exact candidate and pass actual PDS mail regressions; no reachable High acceptance qualifies.",
-      "exposures": [
-        "local-and-approved-peer"
-      ],
-      "components": [
-        {
-          "path": "node_modules/nodemailer",
-          "dependencyFingerprint": "sha256:29c03ce5aedf170300b66e7cd57773a8ce45f413bb3ac909d8e334326ebab755"
-        }
-      ],
-      "evidence": [
-        "https://github.com/advisories/GHSA-8m3c-c648-2xjj"
-      ],
-      "regressions": [],
-      "ecosystem": "npm"
-    },
-    {
-      "id": "pds-nodemailer-GHSA-wmmp-3585-3rmp",
-      "workspace": "pds",
-      "package": "nodemailer",
-      "version": "10.5.0",
-      "advisory": "GHSA-wmmp-3585-3rmp",
-      "reviewedSeverity": "moderate",
-      "decision": "blocked",
-      "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
-      "reason": "Historical mailer risk acceptance is not carried forward. Upgrade the exact candidate and pass actual PDS mail regressions; no reachable High acceptance qualifies.",
-      "exposures": [
-        "local-and-approved-peer"
-      ],
-      "components": [
-        {
-          "path": "node_modules/nodemailer",
-          "dependencyFingerprint": "sha256:29c03ce5aedf170300b66e7cd57773a8ce45f413bb3ac909d8e334326ebab755"
-        }
-      ],
-      "evidence": [
-        "https://github.com/advisories/GHSA-wmmp-3585-3rmp"
-      ],
-      "regressions": [],
-      "ecosystem": "npm"
-    },
-    {
-      "id": "pds-nodemailer-GHSA-2x7j-588g-ccc2",
-      "workspace": "pds",
-      "package": "nodemailer",
-      "version": "10.5.0",
-      "advisory": "GHSA-2x7j-588g-ccc2",
-      "reviewedSeverity": "high",
-      "decision": "blocked",
-      "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
-      "reason": "Historical mailer risk acceptance is not carried forward. Upgrade the exact candidate and pass actual PDS mail regressions; no reachable High acceptance qualifies.",
-      "exposures": [
-        "local-and-approved-peer"
-      ],
-      "components": [
-        {
-          "path": "node_modules/nodemailer",
-          "dependencyFingerprint": "sha256:29c03ce5aedf170300b66e7cd57773a8ce45f413bb3ac909d8e334326ebab755"
-        }
-      ],
-      "evidence": [
-        "https://github.com/advisories/GHSA-2x7j-588g-ccc2"
-      ],
-      "regressions": [],
-      "ecosystem": "npm"
-    },
-    {
-      "id": "pds-nodemailer-GHSA-cc9r-2j5m-2m83",
-      "workspace": "pds",
-      "package": "nodemailer",
-      "version": "10.5.0",
-      "advisory": "GHSA-cc9r-2j5m-2m83",
-      "reviewedSeverity": "moderate",
-      "decision": "blocked",
-      "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
-      "reason": "Historical mailer risk acceptance is not carried forward. Upgrade the exact candidate and pass actual PDS mail regressions; no reachable High acceptance qualifies.",
-      "exposures": [
-        "local-and-approved-peer"
-      ],
-      "components": [
-        {
-          "path": "node_modules/nodemailer",
-          "dependencyFingerprint": "sha256:29c03ce5aedf170300b66e7cd57773a8ce45f413bb3ac909d8e334326ebab755"
-        }
-      ],
-      "evidence": [
-        "https://github.com/advisories/GHSA-cc9r-2j5m-2m83"
-      ],
-      "regressions": [],
-      "ecosystem": "npm"
-    },
-    {
-      "id": "pds-nodemailer-GHSA-6vj9-mwq6-2f5v",
-      "workspace": "pds",
-      "package": "nodemailer",
-      "version": "10.5.0",
-      "advisory": "GHSA-6vj9-mwq6-2f5v",
-      "reviewedSeverity": "moderate",
-      "decision": "blocked",
-      "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
-      "reason": "Historical mailer risk acceptance is not carried forward. Upgrade the exact candidate and pass actual PDS mail regressions; no reachable High acceptance qualifies.",
-      "exposures": [
-        "local-and-approved-peer"
-      ],
-      "components": [
-        {
-          "path": "node_modules/nodemailer",
-          "dependencyFingerprint": "sha256:29c03ce5aedf170300b66e7cd57773a8ce45f413bb3ac909d8e334326ebab755"
-        }
-      ],
-      "evidence": [
-        "https://github.com/advisories/GHSA-6vj9-mwq6-2f5v"
-      ],
-      "regressions": [],
-      "ecosystem": "npm"
-    },
-    {
-      "id": "pds-nodemailer-GHSA-8vvx-rff5-p5rq",
-      "workspace": "pds",
-      "package": "nodemailer",
-      "version": "10.5.0",
-      "advisory": "GHSA-8vvx-rff5-p5rq",
-      "reviewedSeverity": "moderate",
-      "decision": "blocked",
-      "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
-      "reason": "Historical mailer risk acceptance is not carried forward. Upgrade the exact candidate and pass actual PDS mail regressions; no reachable High acceptance qualifies.",
-      "exposures": [
-        "local-and-approved-peer"
-      ],
-      "components": [
-        {
-          "path": "node_modules/nodemailer",
-          "dependencyFingerprint": "sha256:29c03ce5aedf170300b66e7cd57773a8ce45f413bb3ac909d8e334326ebab755"
-        }
-      ],
-      "evidence": [
-        "https://github.com/advisories/GHSA-8vvx-rff5-p5rq"
-      ],
-      "regressions": [],
-      "ecosystem": "npm"
-    },
-    {
-      "id": "pds-nodemailer-GHSA-v53p-9fqp-m79j",
-      "workspace": "pds",
-      "package": "nodemailer",
-      "version": "10.5.0",
-      "advisory": "GHSA-v53p-9fqp-m79j",
-      "reviewedSeverity": "high",
-      "decision": "blocked",
-      "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
-      "reason": "Historical mailer risk acceptance is not carried forward. Upgrade the exact candidate and pass actual PDS mail regressions; no reachable High acceptance qualifies.",
-      "exposures": [
-        "local-and-approved-peer"
-      ],
-      "components": [
-        {
-          "path": "node_modules/nodemailer",
-          "dependencyFingerprint": "sha256:29c03ce5aedf170300b66e7cd57773a8ce45f413bb3ac909d8e334326ebab755"
-        }
-      ],
-      "evidence": [
-        "https://github.com/advisories/GHSA-v53p-9fqp-m79j"
-      ],
-      "regressions": [],
-      "ecosystem": "npm"
-    },
-    {
-      "id": "pds-nodemailer-GHSA-39m8-27wv-hr27",
-      "workspace": "pds",
-      "package": "nodemailer",
-      "version": "10.5.0",
-      "advisory": "GHSA-39m8-27wv-hr27",
-      "reviewedSeverity": "moderate",
-      "decision": "blocked",
-      "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
-      "reason": "Historical mailer risk acceptance is not carried forward. Upgrade the exact candidate and pass actual PDS mail regressions; no reachable High acceptance qualifies.",
-      "exposures": [
-        "local-and-approved-peer"
-      ],
-      "components": [
-        {
-          "path": "node_modules/nodemailer",
-          "dependencyFingerprint": "sha256:29c03ce5aedf170300b66e7cd57773a8ce45f413bb3ac909d8e334326ebab755"
-        }
-      ],
-      "evidence": [
-        "https://github.com/advisories/GHSA-39m8-27wv-hr27"
-      ],
-      "regressions": [],
-      "ecosystem": "npm"
-    },
-    {
-      "id": "pds-nodemailer-GHSA-8c8m-p3m8-cjg8",
-      "workspace": "pds",
-      "package": "nodemailer",
-      "version": "10.5.0",
-      "advisory": "GHSA-8c8m-p3m8-cjg8",
-      "reviewedSeverity": "moderate",
-      "decision": "blocked",
-      "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
-      "reason": "Historical mailer risk acceptance is not carried forward. Upgrade the exact candidate and pass actual PDS mail regressions; no reachable High acceptance qualifies.",
-      "exposures": [
-        "local-and-approved-peer"
-      ],
-      "components": [
-        {
-          "path": "node_modules/nodemailer",
-          "dependencyFingerprint": "sha256:29c03ce5aedf170300b66e7cd57773a8ce45f413bb3ac909d8e334326ebab755"
-        }
-      ],
-      "evidence": [
-        "https://github.com/advisories/GHSA-8c8m-p3m8-cjg8"
-      ],
-      "regressions": [],
-      "ecosystem": "npm"
-    },
-    {
-      "id": "pds-nodemailer-GHSA-m943-m63m-w62w",
-      "workspace": "pds",
-      "package": "nodemailer",
-      "version": "10.5.0",
-      "advisory": "GHSA-m943-m63m-w62w",
-      "reviewedSeverity": "moderate",
-      "decision": "blocked",
-      "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
-      "reason": "Historical mailer risk acceptance is not carried forward. Upgrade the exact candidate and pass actual PDS mail regressions; no reachable High acceptance qualifies.",
-      "exposures": [
-        "local-and-approved-peer"
-      ],
-      "components": [
-        {
-          "path": "node_modules/nodemailer",
-          "dependencyFingerprint": "sha256:29c03ce5aedf170300b66e7cd57773a8ce45f413bb3ac909d8e334326ebab755"
-        }
-      ],
-      "evidence": [
-        "https://github.com/advisories/GHSA-m943-m63m-w62w"
-      ],
-      "regressions": [],
-      "ecosystem": "npm"
-    },
-    {
-      "id": "pds-nodemailer-GHSA-85x2-q946-cp5h",
-      "workspace": "pds",
-      "package": "nodemailer",
-      "version": "10.5.0",
-      "advisory": "GHSA-85x2-q946-cp5h",
-      "reviewedSeverity": "moderate",
-      "decision": "blocked",
-      "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
-      "reason": "Historical mailer risk acceptance is not carried forward. Upgrade the exact candidate and pass actual PDS mail regressions; no reachable High acceptance qualifies.",
-      "exposures": [
-        "local-and-approved-peer"
-      ],
-      "components": [
-        {
-          "path": "node_modules/nodemailer",
-          "dependencyFingerprint": "sha256:29c03ce5aedf170300b66e7cd57773a8ce45f413bb3ac909d8e334326ebab755"
-        }
-      ],
-      "evidence": [
-        "https://github.com/advisories/GHSA-85x2-q946-cp5h"
-      ],
-      "regressions": [],
-      "ecosystem": "npm"
-    },
-    {
-      "id": "pds-nodemailer-GHSA-4ffr-jq9g-5ffx",
-      "workspace": "pds",
-      "package": "nodemailer",
-      "version": "10.5.0",
-      "advisory": "GHSA-4ffr-jq9g-5ffx",
-      "reviewedSeverity": "moderate",
-      "decision": "blocked",
-      "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
-      "reason": "Historical mailer risk acceptance is not carried forward. Upgrade the exact candidate and pass actual PDS mail regressions; no reachable High acceptance qualifies.",
-      "exposures": [
-        "local-and-approved-peer"
-      ],
-      "components": [
-        {
-          "path": "node_modules/nodemailer",
-          "dependencyFingerprint": "sha256:29c03ce5aedf170300b66e7cd57773a8ce45f413bb3ac909d8e334326ebab755"
-        }
-      ],
-      "evidence": [
-        "https://github.com/advisories/GHSA-4ffr-jq9g-5ffx"
-      ],
-      "regressions": [],
-      "ecosystem": "npm"
-    },
-    {
-      "id": "pds-nodemailer-GHSA-g73g-hqqh-jr95",
-      "workspace": "pds",
-      "package": "nodemailer",
-      "version": "10.5.0",
-      "advisory": "GHSA-g73g-hqqh-jr95",
-      "reviewedSeverity": "moderate",
-      "decision": "blocked",
-      "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
-      "reason": "Historical mailer risk acceptance is not carried forward. Upgrade the exact candidate and pass actual PDS mail regressions; no reachable High acceptance qualifies.",
-      "exposures": [
-        "local-and-approved-peer"
-      ],
-      "components": [
-        {
-          "path": "node_modules/nodemailer",
-          "dependencyFingerprint": "sha256:29c03ce5aedf170300b66e7cd57773a8ce45f413bb3ac909d8e334326ebab755"
-        }
-      ],
-      "evidence": [
-        "https://github.com/advisories/GHSA-g73g-hqqh-jr95"
-      ],
-      "regressions": [],
-      "ecosystem": "npm"
-    },
-    {
-      "id": "pds-nodemailer-GHSA-4g23-2xm8-66gc",
-      "workspace": "pds",
-      "package": "nodemailer",
-      "version": "10.5.0",
-      "advisory": "GHSA-4g23-2xm8-66gc",
-      "reviewedSeverity": "moderate",
-      "decision": "blocked",
-      "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
-      "expiresOn": "2026-11-10",
-      "reason": "Historical mailer risk acceptance is not carried forward. Upgrade the exact candidate and pass actual PDS mail regressions; no reachable High acceptance qualifies.",
-      "exposures": [
-        "local-and-approved-peer"
-      ],
-      "components": [
-        {
-          "path": "node_modules/nodemailer",
-          "dependencyFingerprint": "sha256:29c03ce5aedf170300b66e7cd57773a8ce45f413bb3ac909d8e334326ebab755"
-        }
-      ],
-      "evidence": [
-        "https://github.com/advisories/GHSA-4g23-2xm8-66gc"
-      ],
-      "regressions": [],
-      "ecosystem": "npm"
-    },
-    {
       "id": "pds-deepmerge-GHSA-gcqx-w48m-w2h4",
       "workspace": "pds",
       "package": "deepmerge",
@@ -792,7 +389,7 @@ source commit, source-lock digest and exact crate path/version.
       "reviewedSeverity": "high",
       "decision": "mitigated",
       "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
+      "reviewedOn": "2026-11-11",
       "expiresOn": "2026-12-10",
       "reason": "The CVE is rejected while the GHSA remains active. Actual supported PLC/PDS, peer and MCP ingress fixtures validate decoded byte/work limits, retained memory, malformed-input non-admission and subsequent permitted operations. CBOR/CAR work is checked before materialization; protocol framing violations close only their offending connection. This is mitigation within the documented resource envelope, not a zero-warning claim.",
       "exposures": [
@@ -801,11 +398,11 @@ source commit, source-lock digest and exact crate path/version.
       "components": [
         {
           "path": "node_modules/zod",
-          "dependencyFingerprint": "sha256:5962dc6fa177d99ed869e9b35f4a3f379b54117d45529fda45b5713e29726b21"
+          "dependencyFingerprint": "sha256:d7174b627f2c72db399a2aa7aca9e2a8021cf3561b30ee37e70b7b4eac3aa276"
         },
         {
           "path": "node_modules/zod",
-          "dependencyFingerprint": "sha256:d7174b627f2c72db399a2aa7aca9e2a8021cf3561b30ee37e70b7b4eac3aa276"
+          "dependencyFingerprint": "sha256:7e3ee29fb5c4738e4d7a6c7e2e2ca570617abb462db1da9d0dc2981dc8f23daa"
         }
       ],
       "evidence": [
@@ -858,7 +455,7 @@ source commit, source-lock digest and exact crate path/version.
       "advisoryRevision": "2026-10-23T18:26:52Z"
     },
     {
-      "id": "rust-RUSTSEC-2023-0089-experimental2",
+      "id": "rust-RUSTSEC-2023-0089-experimental3",
       "ecosystem": "rust",
       "workspace": "appview",
       "package": "atomic-polyfill",
@@ -869,7 +466,7 @@ source commit, source-lock digest and exact crate path/version.
       "advisoryRevision": "sha256:ce16a8da1b84e69f002853abcd70f49d2bf4b38eb0b6ec5a93230a9bcfad966a",
       "decision": "accepted-risk",
       "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
+      "reviewedOn": "2026-11-11",
       "expiresOn": "2026-12-10",
       "reason": "Reviewed unmaintained notice in the conservative full-workspace transport Cargo audit. No vulnerability or CVSS score is inferred from maintenance status. Retain this exact locked component for the focused patch; new vulnerability reports, changed source/component identities or expiry require fresh review. No target-based exclusion is used to obtain a pass.",
       "exposures": [
@@ -878,7 +475,7 @@ source commit, source-lock digest and exact crate path/version.
       "components": [
         {
           "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:atomic-polyfill@1.0.3",
-          "dependencyFingerprint": "sha256:b014bc156595b4eb22c5847add316bd428719d14c0fb2c06b333016de2caa927"
+          "dependencyFingerprint": "sha256:9895b9a0700abe45880a744a3c0ee9efecc48c2975837a7c80cfefd78729bcf4"
         }
       ],
       "evidence": [
@@ -887,7 +484,7 @@ source commit, source-lock digest and exact crate path/version.
       "regressions": []
     },
     {
-      "id": "rust-RUSTSEC-2026-0374-experimental2",
+      "id": "rust-RUSTSEC-2026-0374-experimental3",
       "ecosystem": "rust",
       "workspace": "appview",
       "package": "basic-toml",
@@ -898,7 +495,7 @@ source commit, source-lock digest and exact crate path/version.
       "advisoryRevision": "sha256:05c547d6e39cb0765cc96067f88cb8ab55a4b5335a98ecf7f6a67a3a0be27e9e",
       "decision": "accepted-risk",
       "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
+      "reviewedOn": "2026-11-11",
       "expiresOn": "2026-12-10",
       "reason": "Reviewed unmaintained notice in the conservative full-workspace transport Cargo audit. No vulnerability or CVSS score is inferred from maintenance status. Retain this exact locked component for the focused patch; new vulnerability reports, changed source/component identities or expiry require fresh review. No target-based exclusion is used to obtain a pass.",
       "exposures": [
@@ -907,7 +504,7 @@ source commit, source-lock digest and exact crate path/version.
       "components": [
         {
           "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:basic-toml@0.1.10",
-          "dependencyFingerprint": "sha256:fe5bad8107d6dac4a61eecc2ace96bea81352c5ffbff47322621167440cb203a"
+          "dependencyFingerprint": "sha256:c6f8b2560457c75740c017ce4641f9fe5d76aac6bf4b968db5754248e35c6604"
         }
       ],
       "evidence": [
@@ -916,7 +513,7 @@ source commit, source-lock digest and exact crate path/version.
       "regressions": []
     },
     {
-      "id": "rust-RUSTSEC-2024-0436-experimental2",
+      "id": "rust-RUSTSEC-2024-0436-experimental3",
       "ecosystem": "rust",
       "workspace": "appview",
       "package": "paste",
@@ -927,7 +524,7 @@ source commit, source-lock digest and exact crate path/version.
       "advisoryRevision": "sha256:f5d6677b2552a0c8d5bf8c94593db7263d93ccb26a24f38165b1e4cf895da992",
       "decision": "accepted-risk",
       "owner": "@natewalton",
-      "reviewedOn": "2026-11-10",
+      "reviewedOn": "2026-11-11",
       "expiresOn": "2026-12-10",
       "reason": "Reviewed unmaintained notice in the conservative full-workspace transport Cargo audit. No vulnerability or CVSS score is inferred from maintenance status. Retain this exact locked component for the focused patch; new vulnerability reports, changed source/component identities or expiry require fresh review. No target-based exclusion is used to obtain a pass.",
       "exposures": [
@@ -936,7 +533,7 @@ source commit, source-lock digest and exact crate path/version.
       "components": [
         {
           "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:paste@1.0.15",
-          "dependencyFingerprint": "sha256:1571b4dd1d9121e05b0b2ce84e1c41ef5ea61ad46547aeb2ea332626873f0a22"
+          "dependencyFingerprint": "sha256:e4ebb60066163f54b81e6f54b4eaf3c6858218ab44b7b0b24a70105636e83b27"
         }
       ],
       "evidence": [

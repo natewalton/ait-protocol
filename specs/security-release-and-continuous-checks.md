@@ -1,8 +1,8 @@
 # Release AIT with verified security decisions and continuous checks
 
-Status: Implemented on the security branch with passing local fixtures and independent source review. Native publication/adoption, hosted checks, required repository rules and release delivery remain pending. 2026-11-10.
+Status: Implemented on the security branch with passing local fixtures and independent source review. Runtime refresh and exact experimental.3 local integration pass; native publication/adoption, hosted checks, required repository rules and release delivery remain pending. 2026-11-11.
 
-Scope: one focused security release followed by continuous enforcement. This spec adds one file; the implementation has twenty-three declared AIT files, listed below. Base: private-peer `d9e43e2`; stable comparison: `ce427fb`.
+Scope: one focused security release followed by continuous enforcement. This spec adds one file; the implementation has thirty declared AIT files, listed below. Refresh base: private-peer `98df264`; stable comparison: `8cadfd3` (v0.1.46).
 
 ## Why
 
@@ -81,7 +81,7 @@ For an affected release assessed during preparation, provide the patch/effective
 
 ## Files touched
 
-**Specification:** this file only. **Declared implementation: twenty-three AIT files.**
+**Specification:** this file only. **Declared implementation: thirty AIT files.**
 
 | File | Outcome |
 | --- | --- |
@@ -91,12 +91,19 @@ For an affected release assessed during preparation, provide the patch/effective
 | `appview/package.json` | Declare the existing pinned official WebSocket client for pre-decode frame checks |
 | `appview/package-lock.json` | Reproducible direct client dependency |
 | `appview/src/inputBounds.mjs` (new) | Bound CBOR/CAR structure before object materialization |
+| `appview/src/boundedStream.mjs` (new) | Shared public WebSocket stream with one buffered frame, explicit payload bound, heartbeat/reconnect and cancellation |
+| `appview/src/localFeed.mjs` (new) | Bound stable local feed decoding and selected-record admission using existing official parsers |
+| `appview/src/server.ts` | Connect the stable server to the bounded local feed |
+| `appview/tsconfig.json` | Include the shared JavaScript feed controls in the stable build |
 | `appview/src/peerFeed.mjs` | Apply bounds to snapshots and stream frames before existing authenticated validation |
 | `appview/scripts/peer-feed-test.mjs` | Signed malformed snapshot/commit admission regression tests |
 | `appview/scripts/input-bounds-test.mjs` (new) | Positive protocol fixtures and structural rejection boundaries |
 | `pds/package.json` | Reviewed exact mailer candidate, existing PDS generation |
 | `pds/package-lock.json` | Reproducible resolved candidate |
 | `pds/scripts/mailer-security-test.mjs` (new) | Actual PDS mail composition/transport compatibility and security fixtures |
+| `mcp/src/boundedStdio.ts` (new) | Bound raw JSON structure before materialization and coalesce stdio frame fragments once before official SDK validation |
+| `mcp/src/server.ts` | Pass the bounded public input stream into the SDK without changing Codex driver mode |
+| `mcp/scripts/push-mode-test.mjs` | Restore the existing push/EOF fixture to the released friendly-handle output contract |
 | `bin/ait-test.sh` | Keep the protected PLC launcher fixture and package-script callers under regression coverage |
 | `bin/security-input-test.mjs` (new) | Real ingress/resource and database-scope fixtures in isolated processes |
 | `bin/check-advisories.sh` | One policy evaluator for candidate npm/native findings |
@@ -196,3 +203,17 @@ Build/runtime validation distinction 2026-11-10: The TypeScript compiler exceeds
 Admission amendment 2026-11-10: Independent review reproduced partial identity admission from a small signed repository containing an invalid AIT record. Validate every selected snapshot/commit record against the AIT and standard lexicons before any record or account projection. Add the existing peer-feed test file to scope (twenty-two AIT implementation files total), including a valid record preceding an invalid one; rejection must preserve identity/projection rows and cursor.
 
 Launcher-fixture amendment 2026-11-10: Add `bin/ait-test.sh` (twenty-three AIT implementation files total) so the existing isolated launcher fixture models the explicit Express boundary and asserts both npm start/dev use the protected loopback launcher. No test may invoke installed services.
+
+Refresh amendment 2026-11-11: Include immutable stable v0.1.46 (`8cadfd3d7bbd54c46622ebe120678911d73986fb`) in supported-release assessment under the conservative local-and-approved-peer rule; retain prior releases until explicitly retired. Preserve its XML parser patch and writer recovery checks during both security branch rebases. Record the already-replayed peer.2 history as a merge parent without changing candidate files, retaining the existing immutable ancestry and schema gates.
+
+Buffering scope amendment 2026-11-11: Inspection found the official ws-client uses an object-mode stream with a sixteen-frame high-water mark, while stable Firehose also schedules MemoryRunner tasks without awaiting them. At the existing 100 MiB per-frame ceiling this does not establish the committed service-memory bound. Add the four named AppView files above (twenty-seven AIT files total), use the public WebSocket stream with one buffered frame and serial processing, and preserve official protocol parsers, existing transport/security policy, heartbeat, reconnect and cancellation. Apply the shared buffering control to both local and peer feeds. Extend the bounded harness with an actual stable server/index/read journey and bursts during slow processing; choose the runtime implementation under test without narrowing exposure or treating missing runtime files as passing coverage. Positive representative workloads, rejected admission, subsequent availability and fixed memory/deadline budgets remain required.
+
+Native refresh amendment 2026-11-11: A fresh full-lock audit of the prepared experimental.2 found RUSTSEC-2026-0486 (rustix 1.1.5 unsoundness; patched 1.1.6). Retain it as a blocker until the same declared native lock scope is patched and the exact packed experimental.3 replacement passes fresh audit, package tests and strict/default transport proofs. Do not reuse the prior draft identity or present yesterday's result as current. No native/AIT publication or live installation is authorized by this build step.
+
+MCP allocation amendment 2026-11-11: The full stable resource run exceeded the unchanged 768 MiB aggregate watchdog (771 MiB). Measurement isolated repeated SDK ReadBuffer Buffer.concat allocation while accumulating a fragmented 10 MiB frame: the actual MCP child peaked at 681 MiB and the fixture at about 80 MiB. Add the two named MCP files above (twenty-nine AIT files total). Coalesce bounded newline frames once using public stream APIs before the official transport; retain the SDK default byte limit, JSON-RPC validation and explicit overflow error/transport closure. Forward an overflow signal as at most limit+1 bytes to the SDK rather than inventing an alternate protocol error. Preserve CRLF/multiple frames, raw stdin EOF and Codex driver mode; verify ordinary malformed-call recovery, overflow/fresh-session behavior and fixed resource budgets without private prototype changes in production. No budget increase is allowed.
+
+MCP decoded-work amendment 2026-11-11: Independent actual-server testing found a second issue below the SDK byte ceiling: a 9,500,086-byte tool request with 500,000 unknown argument keys aborts the 128 MiB MCP child during SDK deserialization/materialization (NameDictionary allocation), while smaller cases return validation errors. The same declared boundedStdio module must therefore scan raw bounded JSON without materializing objects, reject more than 65,536 value/key tokens or depth beyond 64, and preserve opaque string payload capacity. Structural rejection returns an explicit correlated JSON-RPC resource error and keeps this same MCP session usable; it is not an SDK byte-limit overflow. Safely identify only the top-level primitive request id, including escaped id keys and an id after the rejected argument object, without decoding that object or matching nested id fields. The official SDK remains responsible for JSON and JSON-RPC semantic validation on admitted frames. Add the real large-object case and same-session subsequent read, depth, escaped-string/id and fragmented near-byte-limit positive regressions under unchanged heap/RSS/deadline budgets.
+
+Push compatibility fixture amendment 2026-11-11: The existing offline push-mode suite checks transport/EOF ownership but retained an obsolete @bob.test author expectation. Released v0.1.46 already uses displayHandle and emits @bob. Add the named fixture file (thirty AIT implementation files total) to assert the released behavior while retaining its actual SDK initialize, push delivery and stdin-EOF lifecycle journey. No notification formatting changes are introduced.
+
+MCP ownership clarification 2026-11-11: When the SDK closes an offending stdio transport, invoke the existing push-listener cleanup as well as pausing the bounded input. A dead transport must not continue renewing a push target or retain its HTTP listener. Ordinary structural request rejection keeps the transport/listener alive; byte overflow and raw stdin EOF affect only this conversation's MCP process.

@@ -5,7 +5,7 @@ import { cborToLexRecord, parseDataKey, verifyRepoCar } from '@atproto/repo'
 import { parseAccount, parseCommitAuthenticated, parseIdentity } from '@atproto/sync'
 import { AtUri } from '@atproto/syntax'
 import { ensureChunkIsMessage } from '@atproto/xrpc-server'
-import { WebSocketKeepAlive } from '@atproto/ws-client'
+import { boundedStream } from './boundedStream.mjs'
 import { assertRepoCarBounds, assertFrameBounds } from './inputBounds.mjs'
 import { handleEvent } from './indexer.js'
 import { AIT_LEXICONS } from './aitLexicons.js'
@@ -32,10 +32,10 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
   }
   const controller = new AbortController()
   const opened = Promise.withResolvers()
-  const stream = new WebSocketKeepAlive({ agent, signal: controller.signal,
+  const stream = boundedStream({ agent, signal: controller.signal,
     getUrl: async () => `${service}/xrpc/${METHOD}?cursor=${cursor}`,
-    // Public ws option, forwarded by the official WebSocketKeepAlive. Let the
-    // upstream reconnect an asleep peer before issuing any snapshot reads.
+    // Observe the socket through the public ws option. Reconnect an asleep
+    // peer before issuing any snapshot reads.
     finishRequest(request, websocket) {
       activeSocket = websocket
       websocket.once('open', () => {
@@ -172,7 +172,7 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
 
   async function consume() {
     const iterator = boundedMessages()[Symbol.asyncIterator]()
-    const first = iterator.next() // Open the official stream before taking snapshots.
+    const first = iterator.next() // Open the bounded stream before taking snapshots.
     void first.catch(error => controller.abort(error))
     try {
       // A quiet but open stream must backfill too. The read also propagates

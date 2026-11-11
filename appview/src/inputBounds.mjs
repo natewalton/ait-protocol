@@ -1,5 +1,5 @@
 // Resource preflight only: do not materialize CBOR values before the upstream
-// decoder and schema/signature checks. These limits define the supported peer
+// decoder and schema/signature checks. These limits define the supported feed
 // input envelope; they are fixed independently of the adversarial test results.
 export const INPUT_BOUNDS = Object.freeze({
   bytes: 100 * 1024 * 1024,
@@ -14,7 +14,7 @@ export const INPUT_BOUNDS = Object.freeze({
 })
 
 function limit(message) {
-  const error = new Error(`Peer input limit: ${message}`)
+  const error = new Error(`Feed input limit: ${message}`)
   error.code = 'AIT_PEER_INPUT_LIMIT'
   throw error
 }

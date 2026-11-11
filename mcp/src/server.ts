@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { createBoundedStdio } from './boundedStdio.js'
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -8,7 +9,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import { z, type ZodRawShape } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
-import { startPushListener, channelSink } from './push.js'
+import { startPushListener, stopPushListener, channelSink } from './push.js'
 
 // Three operational modes. Default poll requires no setup. Push
 // (specs/notification-push.md) needs `--channels` at Claude Code launch + org
@@ -256,7 +257,19 @@ async function main() {
     }
   }
 
-  const transport = new StdioServerTransport()
+  const input = createBoundedStdio(process.stdin, async result => {
+    const message = `MCP input limit: ${result.error}`
+    if (result.hasId) {
+      await transport.send({ jsonrpc: '2.0', id: result.id ?? undefined,
+        error: { code: -32600, message } })
+    } else console.error(message)
+  })
+  const transport = new StdioServerTransport(input)
+  server.onclose = () => {
+    input.destroy()
+    void stopPushListener().catch(error => console.error('MCP push cleanup failed:', error))
+  }
+  input.on('error', () => { void transport.close() })
   // StdioServerTransport does not observe stdin EOF itself. A Claude MCP is
   // owned by that stdio connection, so once the client closes it this process
   // must stop renewing its push registration by exiting with the transport.

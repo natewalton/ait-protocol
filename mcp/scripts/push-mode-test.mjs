@@ -156,7 +156,7 @@ check('(c) client received exactly one channel notification', seenChannels.lengt
 const got = seenChannels[0]
 check('(d) content is the post text', got?.content === mentionView.record.text)
 check('(d) meta.reason = mention', got?.meta?.reason === 'mention')
-check('(d) meta.author = @bob.test', got?.meta?.author === '@bob.test')
+check('(d) meta.author uses friendly handle @bob', got?.meta?.author === '@bob')
 check('(d) meta.indexed_at matches', got?.meta?.indexed_at === mentionView.indexedAt)
 check('(d) meta.uri matches', got?.meta?.uri === mentionView.uri)
 check('(d) meta.in_reply_to matches reasonSubject', got?.meta?.in_reply_to === mentionView.reasonSubject)

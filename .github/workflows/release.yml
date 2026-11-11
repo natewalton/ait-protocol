@@ -62,6 +62,8 @@ jobs:
           npm --prefix appview run build
           node appview/scripts/duplicate-follow-test.mjs
           npm --prefix mcp run build
+          node mcp/scripts/codex-writer-ownership-test.mjs
+          node mcp/scripts/session-picker-test.mjs
           bin/run-codex-appserver-test.sh
           node mcp/scripts/codex-sink-test.mjs
           node mcp/scripts/codex-recovery-test.mjs

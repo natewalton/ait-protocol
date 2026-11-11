@@ -32,7 +32,7 @@ async function openFiles(files: string[]): Promise<Map<string, Set<number>>> {
   for (let start = 0; start < files.length; start += 128) {
     const batch = files.slice(start, start + 128)
     const allowed = new Set(batch)
-    const result = await command('lsof', ['-nP', '-F', 'pnaf', '--', ...batch])
+    const result = await command('lsof', ['-w', '-nP', '-F', 'pnaf', '--', ...batch])
     if (![0, 1].includes(result.code) || result.stderr.trim()) {
       // A file may disappear while Codex releases it. Retry the surviving
       // paths only; errors about a still-existing path must not mean "free".

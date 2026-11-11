@@ -159,6 +159,8 @@ export async function runCodexSession(): Promise<void> {
   })
 
   let threadId: string | null = resumeThreadId
+  // Startup owns this retry budget; reconnecting must not replenish it.
+  let writerRetryUsed = false
   let openingTurnDone = false
 
   // Reconnect supervisor: (re)connect to the shared server, run one connection
@@ -200,7 +202,8 @@ export async function runCodexSession(): Promise<void> {
             }
             // A previous owner can finish between selection and resume. Let
             // Codex arbitrate one safe retry; never stop a writer or delete locks.
-            if (recheckAvailable && !owner) {
+            if (recheckAvailable && !owner && !writerRetryUsed) {
+              writerRetryUsed = true
               // The launcher captures ordinary logs until startup finishes.
               // Write synchronously to its inherited notice channel first.
               try {

@@ -32,22 +32,22 @@ executable('lsof', `
 const fs=require('node:fs'),args=process.argv.slice(2);
 const file=${JSON.stringify(stateFile)},s=JSON.parse(fs.readFileSync(file));
 fs.appendFileSync(${JSON.stringify(logFile)},JSON.stringify({command:'lsof',args})+'\\n');
-if(args.slice(0,4).join(' ')!=='-nP -F pnaf --') process.exit(3);
+if(args.slice(0,5).join(' ')!=='-w -nP -F pnaf --') process.exit(3);
 if(s.mode==='timeout') { setTimeout(()=>{},5000); }
 else if(s.mode==='malformed') { console.log('f999'); }
-else if(s.mode==='invalid-fd') { console.log('p202\\nf-1\\nn'+args[4]); }
-else if(s.mode==='oversized-fd') { console.log('p202\\nf9007199254740992\\nn'+args[4]); }
-else if(s.mode==='access-before-fd') { console.log('p202\\nau\\nf46\\nn'+args[4]); }
-else if(s.mode==='missing-access') { console.log('p202\\nf46\\nn'+args[4]); }
+else if(s.mode==='invalid-fd') { console.log('p202\\nf-1\\nn'+args[5]); }
+else if(s.mode==='oversized-fd') { console.log('p202\\nf9007199254740992\\nn'+args[5]); }
+else if(s.mode==='access-before-fd') { console.log('p202\\nau\\nf46\\nn'+args[5]); }
+else if(s.mode==='missing-access') { console.log('p202\\nf46\\nn'+args[5]); }
 else if(s.mode==='missing-file') { console.log('p202\\nf46\\nau'); }
-else if(s.mode==='invalid-access') { console.log('p202\\nf46\\nax\\nn'+args[4]); }
-else if(s.mode==='duplicate-access') { console.log('p202\\nf46\\nau\\naw\\nn'+args[4]); }
+else if(s.mode==='invalid-access') { console.log('p202\\nf46\\nax\\nn'+args[5]); }
+else if(s.mode==='duplicate-access') { console.log('p202\\nf46\\nau\\naw\\nn'+args[5]); }
 else if(s.mode==='permission') { console.error('permission denied');process.exit(1); }
 else if(s.mode==='failure') process.exit(2);
-else if(s.mode==='gone') { s.mode='empty';fs.writeFileSync(file,JSON.stringify(s));console.log('p202\\nf46\\nau\\nn'+args[4]); }
-else if(s.mode==='disappear') {fs.unlinkSync(args[4]);console.error('status error: no such file');process.exit(1);}
+else if(s.mode==='gone') { s.mode='empty';fs.writeFileSync(file,JSON.stringify(s));console.log('p202\\nf46\\nau\\nn'+args[5]); }
+else if(s.mode==='disappear') {fs.unlinkSync(args[5]);console.error('status error: no such file');process.exit(1);}
 else {
- let count=0;for(const p of args.slice(4)) {
+ let count=0;for(const p of args.slice(5)) {
   for(const pid of s.owners?.[p]||[]) {const a='a'+(s.accesses?.[pid]??s.access??'u');console.log('p'+pid+'\\nf46\\n'+(s.nameFirst?'n'+p+'\\n'+a:a+'\\nn'+p));count++;}
  }
  if(!count)process.exit(1);

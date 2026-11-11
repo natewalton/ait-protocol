@@ -377,6 +377,31 @@ for (const [releases, noticeAvailable] of [[true, true], [false, true], [true, f
 }
 console.log('ok - released writer recovers automatically; repeated ownership refusal stays bounded')
 
+// An overload during the retry reconnects, but does not grant a second writer
+// recovery attempt or print another pre-retry notice.
+{
+  let attempts = 0
+  const endpoint = await fakeAppServer(path.join(root, 'writer-retry-overload.sock'), {
+    onRequest(message) {
+      if (message.method === 'initialize') return { result: { codexHome: path.join(root, 'writer-home') } }
+      if (message.method === 'server/diagnostics') return { result: { process: { id: process.pid } } }
+      if (message.method !== 'thread/resume') return
+      attempts++
+      if (attempts === 2) return { error: { code: -32001, message: 'Server overloaded' } }
+      return { error: { code: -32600, message: `thread ${testThread} already has an active writer` } }
+    },
+  })
+  const driver = launchDriver(endpoint.socketPath)
+  try {
+    await waitUntil(() => driver.child.exitCode !== null, 'writer retry budget survives reconnect')
+    assert.equal(driver.child.exitCode, 1)
+    assert.equal(attempts, 3, 'initial resume, one safe retry, then reconnect refusal without another retry')
+    assert.equal(driver.output.split('retrying this conversation once').length - 1, 1)
+    assert.match(driver.output, /finish and close only that conversation/)
+  } finally { await driver.close(); await endpoint.close() }
+}
+console.log('ok - writer recovery retry budget is preserved across overload reconnects')
+
 
 // Real driver HTTP push -> Codex request -> disconnect -> registration replay
 // -> completed replacement turn -> persisted cursor. PDS/AppView are owned fakes.

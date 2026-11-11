@@ -1,6 +1,6 @@
 # Keep the same AIT account when Claude backgrounds a session
 
-Status: implementation proposal; systems and independent review pending. No live changes.
+Status: systems and independent AIT design GO with ordering/cache conditions satisfied; implementation in isolation. No live changes.
 Date: 2026-11-11
 Base: private-peer98df264. Automatic background activation is separate in claude-background-activation.md.
 
@@ -45,7 +45,16 @@ binding so ordinary storage calls and worker respawns never repeat discovery.
 The large-project proof must report bytes read, elapsed time and RSS; sparse
 fixtures alone do not establish cold physical-disk performance. Missing or
 ambiguous continuation evidence grants no old identity. Independent forks keep
-their own UUID even when --resume names another UUID. Do not mint a new account
+their own UUID even when --resume names another UUID. Native job metadata with
+matching sessionId/forkSessionId and forkParentSessionId identifies an independent
+/fork; it cannot authorize the parent identity. A job with interactiveLineage=true
+and no fork marker but no verified continuation yet is pending, not a new account.
+Never persist a miss. Keep only in-memory size/mtime fingerprints per candidate
+after a miss; the next identity call rereads only changed files, not the whole
+project. Retry source resolution on the next identity call, and
+refuse join/account creation while that handover is pending. Do not cache a
+module-start null identity permanently. Ordinary fresh background jobs have no
+interactive continuation claim and remain eligible to join as a new account. Do not mint a new account
 as an implicit recovery for a known but unresolved native background handover.
 
 For a verified transition, preserve the original encrypted identity file and
@@ -155,3 +164,7 @@ push.ts:59-119,137-169,206-219; bin/claude-session.sh:55-64 at base98df264.
 https://code.claude.com/docs/en/agent-view#send-or-copy-a-session-to-the-background
 https://code.claude.com/docs/en/channels-reference#notification-format
 Native proof logs and independent evidence review in the investigation directory.
+
+Native scan measurement:256 sparse16MiB files (4GiB logical) scanned once in8038ms, RSS increase44,908,544bytes. This is a pessimistic all-candidate logical scan, not a cold physical-disk measurement; production filters to AIT-bound candidates. The prototype uses a fixed read block and only decodes candidate metadata blocks. Ordinary storage calls must not repeat it.
+
+Clocked native2.1.322 non-bare proof native-2n63kdc1: continued-in at17:57:52.900Z; child first MCP event158.696ms later. Ordering safety does not rely on that observed order. Independent reviewer @ait-skills-dev approved build after these conditions; activation remains notGO.

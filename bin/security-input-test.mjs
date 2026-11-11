@@ -19,6 +19,7 @@ export const BUDGETS = Object.freeze({
   requestMs: 2000, childMs: 45000, oldSpaceMiB: 256, rssMiB: 768,
   ordinaryResponseBytes: 512 * 1024, repoResponseBytes: 100 * 1024 * 1024,
   websocketBytes: 100 * 1024 * 1024, stdioBytes: 10 * 1024 * 1024,
+  jsonNodes: 65_536, jsonDepth: 64,
   plcJsonBytes: 100 * 1024, pdsJsonBytes: 150 * 1024, pdsWriteBytes: 1_000_000,
   // At most 32 normal records, four overlapping invalid requests, and existing
   // 100MiB repository/frame support. RSS includes all processes in child group.
@@ -436,6 +437,7 @@ process.on('message',async message=>{if(message?.type!=='security-memory')return
   const server = spawn(process.execPath, ['--max-old-space-size=128', '--expose-gc', '--import', observer,
     path.join(candidate, 'mcp/dist/server.js')], { cwd: process.env.HOME, env: { ...process.env,
     AIT_NOTIFICATION_MODE: 'poll' }, stdio: ['pipe', 'pipe', 'pipe', 'ipc'] })
+  const serverExited = once(server, 'exit')
   const memoryPending = new Map(); let memoryId = 0
   server.on('message', message => {
     if (message?.type === 'security-memory') memoryPending.get(message.id)?.(message.memory)
@@ -446,7 +448,7 @@ process.on('message',async message=>{if(message?.type!=='security-memory')return
     memoryPending.set(id, memory => { clearTimeout(timer); memoryPending.delete(id); resolve(memory) })
     server.send({ type: 'security-memory', id })
   })
-  const pending = new Map(); let nextId = 0, buffer = '', diagnostics = ''
+  const pending = new Map(), responsesSeen = []; let nextId = 0, buffer = '', diagnostics = ''
   server.stdout.on('data', chunk => {
     buffer += chunk
     check(buffer.length < 2 * 1024 * 1024, 'MCP stdout exceeded fixture bound')
@@ -454,16 +456,20 @@ process.on('message',async message=>{if(message?.type!=='security-memory')return
     while ((split = buffer.indexOf('\n')) !== -1) {
       const line = buffer.slice(0, split); buffer = buffer.slice(split + 1)
       const message = JSON.parse(line)
+      responsesSeen.push(message)
       pending.get(message.id)?.resolve(message); pending.delete(message.id)
     }
   })
   server.stderr.on('data', chunk => { diagnostics = (diagnostics + chunk).slice(-4096) })
-  const rpc = (method, params = {}) => new Promise((resolve, reject) => {
-    const id = ++nextId
+  const responseFor = (id, method) => new Promise((resolve, reject) => {
     const timer = setTimeout(() => { pending.delete(id); reject(Error(`MCP ${method} timeout; ${diagnostics}`)) }, BUDGETS.requestMs)
     pending.set(id, { resolve: result => { clearTimeout(timer); resolve(result) } })
-    server.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n')
   })
+  const rpc = (method, params = {}) => {
+    const id = ++nextId, response = responseFor(id, method)
+    server.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n')
+    return response
+  }
   try {
     await measured('mcp-initialize', () => rpc('initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'security-fixture', version: '1' } }))
     server.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n')
@@ -479,18 +485,69 @@ process.on('message',async message=>{if(message?.type!=='security-memory')return
     }
     check((await measured('mcp-subsequent-read', () => rpc('tools/list'))).result?.tools?.length > 0, 'MCP failed subsequent permitted request')
     if (oversized) {
+    const firstId = ++nextId, secondId = ++nextId
+    const multiple = [responseFor(firstId, 'batch/first'), responseFor(secondId, 'batch/second')]
+    server.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: firstId, method: 'tools/list' }) + '\r\n' +
+      JSON.stringify({ jsonrpc: '2.0', id: secondId, method: 'tools/list' }) + '\n')
+    check((await Promise.all(multiple)).every(r => r.result?.tools?.length > 0), 'MCP multiline/CRLF changed message boundaries')
+    const nearId = ++nextId
+    const near = { jsonrpc: '2.0', id: nearId, method: 'tools/list', params: { _meta: { padding: '' } } }
+    near.params._meta.padding = 'x'.repeat(BUDGETS.stdioBytes - Buffer.byteLength(JSON.stringify(near) + '\r\n'))
+    const nearBytes = Buffer.from(JSON.stringify(near) + '\r\n')
+    check(nearBytes.length === BUDGETS.stdioBytes, 'positive stdio fixture missed exact byte limit')
+    const nearReply = responseFor(nearId, 'near-limit/tools-list')
+    await measured('mcp-fragmented-exact-limit-crlf', async () => {
+      for (let offset = 0; offset < nearBytes.length; offset += 65536) {
+        if (!server.stdin.write(nearBytes.subarray(offset, offset + 65536))) await Promise.race([once(server.stdin, 'drain'), serverExited])
+      }
+      check((await nearReply).result?.tools?.length > 0, 'MCP rejected a valid exact-limit fragmented frame')
+    })
+    check((await rpc('tools/list', { _meta: { padding: '[]{}"\\\n'.repeat(1000) } })).result?.tools?.length > 0,
+      'MCP structural scan misread escaped string content')
+    const memberChunks = []
+    for (let offset = 0; offset < 500_000; offset += 1000) {
+      let chunk = ''
+      for (let i = offset; i < offset + 1000; i++) chunk += `"field${String(i).padStart(6, '0')}":null,`
+      memberChunks.push(chunk)
+    }
+    const denseMembers = memberChunks.join('').slice(0, -1)
+    const rejected = async (text, id, label) => {
+      check(Buffer.byteLength(text) < BUDGETS.stdioBytes, 'JSON structural fixture exceeded byte envelope')
+      const response = responseFor(id, label)
+      server.stdin.write(text + '\n')
+      const reply = await measured(label, () => response)
+      check(reply.id === id && reply.error?.code === -32600, 'structural rejection lost root request id or clear error')
+      check((await rpc('tools/list')).result?.tools?.length > 0, 'structural rejection did not preserve the same MCP process')
+    }
+    await rejected(`{"jsonrpc":"2.0","id":0,"method":"tools/list","params":{${denseMembers}}}`, 0, 'mcp-dense-500k-keys-id-zero')
+    await rejected(`{"jsonrpc":"2.0","method":"tools/list","params":{"id":"nested-fake",${denseMembers}},"i\\u0064":""}`, '', 'mcp-dense-late-escaped-root-id')
+    const duplicateId = ++nextId
+    await rejected(`{"jsonrpc":"2.0","id":"earlier-fake","method":"tools/list","params":{${denseMembers}},"id":${duplicateId}}`, duplicateId, 'mcp-duplicate-root-id-last-wins')
+    const deepId = ++nextId
+    await rejected(`{"jsonrpc":"2.0","method":"tools/list","params":${'['.repeat(BUDGETS.jsonDepth + 1)}{"id":"nested-fake"}${']'.repeat(BUDGETS.jsonDepth + 1)},"id":${deepId}}`, deepId, 'mcp-deep-structure-late-root-id')
+    const seenBeforeNotification = responsesSeen.length
+    server.stdin.write(`{"jsonrpc":"2.0","method":"tools/list","params":{"id":"nested-notification",${denseMembers}}}\n`)
+    check((await rpc('tools/list')).result?.tools?.length > 0, 'structural notification rejection prevented a subsequent request')
+    check(responsesSeen.length === seenBeforeNotification + 1, 'structural notification produced a response or used nested id')
+    checks.push({ id: 'mcp-json-structural-bounds', rejectedKeys: 500_000, maxNodes: BUDGETS.jsonNodes,
+      maxDepth: BUDGETS.jsonDepth, rootCorrelation: 'zero/empty/escaped/late/duplicate-last', sameProcessRecovery: true })
     // Fragments contain no newline; actual SDK framing must reject before JSON.parse.
     let pipeError
     server.stdin.on('error', error => { pipeError = error })
     const chunk = Buffer.alloc(65536, 32)
     for (let offset = 0; offset <= BUDGETS.stdioBytes; offset += chunk.length) {
-      if (!server.stdin.write(chunk)) await Promise.race([once(server.stdin, 'drain'), once(server, 'exit')])
+      if (!server.stdin.write(chunk)) await Promise.race([once(server.stdin, 'drain'), serverExited])
       if (server.exitCode !== null || pipeError) break
     }
     await new Promise(resolve => setTimeout(resolve, 30))
     await until(() => diagnostics.includes(`SECURITY_FRAME_ERROR:ReadBuffer exceeded maximum size of ${BUDGETS.stdioBytes} bytes`))
     await assertRetained('mcp-actual-server-retained-after-framing-close', retained, actualServerMemory)
     checks.push({ id: 'mcp-oversized-transport-rejected', error: `ReadBuffer exceeded maximum size of ${BUDGETS.stdioBytes} bytes` })
+    }
+    if (!oversized) {
+      server.stdin.end()
+      const [code] = await measured('mcp-client-eof-closes-owned-process', () => serverExited)
+      check(code === 0, 'MCP did not exit cleanly when its client closed stdin')
     }
     check(JSON.stringify(fs.readdirSync(process.env.HOME).sort()) === JSON.stringify(homeBeforeMcp), 'MCP invalid calls created new persisted state')
   } finally {
@@ -500,12 +557,191 @@ process.on('message',async message=>{if(message?.type!=='security-memory')return
   if (oversized) await measured('mcp-fresh-session-after-frame-rejection', () => mcpTest(false))
 }
 
+async function streamBurstTest() {
+  const { mock } = await import('node:test')
+  const { WebSocketServer } = req('appview')('ws')
+  const { boundedStream } = await source('appview/src/boundedStream.mjs')
+  const server = http.createServer(), wss = new WebSocketServer({ server, autoPong: false })
+  const port = await listen(server), controller = new AbortController()
+  const connected = once(wss, 'connection')
+  let clientSocket
+  mock.timers.enable({ apis: ['setInterval'] })
+  const iterator = boundedStream({ signal: controller.signal,
+    getUrl: async () => `ws://127.0.0.1:${port}`,
+    finishRequest(request, socket) { clientSocket = socket; request.end() } })[Symbol.asyncIterator]()
+  try {
+    const first = iterator.next(), [socket] = await connected
+    const payload = Buffer.alloc(8 * 1024 * 1024, 7)
+    socket.send(payload); await first
+    const retained = await retainedSample('stream-burst-before-slow-consumer')
+    // Hold projection while the producer bursts 16 large frames. Default object
+    // HWM16 would retain128MiB; the one-frame queue stays within the existing32MiB
+    // retained-growth budget. This probes buffering while processing is paused.
+    for (let i = 0; i < 16; i++) socket.send(payload)
+    await new Promise(resolve => setTimeout(resolve, 250))
+    check(clientSocket.isPaused, 'burst did not exercise actual socket backpressure')
+    mock.timers.tick(20_000)
+    await new Promise(resolve => setImmediate(resolve))
+    check(clientSocket.readyState === 1, 'heartbeat terminated a healthy intentionally paused connection')
+    await assertRetained('stream-burst-while-projection-held', retained)
+    for (let i = 0; i < 16; i++) {
+      check((await iterator.next()).value.length === payload.length, 'burst dropped a valid frame')
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+    const waitingForNext = iterator.next()
+    await until(() => !clientSocket.isPaused)
+    mock.timers.tick(20_000)
+    await until(() => clientSocket.readyState === 3)
+    controller.abort(); await waitingForNext
+    checks.push({ id: 'one-frame-backpressure', frameBytes: payload.length, burstFrames: 16 })
+    checks.push({ id: 'heartbeat-pause-and-dead-peer', pausedTicks: 2, missedPongTicks: 2 })
+  } finally {
+    controller.abort(); await iterator.return().catch(() => {})
+    for (const client of wss.clients) client.terminate()
+    await new Promise(resolve => wss.close(resolve)); await close(server)
+    mock.timers.reset()
+  }
+}
+
+async function localFeedTest() {
+  const fixtureHome = fs.realpathSync(process.env.HOME)
+  check(fixtureHome === fs.realpathSync(os.tmpdir()) || ['/tmp/', '/private/tmp/', fs.realpathSync(os.tmpdir()) + path.sep].some(root => fixtureHome.startsWith(root)),
+    'local AppView fixture requires a temporary HOME')
+  await streamBurstTest()
+  const { WebSocketServer } = req('appview')('ws')
+  const { Secp256k1Keypair } = await load('appview', '@atproto/crypto')
+  const { createOp, formatDidDoc } = req('pds')('@did-plc/lib')
+  const { Repo, MemoryBlockstore, getFullRepo, concatBytesAsync, cidForRecord } = await load('appview', '@atproto/repo')
+  const { MessageFrame } = await load('appview', '@atproto/xrpc-server')
+  const { encode } = await load('appview', '@atproto/lex-cbor')
+  const signer = await Secp256k1Keypair.create()
+  const time = '2026-11-10T12:00:00.000Z'
+  const { did } = await createOp({ signer, rotationKeys: [signer.did()], signingKey: signer.did(), handle: 'local-fixture.test', pds: 'https://fixture.test' })
+  const server = http.createServer((request, response) => {
+    response.setHeader('content-type', 'application/json')
+    if (decodeURIComponent(new URL(request.url, 'http://fixture').pathname) === `/${did}`) response.end(JSON.stringify(formatDidDoc({ did,
+      verificationMethods: { atproto: signer.did() }, rotationKeys: [signer.did()],
+      alsoKnownAs: ['at://local-fixture.test'], services: { atproto_pds: { type: 'AtprotoPersonalDataServer', endpoint: `http://127.0.0.1:${server.address().port}` } } })))
+    else { response.statusCode = 404; response.end('{}') }
+  })
+  const wss = new WebSocketServer({ server, perMessageDeflate: true })
+  const sourcePort = await listen(server)
+  const reserve = http.createServer(), appPort = await listen(reserve); await close(reserve)
+  const home = process.env.HOME, dbFile = path.join(home, 'stable-appview.sqlite')
+  const entry = `await import(${JSON.stringify(pathToFileURL(path.join(candidate, 'appview/src/server.ts')).href)});process.on('message',m=>{if(m==='memory'){global.gc();setImmediate(()=>{global.gc();process.send(process.memoryUsage())})}});`
+  const child = spawn(process.execPath, ['--expose-gc', '--max-old-space-size=' + BUDGETS.oldSpaceMiB,
+    '--import', req('appview').resolve('tsx/esm'), '--input-type=module', '-e', entry], {
+    cwd: home, env: { PATH: process.env.PATH, HOME: home, XDG_DATA_HOME: home,
+      NODE_ENV: 'test', DOTENV_CONFIG_PATH: path.join(home, 'no-env'),
+      APPVIEW_PORT: String(appPort), APPVIEW_DB_PATH: dbFile, APPVIEW_DID: 'did:plc:aaaaaaaaaaaaaaaaaaaaaaaa',
+      APPVIEW_PDS_URL: `http://127.0.0.1:${sourcePort}`, APPVIEW_PDS_WS_URL: `ws://127.0.0.1:${sourcePort}`,
+      APPVIEW_PLC_URL: `http://127.0.0.1:${sourcePort}` }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  })
+  let output = '', diagnostics = '', connection
+  child.stdout.on('data', data => { output += data; check(output.length < 1024 * 1024, 'AppView output exceeded fixture bound') })
+  child.stderr.on('data', data => { diagnostics += data; check(diagnostics.length < 1024 * 1024, 'AppView diagnostics exceeded fixture bound') })
+  const waiting = []
+  wss.on('connection', (socket, request) => {
+    socket.fixtureCursor = Number(new URL(request.url, 'http://fixture').searchParams.get('cursor'))
+    connection = socket; for (const resolve of waiting.splice(0)) resolve(socket)
+  })
+  const connected = async () => {
+    if (connection?.readyState === 1) return connection
+    return Promise.race([new Promise(resolve => waiting.push(resolve)),
+      new Promise((_, reject) => setTimeout(() => reject(Error('local feed connection missing: ' + diagnostics)), 6000))])
+  }
+  const memory = async () => {
+    const result = once(child, 'message'); child.send('memory'); return (await result)[0]
+  }
+  const listing = async () => {
+    const response = await request(appPort, `/xrpc/ait.feed.getAuthorFeed?actor=${did}&limit=100`, undefined, { method: 'GET' })
+    check(response.status === 200, 'stable author feed failed: ' + response.body + ' diagnostics: ' + diagnostics)
+    return JSON.parse(response.body).feed
+  }
+  const waitPosts = async count => {
+    const deadline = Date.now() + BUDGETS.requestMs
+    while (Date.now() < deadline) {
+      if ((await listing()).length === count) return
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    throw Error('stable projection count did not reach ' + count + ': ' + diagnostics)
+  }
+  let seq = 0
+  const commitFrame = async (records, prefix, missing = false) => {
+    const store = new MemoryBlockstore()
+    const entries = records.map((record, i) => ({ action: 'create', collection: 'ait.feed.post', rkey: `${prefix}${i}`, record }))
+    const repo = await Repo.create(store, did, signer, entries)
+    const blocks = await concatBytesAsync(getFullRepo(store, repo.cid))
+    const ops = await Promise.all(entries.map(async entry => ({ action: 'create', path: entry.collection + '/' + entry.rkey, cid: await cidForRecord(entry.record) })))
+    if (missing) ops.push({ action: 'create', path: 'ait.feed.post/missing', cid: await cidForRecord({ $type: 'ait.feed.post', text: 'not in CAR', createdAt: time }) })
+    return new MessageFrame({ seq: ++seq, rebase: false, tooBig: false, repo: did,
+      commit: repo.cid, rev: repo.commit.rev, since: null, blocks, ops, blobs: [], time }, { type: '#commit' }).toBytes()
+  }
+  try {
+    await connected()
+    const valid = i => ({ $type: 'ait.feed.post', text: 'stable fixture ' + i, createdAt: time })
+    connection.send(await commitFrame(Array.from({ length: BUDGETS.representativeRecords }, (_, i) => valid(i)), 'valid'))
+    await measured('stable-real-server-index-and-http-read', () => waitPosts(BUDGETS.representativeRecords))
+    check((await listing()).every(item => item.post.record.text.startsWith('stable fixture')), 'stable feed lost record contents')
+    const baseline = await retainedSample('stable-server-retained-after-positive', memory)
+    const beforeMissing = diagnostics.length
+    connection.send(await commitFrame([valid('before-missing')], 'incomplete', true))
+    await measured('stable-incomplete-commit', () => until(() => diagnostics.length > beforeMissing))
+    check((await listing()).length === BUDGETS.representativeRecords, 'incomplete commit partially admitted its earlier valid record')
+    connection.terminate(); connection = undefined
+    await connected()
+    check(connection.fixtureCursor === 1, 'incomplete commit advanced the subscription cursor')
+    const bad = await commitFrame([valid('must-not-admit'), { ...valid('invalid'), text: Array(BUDGETS.invalidElements).fill(0) }], 'bad')
+    for (let round = 0; round < BUDGETS.rounds; round++) {
+      const before = diagnostics.length
+      for (let i = 0; i < BUDGETS.concurrent; i++) connection.send(bad)
+      await measured(`stable-invalid-record-burst-${round}`, () => until(() => diagnostics.length > before))
+      check((await listing()).length === BUDGETS.representativeRecords, 'invalid commit partially admitted records')
+      await assertRetained(`stable-server-retained-invalid-${round}`, baseline, memory)
+    }
+    // Dense CBOR collection and dense CAR header are below the byte limit but
+    // must fail preflight before object/record materialization.
+    const dense = Buffer.concat([encode({ op: 1, t: '#commit' }), Buffer.from([0x9a, 0, 0x10, 0, 0]), Buffer.alloc(1_048_576)])
+    for (const [name, bytes] of [['dense-frame', dense], ['truncated-frame', Buffer.from([0xa1])]]) {
+      const before = diagnostics.length; connection.send(bytes)
+      await measured('stable-' + name, () => until(() => diagnostics.length > before))
+      check((await listing()).length === BUDGETS.representativeRecords, name + ' changed projection')
+    }
+    const varint = req('appview')('varint')
+    const carHeader = encode({ version: 1, roots: Array(BUDGETS.denseCarRoots).fill(null) })
+    const denseCar = Buffer.concat([Buffer.from(varint.encode(carHeader.length)), carHeader])
+    const body = { seq: ++seq, rebase: false, tooBig: false, repo: did, rev: '3mzwf7a6w2k2i', commit: await cidForRecord(valid('cid')), since: null, blocks: denseCar, ops: [], blobs: [], time }
+    const beforeCar = diagnostics.length
+    connection.send(new MessageFrame(body, { type: '#commit' }).toBytes())
+    await measured('stable-dense-car', () => until(() => diagnostics.length > beforeCar))
+    check((await listing()).length === BUDGETS.representativeRecords, 'dense CAR changed projection')
+    const beforeOversize = diagnostics.length
+    connection.send(Buffer.alloc(BUDGETS.websocketBytes + 1), { compress: true })
+    await measured('stable-compressed-oversize-frame', () => until(() => diagnostics.length > beforeOversize))
+    check((await request(appPort, '/xrpc/_health', undefined, { method: 'GET' })).status === 200, 'oversized feed interrupted AppView HTTP')
+    connection = undefined
+    await connected()
+    connection.send(await commitFrame([valid('recovered')], 'recovery'))
+    await measured('stable-subsequent-valid-index-and-read', () => waitPosts(BUDGETS.representativeRecords + 1))
+    await assertRetained('stable-server-retained-after-recovery', baseline, memory)
+    checks.push({ id: 'stable-firehose', validRecords: BUDGETS.representativeRecords, rejection: 'dense/malformed/invalid-record/compressed-oversized', consumer: 'real server to SQLite projection to author-feed HTTP' })
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); await once(child, 'exit') }
+    for (const client of wss.clients) client.terminate()
+    await new Promise(resolve => wss.close(resolve)); await close(server)
+  }
+}
+
 async function childMain(group) {
   // Node's tsx loader reads candidate TypeScript, never a built installed copy.
   if (group === 'plc') await plcTest()
   else if (group === 'database') await databaseTest()
   else if (group === 'pds') await pdsTest()
-  else if (group.startsWith('peer-')) await peerTest(group.slice(5))
+  else if (group === 'local-feed') await localFeedTest()
+  else if (group.startsWith('peer-')) {
+    if (group === 'peer-ws') await streamBurstTest()
+    await peerTest(group.slice(5))
+  }
   else if (group === 'mcp') await mcpTest()
   else throw Error(`Required ingress fixture not implemented: ${group}`)
   return { group, checks, metrics, maxRssMiB: Math.round(process.resourceUsage().maxRSS / 1024) }
@@ -526,7 +762,11 @@ async function parentMain() {
       timeout: 60000, maxBuffer: 1024 * 1024, stdio: 'pipe',
     })
   } finally { fs.rmSync(buildHome, { recursive: true, force: true }) }
-  for (const group of ['database', 'plc', 'pds', 'peer-log', 'peer-car', 'peer-ws', 'mcp']) {
+  // Select the real consumer implementation. Missing localFeed cannot grant a
+  // pass: fallback peer imports then fail on stable, and local tests boot main.
+  const feedGroups = fs.existsSync(path.join(candidate, 'appview/src/localFeed.mjs'))
+    ? ['local-feed'] : ['peer-log', 'peer-car', 'peer-ws']
+  for (const group of ['database', 'plc', 'pds', ...feedGroups, 'mcp']) {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ait-security-input-'))
     const output = []
     let outputBytes = 0, peakRssMiB = 0, failure

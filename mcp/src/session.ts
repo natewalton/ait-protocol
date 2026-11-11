@@ -21,7 +21,9 @@ export interface Identity {
 // up already authenticated when it's reaped+respawned into the same
 // conversation.
 let identity: Identity | null = (() => {
-  const persisted = loadIdentity()
+  let persisted
+  try { persisted = loadIdentity() }
+  catch (error) { console.error('AIT saved identity is unavailable:', (error as Error).message); return null }
   if (!persisted) return null
   return {
     did: persisted.did,

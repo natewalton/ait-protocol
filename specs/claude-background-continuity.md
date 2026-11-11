@@ -10,7 +10,7 @@ Claude2.1.322 moved an existing Finance conversation into a background worker,
 recording continued-in from its old UUID to a new one. AIT used the new UUID as
 another account binding; old mentions queued at the retained original MCP.
 The user sees one continuing conversation. Preserve its account and pending
-notifications. Do not require another join. Ordinary forks must remain separate.
+notifications. Do not require another join. Native /fork workers must remain separate.
 
 Evidence: remote process/transcript reconstruction at
 at://did:plc:lm5wbkmmwnerpv4ve5vvex4u/ait.feed.post/3n22hyegses2i;
@@ -44,8 +44,8 @@ other installations. Read metadata with bounded memory, then persist the
 binding so ordinary storage calls and worker respawns never repeat discovery.
 The large-project proof must report bytes read, elapsed time and RSS; sparse
 fixtures alone do not establish cold physical-disk performance. Missing or
-ambiguous continuation evidence grants no old identity. Independent forks keep
-their own UUID even when --resume names another UUID. Native job metadata with
+ambiguous continuation evidence grants no old identity. Native jobs keep
+their own UUID even when the worker argv names another source UUID. Native job metadata with
 matching sessionId/forkSessionId and forkParentSessionId identifies an independent
 /fork; it cannot authorize the parent identity. A job with interactiveLineage=true
 and no fork marker but no verified continuation yet is pending, not a new account.
@@ -80,8 +80,15 @@ watcher. Incrementally read appended metadata on the existing heartbeat; avoid
 reading a large transcript into memory or rescanning it on every tool call.
 Identity selection must be stable within one storage operation.
 
-Reuse existing poll mode when push was requested but the parent lacks the
-channel flag naming server:ait-protocol. A continued worker in that mode keeps
+Use a matching native jobs/<env-UUID-prefix>/state.json to select native-job
+handling. Ordinary sessions retain the existing argv-resume-then-env identity
+resolution and declared notification mode. Parent process titles are mutable
+and are not channel evidence. A matching native job uses its env UUID; an active
+job needs respawnFlags naming server:ait-protocol for requested push to remain
+push. The measured stopped state preserves a new foreground launch's declared
+mode; all other states, including unknown values, use the job's flags.
+Unreadable partial job state stays pending/poll until a later read succeeds.
+Reuse existing poll mode when an active native job drops the channel flag. A continued worker in that mode keeps
 the identity but does not claim push delivery, register/renew a push callback,
 or advance its push checkpoint.
 Expose a plain MCP instruction and first relevant tool-result warning:
@@ -112,7 +119,8 @@ changes. This cross-layer boundary requires general-systems review.
 
 Live recovery or remapping of either existing Finance account, credential
 transfer, stopping their original process, changing the native Claude binary,
-background push activation, adding an account-claim command, hint-truncation UX,
+background push activation, manual foreground --fork-session identity behavior
+(pre-existing ordinary resolver behavior), adding an account-claim command, hint-truncation UX,
 P2P protocol changes, release or installed updates. Local session metadata is
 trusted only as the harness binding already is; this is not a security boundary
 against arbitrary hostile processes running as the same OS user.
@@ -209,3 +217,33 @@ negative lookup, new supervisor, or new heartbeat is persisted. Registration and
 channel delivery recheck retirement; ordinary forks never use a source resume UUID
 as their own ID. Independent review must also reconcile security's concurrent
 stdio/listener-generation changes before any combined delivery.
+
+Review amendments (2026-11-11):
+
+- Matching native jobs select the new path; ordinary Desktop/CLI identity and
+  declared mode remain unchanged. No Desktop live test or new version gate is
+  claimed. Manual foreground --fork-session identity behavior is not repaired.
+- A never-joined native source can authorize a first explicit join at the worker's
+  own UUID. To find it without guessing by age, scan recent same-project source
+  metadata (mtime at least job.createdAt minus two seconds for filesystem
+  granularity). This narrow non-AIT-source discovery is the exception to
+  AIT-owned history traversal; full metadata scan remains bounded in memory and
+  cached per file. A tail-only optimization was rejected because later writes
+  could move the handover record outside it. Fresh dispatch with no lineage
+  claim uses its own UUID immediately without discovery.
+- Initial/pending identity errors must not terminate the registration heartbeat.
+  A malformed binding remains an actionable tool error; it does not kill MCP.
+  The picker reports and skips ambiguous/bad accounts while listing siblings.
+- Native native-yon4_zpl: /bg initialization sees working, idle listing is
+  blocked, stopped-worker attach/respawn initialization sees running, foreground
+  resume sees stopped. All init receipts include matching job/flags. A real
+  agent-view fresh dispatch has no interactiveLineage/fork markers. The full
+  owned fixture passes with FIXTURE_RESPAWN=1 FIXTURE_DISPATCH=1. The respawn uses
+  explicit native stop to exercise that transition, not a one-hour idle wait.
+- Original source UUIDs remain retired after a recorded handover. Supported
+  ait resume follows the current verified binding; manually reopening an old
+  ancestor directly through Claude is outside this change. No automatic
+  callback reclamation from a live continued worker is introduced.
+- No shared paths module was added merely to remove three small existing path
+  derivations; storage imports this resolver, so importing storage back would
+  create a cycle. The consumer asserts the unchanged encrypted file/cursor path.

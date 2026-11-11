@@ -25,12 +25,12 @@ export function claudeParentCommand(): string {
   return command
 }
 export function claudeRuntimeUuid(): string | null {
-  const args = claudeParentCommand()
-  if (!/--fork-session|\bbg-spare\b/.test(args)) {
-    const resumed = uuid(/--resume\s+([0-9a-f-]{36})(?:\s|$)/i.exec(args)?.[1])
-    if (resumed) return resumed
-  }
-  return uuid(process.env.CLAUDE_CODE_SESSION_ID) ?? uuid(/--session-id\s+([0-9a-f-]{36})(?:\s|$)/i.exec(args)?.[1])
+  const own = uuid(process.env.CLAUDE_CODE_SESSION_ID)
+  if (own && job(own) !== null) return own
+  // Ordinary sessions retain the existing Desktop/CLI resume resolution.
+  const resumed = uuid(/--resume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(claudeParentCommand())?.[1])
+  return resumed ?? own
+
 }
 export function effectiveNotificationMode(): 'push' | 'poll' | 'codex' {
   if (process.env.AIT_NOTIFICATION_MODE === 'codex') return 'codex'
@@ -39,7 +39,13 @@ export function effectiveNotificationMode(): 'push' | 'poll' | 'codex' {
 export function claudeChannelsRequested(): boolean {
   // The test override is explicitly a non-harness transport fixture.
   if (process.env.AIT_MCP_TEST_SESSION_ID) return true
-  const args = claudeParentCommand().trim().split(/\s+/)
+  // Claude rewrites its process title, so argv cannot prove channel activation.
+  // A normal foreground launch retains the declared mode. Native jobs expose
+  // the flags they actually inherit, independent of foreground title changes.
+  const runtime = claudeRuntimeUuid(), state = runtime ? job(runtime) : null
+  if (state === undefined) return false
+  if (!state || state.state === 'stopped') return true
+  const args = state.respawnFlags ?? []
   for (let i = 0; i < args.length; i++) {
     if (args[i] !== '--channels' && args[i] !== '--dangerously-load-development-channels') continue
     for (let j = i + 1; j < args.length && !args[j].startsWith('-'); j++) {
@@ -56,6 +62,7 @@ export function readClaudeBinding(id: string): Binding | null {
   let value: Binding
   try { value = JSON.parse(fs.readFileSync(bindingFile(id), 'utf8')) as Binding }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error }
+  if (!value || typeof value !== 'object') throw new Error('Invalid Claude continuation binding; preserve it for repair.')
   const runtime = uuid(value.runtime), identity = uuid(value.identity), source = uuid(value.source)
   if (runtime !== id || !identity || !source || identity === id || typeof value.project !== 'string' || !path.isAbsolute(value.project) || typeof value.config !== 'string' || !path.isAbsolute(value.config)) throw new Error('Invalid Claude continuation binding; preserve it and repair the reported account conflict.')
   if (absolute(value.config) !== config()) return null
@@ -80,15 +87,16 @@ interface ReadState { size: number; mtime: number; ino: number; next: string | n
 const reads = new Map<string, ReadState>()
 // Fixed memory blocks; only candidate metadata is decoded. A growing file is
 // read from its previous size, not scanned again. Misses are not persisted.
-function continuedTo(candidate: Candidate): string | null {
+function continuedTo(candidate: Candidate, tailOnly = false): string | null {
   let stat: fs.Stats
   try { stat = fs.lstatSync(candidate.file) }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error }
   if (!stat.isFile() || stat.isSymbolicLink()) return null
-  const previous = reads.get(candidate.file)
+  const key = candidate.file + (tailOnly ? ':tail' : '')
+  const previous = reads.get(key)
   if (previous?.size === stat.size && previous.mtime === stat.mtimeMs && previous.ino === stat.ino) return previous.next
   const unchangedPrefix = previous?.ino === stat.ino && previous.size < stat.size
-  const lower = unchangedPrefix ? Math.max(0, previous!.size - 8192) : 0
+  const lower = Math.max(tailOnly ? stat.size - 65536 : 0, unchangedPrefix ? previous!.size - 8192 : 0, 0)
   const fd = fs.openSync(candidate.file, 'r'), block = Buffer.allocUnsafe(65536 + 8192)
   let position = stat.size, suffix: Buffer = Buffer.alloc(0), next = unchangedPrefix ? previous!.next : null
   let project = unchangedPrefix ? previous!.project : undefined
@@ -117,19 +125,26 @@ function continuedTo(candidate: Candidate): string | null {
       suffix = Buffer.from(block.subarray(0, Math.min(read, 8192)))
     }
   } finally { fs.closeSync(fd) }
-  reads.set(candidate.file, { size: stat.size, mtime: stat.mtimeMs, ino: stat.ino, next, project })
+  reads.set(key, { size: stat.size, mtime: stat.mtimeMs, ino: stat.ino, next, project })
   return next
 }
 function entries(dir: string): fs.Dirent[] {
   try { return fs.readdirSync(dir, { withFileTypes: true }) }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
 }
-function job(id: string): { sessionId?: string; forkSessionId?: string; forkParentSessionId?: string; interactiveLineage?: boolean; cwd?: string } | null {
+function job(id: string): { sessionId?: string; state?: string; forkSessionId?: string; forkParentSessionId?: string; interactiveLineage?: boolean; cwd?: string; respawnFlags?: string[]; createdAt?: string } | null | undefined {
   const file = path.join(config(), 'jobs', id.slice(0, 8), 'state.json')
   try {
     const value = JSON.parse(fs.readFileSync(file, 'utf8'))
+    if (!value || typeof value !== 'object') return undefined
+    if (value.respawnFlags !== undefined && (!Array.isArray(value.respawnFlags) || !value.respawnFlags.every((flag: unknown) => typeof flag === 'string'))) return undefined
+    if (value.cwd !== undefined && typeof value.cwd !== 'string') return undefined
     return uuid(value.sessionId) === id ? value : null
-  } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    if (error instanceof SyntaxError) return undefined
+    throw error
+  }
 }
 function candidates(): Candidate[] {
   const result: Candidate[] = []
@@ -147,7 +162,7 @@ function candidates(): Candidate[] {
     const dir = path.join(config(), 'jobs', item.name)
     let state: { sessionId?: string; cwd?: string }
     try { state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8')) } catch { continue }
-    const id = uuid(state.sessionId)
+    const id = state && typeof state === 'object' ? uuid(state.sessionId) : null
     if (!id) continue
     for (const file of entries(dir)) if (file.isFile() && uuid(file.name.slice(0, -6)) === id && file.name.endsWith('.jsonl')) result.push({ id, file: path.join(dir, file.name) })
   }
@@ -159,18 +174,28 @@ export class ClaudeHandoverPending extends Error {
 export function resolveClaudeIdentity(id: string): string {
   const existing = readClaudeBinding(id)
   if (existing) return claudeIdentityUuid(id)
-  const state = job(id)
   if (fs.existsSync(identityFile(id))) return id // Never reassign an already joined account.
-  if (!state?.interactiveLineage && !/--fork-session|\bbg-spare\b/.test(claudeParentCommand())) return id
+  const state = job(id)
+  if (state === undefined) throw new ClaudeHandoverPending()
+  if (!state) return id
   // Independent /fork is explicitly identified by Claude's own job metadata.
   if (uuid(state?.forkSessionId) === id && uuid(state?.forkParentSessionId)) return id
+  if (!state.interactiveLineage) return id
   const files = candidates(), roots = new Map<string, string>()
   const project = absolute(state?.cwd ?? process.cwd())
   // Follow native edges from AIT-bound roots. An intermediate worker need not
   // have called an AIT tool before its own continuation is recorded.
   for (const start of files) {
-    if (!(fs.existsSync(identityFile(start.id)) || readClaudeBinding(start.id))) continue
-    const root = claudeIdentityUuid(start.id), visited = new Set<string>()
+    let root: string
+    try {
+      if (!(fs.existsSync(identityFile(start.id)) || readClaudeBinding(start.id))) continue
+      root = claudeIdentityUuid(start.id)
+    } catch (error) {
+      if (continuedTo(start) === id) throw error
+      console.error(`AIT skipped Claude source ${start.id}: ${(error as Error).message}`)
+      continue
+    }
+    const visited = new Set<string>()
     let source: Candidate | undefined = start
     while (source) {
       if (visited.has(source.id)) throw new Error('Claude continuation binding cycle')
@@ -201,21 +226,36 @@ export function resolveClaudeIdentity(id: string): string {
     } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary) }
     return root
   }
-  if ((state?.interactiveLineage && !state.forkParentSessionId) || (!state && /\bbg-spare\b/.test(claudeParentCommand()))) throw new ClaudeHandoverPending()
+  // An explicit handover from a conversation that never joined AIT is not
+  // missing evidence. Its continued worker may perform its own first join.
+  for (const candidate of files) {
+    const createdAt = Date.parse(state.createdAt ?? '')
+    if (Number.isFinite(createdAt) && fs.statSync(candidate.file).mtimeMs < createdAt - 2000) continue
+    continuedTo(candidate, true)
+    const sourceProject = reads.get(candidate.file + ':tail')?.project
+    if (sourceProject === project && continuedTo(candidate) === id) return id
+  }
+  if (state.interactiveLineage && !state.forkParentSessionId) throw new ClaudeHandoverPending()
   return id
 }
+const ownTranscripts = new Map<string, Candidate[]>()
 export function isClaudeRuntimeCurrent(): boolean {
   if (process.env.AIT_MCP_TEST_SESSION_ID || process.env.AIT_NOTIFICATION_MODE === 'codex') return true
   const runtime = claudeRuntimeUuid()
   if (!runtime) return false
-  for (const candidate of candidates()) if (candidate.id === runtime && continuedTo(candidate)) return false
+  const key = config() + runtime
+  const own = ownTranscripts.get(key) ?? candidates().filter(candidate => candidate.id === runtime)
+  if (own.length) ownTranscripts.set(key, own)
+  for (const candidate of own) if (continuedTo(candidate)) return false
   return true
 }
 export function claudeContinuedSessions(): Binding[] {
   const result: Binding[] = []
   for (const entry of entries(directory())) if (entry.isFile() && /^claude-thread-[0-9a-f-]{36}\.json$/.test(entry.name)) {
-    const value = readClaudeBinding(entry.name.slice('claude-thread-'.length, -5))
-    if (value) result.push(value)
+    try {
+      const value = readClaudeBinding(entry.name.slice('claude-thread-'.length, -5))
+      if (value) result.push(value)
+    } catch (error) { console.error(`AIT skipped Claude binding ${entry.name}: ${(error as Error).message}`) }
   }
   return result
 }

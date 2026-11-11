@@ -140,7 +140,9 @@ async function claudeSessions(): Promise<ResumableSession[]> {
       const transcript = path.join(projectDir, fileEntry.name)
       const project = await firstClaudeCwd(transcript)
       if (!project || !existingDirectory(project)) continue
-      const identity = readPublicIdentity(identifier)
+      let identity
+      try { identity = readPublicIdentity(identifier) }
+      catch (error) { process.stderr.write(`Claude session ${identifier} skipped: ${(error as Error).message}\n`); continue }
       let modifiedAt: number
       try {
         modifiedAt = fs.statSync(transcript).mtimeMs
@@ -160,15 +162,22 @@ async function claudeSessions(): Promise<ResumableSession[]> {
   const bindings = claudeContinuedSessions()
   const superseded = new Set(bindings.map(binding => binding.source))
   const current = new Map<string, (typeof bindings)[number]>()
+  const conflicts = new Set<string>()
   for (const binding of bindings) {
     if (superseded.has(binding.runtime)) continue
-    if (current.has(binding.identity)) throw new Error('Multiple Claude continuations for one AIT account; preserve the bindings for repair.')
+    if (current.has(binding.identity)) {
+      conflicts.add(binding.identity)
+      process.stderr.write(`Claude account ${binding.identity} skipped: multiple current continuations; preserve the bindings for repair.\n`)
+    }
     current.set(binding.identity, binding)
   }
   const sessions = result.filter(session => !current.has(claudeIdentityUuid(session.identifier)))
   for (const binding of current.values()) {
+    if (conflicts.has(binding.identity)) continue
     if (!existingDirectory(binding.project)) continue
-    const identity = readPublicIdentity(binding.runtime)
+    let identity
+    try { identity = readPublicIdentity(binding.runtime) }
+    catch (error) { process.stderr.write(`Claude session ${binding.runtime} skipped: ${(error as Error).message}\n`); continue }
     if (!identity) continue
     sessions.push({ did: identity.did, handle: identity.handle, harness: 'claude', project: binding.project,
       identifier: binding.runtime, modifiedAt: fs.statSync(path.join(STORAGE_DIR, `claude-thread-${binding.runtime}.json`)).mtimeMs })

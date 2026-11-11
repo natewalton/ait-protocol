@@ -24,21 +24,25 @@ function seed(id) {
  fs.writeFileSync(transcript(id),JSON.stringify({type:'user',sessionId:id,cwd:project})+'\n')
 }
 function state(id, extra={}) {
- const dir=path.join(config,'jobs',id.slice(0,8));fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,'state.json'),JSON.stringify({sessionId:id,interactiveLineage:true,cwd:project,...extra}))
+ const dir=path.join(config,'jobs',id.slice(0,8));fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,'state.json'),JSON.stringify({sessionId:id,state:'working',interactiveLineage:true,cwd:project,...extra}))
 }
 function continued(from,to) { fs.appendFileSync(transcript(from),JSON.stringify({type:'continued-in',sessionId:from,continuedInSessionId:to})+'\n') }
 seed(source);state(child)
 const calls=[], clients=[]
+let registerGate=null
 const pds=http.createServer(async(req,res)=>{
  const url=new URL(req.url,'http://fixture'), chunks=[];for await(const c of req)chunks.push(c)
  calls.push({path:url.pathname,actor:url.searchParams.get('actor'),data:chunks.length?JSON.parse(Buffer.concat(chunks)):null})
  let body
+ if(url.pathname.endsWith('registerPushTarget') && registerGate) await registerGate()
  switch(url.pathname){
+  case '/xrpc/com.atproto.server.describeServer':body={availableUserDomains:['.'+'a'.repeat(52)+'.aitproto.com'],did:'did:web:fixture'};break
+  case '/xrpc/com.atproto.server.createAccount':body={did,handle,accessJwt:jwt,refreshJwt:jwt,active:true};break
   case '/xrpc/com.atproto.server.getSession':body={did,handle,email:'fixture@example.com',emailConfirmed:true,active:true};break
   case '/xrpc/com.atproto.server.refreshSession':case '/xrpc/com.atproto.server.createSession':body={did,handle,accessJwt:jwt,refreshJwt:jwt,active:true};break
   case '/xrpc/ait.feed.getAuthorFeed':body={feed:[]};break
   case '/xrpc/ait.notification.listNotifications':body={notifications:[{uri:`at://${did}/ait.feed.post/fixture`,cid:'bafyreigogaydx3b5gcfj7byynrzqtzl6slrhxta7jfhy4nkgfjhkpg2jve',author:{did,handle},reason:'mention',record:{text:'pending handoff'},isRead:false,indexedAt:new Date().toISOString(),cursor:'after'}]};break
-  case '/xrpc/ait.notification.registerPushTarget':body={status:'ok',cursor:'before'};break
+  case '/xrpc/ait.notification.registerPushTarget':body={status:'ok',cursor:registerGate?'held-baseline':'before'};break
   default:res.writeHead(500);res.end(JSON.stringify({error:'UnexpectedFixtureCall',message:url.pathname}));return
  }
  res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(body))
@@ -62,6 +66,7 @@ async function connect(id,wrapper=false){
 async function call(client,name,args={}){return client.callTool({name,arguments:args})}
 function text(result){return result.content?.map(c=>c.text??'').join('\n')??''}
 try{
+ fs.writeFileSync(path.join(root,'wrapper.mjs'),`const timeout=globalThis.setTimeout;globalThis.setTimeout=(fn,ms,...args)=>timeout(fn,ms===30000?300:ms,...args);await import(${JSON.stringify(new URL('../dist/server.js',import.meta.url).href)});`)
  const first=await connect(child)
  let result=await call(first.client,'getAuthorFeed');assert.equal(result.isError,true);assert.match(text(result),/moving this session|continuation record/)
  result=await call(first.client,'join',{handle_hint:'must-not-mint'});assert.equal(result.isError,true);assert.equal(calls.length,0,'pending handover must not create an account or call PDS')
@@ -79,9 +84,33 @@ try{
  fs.renameSync(transcript(source)+'.saved',transcript(source))
  console.log('PASS late native metadata resolves in the same MCP; same DID/cursor, poll warning, durable respawn; no join or credential copy')
  const fork=randomUUID();state(fork,{forkSessionId:fork,forkParentSessionId:source,forkBoundaryAt:new Date().toISOString()})
+ continued(source,fork)
  const independent=await connect(fork);result=await call(independent.client,'getAuthorFeed');assert.equal(result.isError,true);assert.match(text(result),/No actor|No identity/);await independent.client.close()
  assert(!fs.existsSync(path.join(store,`claude-thread-${fork}.json`)))
  console.log('PASS independent native fork cannot acquire the source identity')
+ const unjoinedSource=randomUUID(),unjoined=randomUUID();state(unjoined)
+ fs.writeFileSync(transcript(unjoinedSource),JSON.stringify({sessionId:unjoinedSource,cwd:project})+'\n');continued(unjoinedSource,unjoined)
+ const newAccount=await connect(unjoined);result=await call(newAccount.client,'join',{handle_hint:'first-account'});assert(!result.isError,text(result))
+ assert(fs.existsSync(identityFile(unjoined)),'verified non-AIT source permits explicit first join')
+ assert(!fs.existsSync(path.join(store,`claude-thread-${unjoined}.json`)),'no inherited identity was invented')
+ await newAccount.client.close()
+ console.log('PASS a continued conversation that never joined may explicitly create its first AIT account')
+ const lateSource=randomUUID(),latePush=randomUUID();seed(lateSource);state(latePush,{respawnFlags:['--channels','server:ait-protocol']})
+ const lateCount=calls.filter(c=>c.path.endsWith('registerPushTarget')).length
+ const lateClient=await connect(latePush,true)
+ await new Promise(r=>setTimeout(r,30));assert.equal(calls.filter(c=>c.path.endsWith('registerPushTarget')).length,lateCount)
+ continued(lateSource,latePush)
+ const lateDeadline=Date.now()+2000
+ while(calls.filter(c=>c.path.endsWith('registerPushTarget')).length===lateCount){assert(Date.now()<lateDeadline,lateClient.errors());await new Promise(r=>setTimeout(r,10))}
+ await lateClient.client.close()
+ const partial=randomUUID();state(partial);const partialFile=path.join(config,'jobs',partial.slice(0,8),'state.json');fs.writeFileSync(partialFile,'{')
+ const partialClient=await connect(partial);result=await call(partialClient.client,'getAuthorFeed');assert.equal(result.isError,true);assert.match(text(result),/continuation record/)
+ state(partial,{interactiveLineage:false});result=await call(partialClient.client,'getAuthorFeed');assert.equal(result.isError,true);assert.match(text(result),/No actor|No identity/);await partialClient.client.close()
+ const bad=randomUUID();state(bad);fs.writeFileSync(path.join(store,`claude-thread-${bad}.json`),'{')
+ const badClient=await connect(bad);result=await call(badClient.client,'getAuthorFeed');assert.equal(result.isError,true);await badClient.client.close();fs.unlinkSync(path.join(store,`claude-thread-${bad}.json`))
+ console.log('PASS late push survives pending identity, partial native state retries, bad bindings become tool errors without killing MCP')
+
+
  // Use the actual resolver against owned metadata. The second pending call
  // must do no transcript I/O; an appended record needs only the changed tail.
  const scanSource=randomUUID(),pending=randomUUID();seed(scanSource);state(pending)
@@ -114,6 +143,12 @@ try{
    const checked=spawnSync(process.execPath,['--input-type=module','-e',`import assert from 'node:assert/strict';import fs from 'node:fs';const m=await import(${JSON.stringify(resolverUrl)});${code}`],{env:{...environment(id),...extra},cwd:project,encoding:'utf8'})
    assert.equal(checked.status,0,checked.stderr+checked.stdout)
  }
+ const role=randomUUID()
+ for(const [status,flags,expected] of [['working',[],'poll'],['blocked',[],'poll'],['running',[],'poll'],['future-worker-state',[],'poll'],['stopped',[],'push'],['working',['--channels','server:ait-protocol'],'push']]){
+  state(role,{state:status,respawnFlags:flags})
+  resolveProbe(role,`assert.equal(m.effectiveNotificationMode(),${JSON.stringify(expected)});`)
+ }
+ const ordinary=randomUUID();resolveProbe(ordinary,`assert.equal(m.effectiveNotificationMode(),'push');`)
  const middle=randomUUID(),latest=randomUUID(),chainSource=randomUUID();seed(chainSource);state(latest)
  fs.writeFileSync(transcript(middle),JSON.stringify({sessionId:middle,cwd:project})+'\n')
  continued(chainSource,middle);continued(middle,latest)
@@ -140,32 +175,36 @@ try{
  for(const [runtime,identity] of [[cyclicA,cyclicB],[cyclicB,cyclicA]])fs.writeFileSync(path.join(store,`claude-thread-${runtime}.json`),JSON.stringify({runtime,identity,source:identity,config,project}))
  resolveProbe(cyclicA,`assert.throws(()=>m.claudeIdentityUuid(${JSON.stringify(cyclicA)}),/cycle/);`)
  for(const id of [cyclicA,cyclicB])fs.unlinkSync(path.join(store,`claude-thread-${id}.json`))
- // Source-only --resume on a fork never substitutes for the worker's own UUID.
- const missing=spawnSync(process.execPath,['--input-type=module','-e',`import assert from 'node:assert/strict';import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';cp.execFileSync=()=>${JSON.stringify('--fork-session --resume '+source)};syncBuiltinESMExports();const m=await import(${JSON.stringify(resolverUrl)});assert.equal(m.claudeRuntimeUuid(),null);`],{env:{...environment('not-a-uuid')},cwd:project,encoding:'utf8'})
- assert.equal(missing.status,0,missing.stderr)
- console.log('PASS configuration/project scope, job filenames, UUID canonicalization, conflicts/cycles, source-only forks and unresolved intermediate continuations')
+ console.log('PASS configuration/project scope, job filenames, UUID canonicalization, conflicts/cycles, native forks and unresolved intermediate continuations')
 
 
  // Exercise the real push server through its existing registration and sink.
  const old=randomUUID(),next=randomUUID();seed(old)
- fs.writeFileSync(path.join(root,'wrapper.mjs'),`import {spawn} from 'node:child_process';const c=spawn(process.execPath,[${JSON.stringify(path.join(repo,'mcp/dist/server.js'))}],{stdio:'inherit',env:process.env});process.once('SIGTERM',()=>c.kill('SIGTERM'));c.on('exit',code=>process.exit(code??0));`)
+
+ let releaseRegister
+ registerGate=()=>new Promise(resolve=>{releaseRegister=resolve})
  const beforeCalls=calls.length, original=await connect(old,true)
  const deadline=Date.now()+5000
  while(!calls.slice(beforeCalls).some(c=>c.path.endsWith('registerPushTarget'))){assert(Date.now()<deadline,original.errors());await new Promise(r=>setTimeout(r,10))}
  const registered=calls.slice(beforeCalls).find(c=>c.path.endsWith('registerPushTarget')).data.url
  continued(old,next)
+ while(!releaseRegister)await new Promise(r=>setTimeout(r,5))
+ releaseRegister()
+ await new Promise(r=>setTimeout(r,100))
+ registerGate=null
+ assert.equal(JSON.parse(fs.readFileSync(identityFile(old))).lastSeenNotificationCursor,'before','late registration must not commit its changed baseline after handover')
  const notify={uri:`at://${did}/ait.feed.post/new`,cid:'bafyreigogaydx3b5gcfj7byynrzqtzl6slrhxta7jfhy4nkgfjhkpg2jve',author:{did,handle},reason:'mention',record:{text:'after handover'},indexedAt:new Date().toISOString(),cursor:'must-not-commit'}
  const refused=await fetch(registered,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(notify)});assert.equal(refused.status,500)
  assert.equal(original.notifications.length,0,'retired sink must not emit a channel event')
  assert.equal(JSON.parse(fs.readFileSync(identityFile(old))).lastSeenNotificationCursor,'before','retired sink never commits old cursor')
- await new Promise(r=>setTimeout(r,30500))
+ await new Promise(r=>setTimeout(r,700))
  assert.equal(calls.slice(beforeCalls).filter(c=>c.path.endsWith('registerPushTarget')).length,1,'retained parent never steals the callback back')
  await assert.rejects(fetch(registered,{method:'POST',body:JSON.stringify(notify)}),'existing heartbeat closes retired listener')
  await original.client.close()
  console.log('PASS old real MCP refuses delivery/cursor writes, stops renewal and closes its own listener on the existing heartbeat')
  // A foreground worker with channel activation replays from the same durable
  // checkpoint after the old callback retired.
- state(next)
+ state(next,{state:'stopped'})
  const restored=await connect(next,true), replayCalls=calls.length
  const readyBy=Date.now()+5000
  while(!calls.slice(replayCalls).some(c=>c.path.endsWith('registerPushTarget'))){assert(Date.now()<readyBy,restored.errors());await new Promise(r=>setTimeout(r,10))}

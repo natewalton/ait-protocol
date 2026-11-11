@@ -93,7 +93,7 @@ export async function startPushListener(
   // /proc or lsof. Harmless in production — stderr isn't user-facing.
   console.error(`ait push listener: ${listenerUrl}`)
 
-  if (canRegister()) await tryRegister(canRegister)
+  await tryRegister(canRegister)
 
   // AppView registrations are in-memory and are deleted on restart or one
   // failed POST. Reassert for the listener lifetime; tryRegister coalesces a
@@ -107,8 +107,8 @@ export async function startPushListener(
       heartbeatTimer = null
       heartbeatWake = null
       if (listenerGeneration !== generation) return
-      if (canRegister()) await tryRegister(canRegister)
       try {
+        await tryRegister(canRegister)
         await onBeat()
       } catch (err) {
         console.error('push heartbeat error:', err)
@@ -147,8 +147,14 @@ export async function tryRegister(
   registerCall: RegisterCall = appViewCall,
   timeoutMs = REGISTER_TIMEOUT_MS,
 ): Promise<void> {
-  if (!canRegister() || !isClaudeRuntimeCurrent()) return
-  if (!listenerUrl || !getIdentity()) return
+  try {
+    if (!canRegister() || !isClaudeRuntimeCurrent() || !listenerUrl || !getIdentity()) return
+  } catch (error) {
+    // A late native handover may not have an identity yet. Keep the existing
+    // listener/heartbeat alive so the next beat can resolve the same UUID.
+    console.error('AIT push identity unavailable:', (error as Error).message)
+    return
+  }
   if (registerInFlight) return registerInFlight
   registerInFlight = (async () => {
     const checkpoint = getNotificationRegistrationCheckpoint()
@@ -161,6 +167,7 @@ export async function tryRegister(
     registerController = controller
     const timeout = setTimeout(() => controller.abort(), timeoutMs)
     try {
+      if (!canRegister() || !isClaudeRuntimeCurrent()) return
       const result = await registerCall<{ status: 'ok'; cursor: string }>(
         'ait.notification.registerPushTarget',
         { data, signal: controller.signal },
@@ -178,6 +185,8 @@ export async function tryRegister(
   })()
   try {
     await registerInFlight
+  } catch (error) {
+    console.error('AIT push registration unavailable:', (error as Error).message)
   } finally {
     registerInFlight = null
   }

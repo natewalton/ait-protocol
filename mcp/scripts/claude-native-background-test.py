@@ -47,11 +47,15 @@ try:
  # Interactive native backgrounding with a fixture MCP, never real model services.
  import pexpect
  mcp=root/'mcp.py'
- mcp.write_text("""import sys,json,os,subprocess,time
+ mcp.write_text("""import sys,json,os,subprocess,time,pathlib
 for line in sys.stdin:
  try:o=json.loads(line)
  except:continue
- with open(os.environ['FIXTURE_MCP_LOG'],'a') as f:f.write(json.dumps({'at':time.time(),'pid':os.getpid(),'ppid':os.getppid(),'method':o.get('method'),'params':o.get('params') if o.get('method')=='initialize' else None,'session':os.environ.get('CLAUDE_CODE_SESSION_ID')})+'\\n')
+ sid=os.environ.get('CLAUDE_CODE_SESSION_ID','')
+ try: job=json.loads((pathlib.Path(os.environ['CLAUDE_CONFIG_DIR'])/'jobs'/sid[:8]/'state.json').read_text())
+ except FileNotFoundError: job=None
+ receipt={'at':time.time(),'pid':os.getpid(),'ppid':os.getppid(),'method':o.get('method'),'params':o.get('params') if o.get('method')=='initialize' else None,'session':sid,'job':{k:job.get(k) for k in ['sessionId','state','respawnFlags']} if job else None,'harnessKeys':[k for k in os.environ if k.startswith('CLAUDE_CODE_')],'harnessRole':{k:os.environ[k] for k in ['CLAUDE_CODE_ENTRYPOINT','CLAUDE_CODE_IS_BACKGROUND','CLAUDE_CODE_BG_JOB_ID','CLAUDE_CODE_JOB_ID'] if k in os.environ}}
+ with open(os.environ['FIXTURE_MCP_LOG'],'a') as f:f.write(json.dumps(receipt)+'\\n')
  if 'id' not in o:continue
  if o.get('method')=='initialize':result={'protocolVersion':o['params']['protocolVersion'],'capabilities':{'tools':{},'experimental':{'claude/channel':{}}},'serverInfo':{'name':'ait-protocol','version':'fixture'}}
  elif o.get('method')=='tools/list':result={'tools':[]}
@@ -142,10 +146,34 @@ for line in sys.stdin:
    attached.close(force=True);attach_log.close()
   stopped=run(['stop',result['background_uuid'][:8]],'continued-stop')
   assert stopped.returncode==0
+  if os.environ.get('FIXTURE_RESPAWN'):
+   prior=sum(1 for l in (root/'mcp.jsonl').read_text().splitlines() if (lambda o:o.get('method')=='initialize' and o.get('session')==result['background_uuid'])(json.loads(l)))
+   until=time.monotonic()+8
+   while True:
+    agents=subprocess.run(claude+['agents','--json'],env=env,cwd=project,capture_output=True,text=True,timeout=15)
+    active=[o for o in json.loads(agents.stdout) if o.get('sessionId')==result['background_uuid'] and o.get('pid')]
+    if not active:break
+    assert time.monotonic()<until, 'native worker did not stop'
+    time.sleep(.1)
+   revive=pexpect.spawn(claude[0],claude[1:]+['attach',result['background_uuid'][:8]],env=env,cwd=str(project),encoding='utf-8',timeout=15,dimensions=(35,130))
+   revive_log=(root/'respawn-attach.log').open('w');revive.logfile=revive_log
+   try:
+    until=time.monotonic()+20
+    while time.monotonic()<until:
+     try:revive.read_nonblocking(65536,timeout=.3)
+     except pexpect.TIMEOUT:pass
+     initialized=[json.loads(l) for l in (root/'mcp.jsonl').read_text().splitlines() if (lambda o:o.get('method')=='initialize' and o.get('session')==result['background_uuid'])(json.loads(l))]
+     if len(initialized)>prior:break
+    assert len(initialized)>prior, 'stopped native worker did not initialize a new MCP on attach'
+    result['respawnInitializeJob']=initialized[-1]['job']
+    assert result['respawnInitializeJob']['state'] in ['working','blocked','running'], 'respawn MCP saw a terminal job state'
+   finally:revive.close(force=True);revive_log.close()
+   stopped=run(['stop',result['background_uuid'][:8]],'continued-stop-after-respawn')
+   assert stopped.returncode==0
   until=time.monotonic()+10;attempt=0
   while True:
    attempt+=1
-   resumed=run(['--resume',result['background_uuid'],'-p','Reply ready','--model','claude-sonnet-4-6','--output-format','json'],'continued-resume-'+str(attempt))
+   resumed=run(['--resume',result['background_uuid'],'--mcp-config',str(mcp_config),'-p','Reply ready','--model','claude-sonnet-4-6','--output-format','json'],'continued-resume-'+str(attempt))
    if resumed.returncode==0 or 'session is running in the background' not in resumed.stderr:break
    assert time.monotonic()<until, 'native stop did not finish'
    time.sleep(.2)
@@ -163,6 +191,25 @@ for line in sys.stdin:
   assert not result['background_uuid'], 'independent /fork must not continue the original'
   states=[json.loads(f.read_text()) for f in cfg.glob('jobs/*/state.json')]
   assert any(o.get('forkParentSessionId')==old for o in states), 'native /fork did not create an independent worker'
+ if os.environ.get('FIXTURE_DISPATCH'):
+  view=pexpect.spawn(claude[0],claude[1:]+['agents','--model','claude-sonnet-4-6','--mcp-config',str(mcp_config),'--settings',str(settings)],env=env,cwd=str(project),encoding='utf-8',timeout=15,dimensions=(35,130))
+  view_log=(root/'dispatch.log').open('w');view.logfile=view_log
+  before={str(f) for f in cfg.glob('jobs/*/state.json')}
+  try:
+   time.sleep(2)
+   try:view.read_nonblocking(65536,timeout=1)
+   except pexpect.TIMEOUT:pass
+   view.send('Reply ready'+chr(13))
+   until=time.monotonic()+15
+   while time.monotonic()<until:
+    try:view.read_nonblocking(65536,timeout=.3)
+    except pexpect.TIMEOUT:pass
+    new_states=[f for f in cfg.glob('jobs/*/state.json') if str(f) not in before]
+    if new_states:break
+   assert new_states, 'agent view did not dispatch a new worker'
+   result['dispatchState']=json.loads(new_states[0].read_text())
+   time.sleep(2)
+  finally:view.close(force=True);view_log.close()
  (root/'result.json').write_text(json.dumps(result,indent=2));print(json.dumps(result),flush=True)
 finally:
  status=subprocess.run([__import__('shutil').which('claude'),'daemon','status'],env=env,cwd=project,capture_output=True,text=True,timeout=15)

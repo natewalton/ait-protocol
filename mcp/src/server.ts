@@ -17,7 +17,7 @@ import { startPushListener, stopPushListener, channelSink } from './push.js'
 // policy allowance. Codex (specs/notification-codex.md) is a different process
 // ROLE — the launcher that spawns + drives `codex app-server`, not a stdio MCP;
 // main() branches to it before connecting a transport. The env var declares
-// intent; Claude push also requires its launch flag naming this server.
+// intent; native background jobs additionally use their recorded channel flags.
 const MODE = effectiveNotificationMode()
 let pollWarningShown = false
 const pollWarning = process.env.AIT_NOTIFICATION_MODE === 'push' && MODE === 'poll' ? CLAUDE_POLL_WARNING : ''

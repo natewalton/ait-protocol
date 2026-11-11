@@ -25,14 +25,28 @@ replacement during token refresh.
 Reuse three existing responsibilities: Claude's explicit continuation metadata,
 AIT's encrypted identity/checkpoint, and the current MCP notification lifecycle.
 
-Verify a native continuation by matching the child's own UUID (environment and
---session-id) to continuedInSessionId in the exact source transcript named by its
-parent's --resume argument. Validate the source record's sessionId and source
-filename UUID. Do not treat --fork-session, an inherited AIT_SESSION_ID, a matching
-handle or a copied transcript by itself as a continuation. Support the actual
-CLAUDE_CONFIG_DIR and native projects/jobs paths. Ordinary UUID-form resume stays
-supported; a resume combined with an independent fork uses the child's UUID,
-never the source account. Missing or mismatched evidence grants no old identity.
+Resolve the worker from its own Claude UUID, never from its process ID. The
+observed path-form --resume can narrow the source, but is not required: a real
+non-bare2.1.322 /bg fixture also uses a prewarmed bg-spare process with no
+source in argv. If no durable binding exists, search only this Claude
+configuration's transcript metadata for a continued-in targeting that UUID.
+Validate the record's source sessionId against its source filename. Only source
+sessions already owning an AIT identity or verified binding can supply that
+identity. Reject multiple conflicting roots rather than choosing a recent file.
+Do not interpret copied message bodies as lifecycle records. A successful
+interactive /fork and a manual fork produced no outgoing continuation record.
+
+Scope discovery to the effective Claude project where available; an explicit
+source path must stay in that configuration's native projects/jobs tree. A
+prewarmed process must not be assumed to have source argv. Enumerate only
+existing AIT-bound candidates in the applicable configuration; do not inspect
+other installations. Read metadata with bounded memory, then persist the
+binding so ordinary storage calls and worker respawns never repeat discovery.
+The large-project proof must report bytes read, elapsed time and RSS; sparse
+fixtures alone do not establish cold physical-disk performance. Missing or
+ambiguous continuation evidence grants no old identity. Independent forks keep
+their own UUID even when --resume names another UUID. Do not mint a new account
+as an implicit recovery for a known but unresolved native background handover.
 
 For a verified transition, preserve the original encrypted identity file and
 cursor. Persist one small mode0600 Claude-runtime-to-identity binding beside
@@ -48,19 +62,24 @@ the same account, not expose original/child duplicate accounts.
 Retirement rule: the old MCP retires notification delivery when its own native
 transcript records the continuation. Use the existing registration predicate
 and heartbeat, and recheck before emitting a channel event or committing a
-cursor. Close its owned listener through stopPushListener; do not stop Claude,
+cursor. Locate its transcript from the effective CLAUDE_CONFIG_DIR (default ~/.claude),
+native project paths or the matching job state/transcript. Validate its own UUID
+in that file. Retain retirement after Esc and attach; neither action erases a
+recorded handover. Close its owned listener through stopPushListener; do not stop Claude,
 agent view, siblings, or shared services. Do not introduce another timer or
 watcher. Incrementally read appended metadata on the existing heartbeat; avoid
 reading a large transcript into memory or rescanning it on every tool call.
 Identity selection must be stable within one storage operation.
 
-A continued worker with no channel flag keeps the identity but does not claim
-push delivery, register/renew a push callback, or advance its push checkpoint.
+Reuse existing poll mode when push was requested but the parent lacks the
+channel flag naming server:ait-protocol. A continued worker in that mode keeps
+the identity but does not claim push delivery, register/renew a push callback,
+or advance its push checkpoint.
 Expose a plain MCP instruction and first relevant tool-result warning:
 "AIT account preserved. Automatic mentions are unavailable in this background
 worker; check listNotifications. Pending notifications remain available."
-This is explicit degraded behavior, not an automatic polling fallback or the
-activation fix. Existing listNotifications/getAuthorFeed remain usable under
+This reuses the existing poll-mode instructions and read tools; do not add
+another persisted mode or polling service. It is not the activation fix. Existing listNotifications/getAuthorFeed remain usable under
 the original DID. New capability-policy failures are not inferred solely from
 MCP initialization; the measured missing launch flag is sufficient for this
 specific refusal. Keep native/org channel policy boundaries unchanged.

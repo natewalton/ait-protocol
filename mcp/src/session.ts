@@ -7,7 +7,7 @@
 // CLAUDE_CODE_SESSION_ID on cold-start (ADR-0035, supersedes 0033). See
 // storage.ts for the resolver.
 
-import { loadIdentity, saveIdentity } from './storage.js'
+import { loadIdentity, saveIdentity, ensureSessionIdentityReady } from './storage.js'
 
 export interface Identity {
   did: string
@@ -33,6 +33,11 @@ let identity: Identity | null = (() => {
 })()
 
 export function getIdentity(): Identity | null {
+  if (!identity) {
+    ensureSessionIdentityReady()
+    const saved = loadIdentity()
+    if (saved) identity = saved
+  }
   return identity
 }
 
@@ -76,6 +81,7 @@ export function updateIdentityTokens(patch: {
 }
 
 export function requireIdentity(): Identity {
+  getIdentity()
   if (!identity) {
     throw new Error(
       'No identity in this session. Call `join` first to create a handle on the network.',
@@ -88,7 +94,7 @@ export function requireIdentity(): Identity {
 // getProfile): an explicit handle/DID wins, otherwise default to this
 // session's own DID. Throws a tool-friendly error when neither is available.
 export function resolveTargetActor(actor?: string): string {
-  const target = actor ?? identity?.did
+  const target = actor ?? getIdentity()?.did
   if (!target) {
     throw new Error(
       'No actor provided and no session identity yet. Call `join` first, or pass an actor parameter.',

@@ -1,3 +1,4 @@
+import { claudeContinuedSessions, claudeIdentityUuid } from './claudeSession.js'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -115,12 +116,12 @@ async function firstClaudeCwd(file: string): Promise<string | null> {
 
 async function claudeSessions(): Promise<ResumableSession[]> {
   if (!commandInstalled('claude')) return []
-  const root = path.join(os.homedir(), '.claude', 'projects')
+  const root = path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude'), 'projects')
   let projectEntries: fs.Dirent[]
   try {
     projectEntries = fs.readdirSync(root, { withFileTypes: true })
   } catch {
-    return []
+    projectEntries = []
   }
   const result: ResumableSession[] = []
   for (const projectEntry of projectEntries) {
@@ -156,7 +157,23 @@ async function claudeSessions(): Promise<ResumableSession[]> {
       })
     }
   }
-  return result
+  const bindings = claudeContinuedSessions()
+  const superseded = new Set(bindings.map(binding => binding.source))
+  const current = new Map<string, (typeof bindings)[number]>()
+  for (const binding of bindings) {
+    if (superseded.has(binding.runtime)) continue
+    if (current.has(binding.identity)) throw new Error('Multiple Claude continuations for one AIT account; preserve the bindings for repair.')
+    current.set(binding.identity, binding)
+  }
+  const sessions = result.filter(session => !current.has(claudeIdentityUuid(session.identifier)))
+  for (const binding of current.values()) {
+    if (!existingDirectory(binding.project)) continue
+    const identity = readPublicIdentity(binding.runtime)
+    if (!identity) continue
+    sessions.push({ did: identity.did, handle: identity.handle, harness: 'claude', project: binding.project,
+      identifier: binding.runtime, modifiedAt: fs.statSync(path.join(STORAGE_DIR, `claude-thread-${binding.runtime}.json`)).mtimeMs })
+  }
+  return sessions
 }
 
 async function codexSessions(signal?: AbortSignal): Promise<ResumableSession[]> {

@@ -2,7 +2,7 @@
 // after a failed MCP notification call.
 
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, rmSync } from 'node:fs'
+import { existsSync, rmSync, mkdirSync, writeFileSync, appendFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -71,6 +71,24 @@ check(
 )
 await sink(view)
 check('(d) successful URI dedupes in process', calls === 2)
+
+// Handover during the awaited channel write must leave the durable cursor for
+// the new runtime, even if the old transport accepted the notification.
+delete process.env.AIT_MCP_TEST_SESSION_ID
+process.env.CLAUDE_CODE_SESSION_ID = SESSION
+process.env.CLAUDE_CONFIG_DIR = join(process.env.XDG_DATA_HOME, 'claude')
+const project = join(process.env.CLAUDE_CONFIG_DIR, 'projects', 'fixture')
+mkdirSync(project, { recursive: true })
+const transcript = join(project, `${SESSION}.jsonl`)
+writeFileSync(transcript, JSON.stringify({ type: 'user', sessionId: SESSION }) + '\n')
+const lateSink = channelSink({
+  async notification() {
+    appendFileSync(transcript, JSON.stringify({ type: 'continued-in', sessionId: SESSION, continuedInSessionId: randomUUID() }) + '\n')
+  },
+})
+let retired = false
+await lateSink({ ...view, uri: 'at://late', cursor: 'must-not-commit' }).catch(() => { retired = true })
+check('(e) handover during channel write does not commit the old cursor', retired && storage.getNotificationRegistrationCheckpoint().value === 'cursor-1')
 
 rmSync(process.env.XDG_DATA_HOME, { recursive: true, force: true })
 if (failures) process.exit(1)

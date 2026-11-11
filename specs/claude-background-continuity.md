@@ -1,6 +1,6 @@
 # Keep the same AIT account when Claude backgrounds a session
 
-Status: systems and independent AIT design GO with ordering/cache conditions satisfied; implementation in isolation. No live changes.
+Status: systems and independent AIT design GO; isolated implementation and acceptance checks pass, independent code review pending. No live changes.
 Date: 2026-11-11
 Base: private-peer98df264. Automatic background activation is separate in claude-background-activation.md.
 
@@ -60,8 +60,8 @@ as an implicit recovery for a known but unresolved native background handover.
 For a verified transition, preserve the original encrypted identity file and
 cursor. Persist one small mode0600 Claude-runtime-to-identity binding beside
 existing identity/thread bindings, by atomic write. It contains identifiers and
-source/project context only, never another credential copy. Follow verified
-successive transitions to the same root; reject cycles, conflicting bindings or
+source/project/configuration context only, never another credential copy. Follow verified
+successive transitions to the same root even before an intermediate worker calls AIT; reject cycles, conflicting bindings or
 reassignment of an already distinct joined identity. This durable binding is
 needed when a worker later respawns without the original --resume source path;
 it is not a process registry. Apply it uniformly to identity, cursor and public
@@ -95,13 +95,16 @@ specific refusal. Keep native/org channel policy boundaries unchanged.
 
 ## Files touched
 
-Ten implementation paths: new mcp/src/claudeSession.ts (native context and
+Thirteen implementation paths: new mcp/src/claudeSession.ts (native context and
 binding); mcp/src/storage.ts (canonical identity/checkpoint); mcp/src/server.ts
 (lifecycle and visible warning); mcp/src/push.ts (pre-delivery retirement);
 mcp/src/sessionPicker.ts (continued-runtime discovery); new
 mcp/scripts/claude-background-test.mjs (isolated consumer regression); new
 mcp/scripts/claude-native-background-test.py (owned native fixture);
-mcp/scripts/channel-sink-test.mjs; mcp/scripts/session-picker-test.mjs; README.md.
+mcp/src/session.ts (retry a late identity binding); mcp/src/tools/join.ts
+(shared notification mode); mcp/scripts/channel-sink-test.mjs;
+mcp/scripts/session-picker-test.mjs; mcp/scripts/push-mode-test.mjs
+(correct its stale full-suffix author expectation); README.md.
 Two spec files are additional design documents. Recount if the agreed mechanism
 changes. This cross-layer boundary requires general-systems review.
 
@@ -168,3 +171,41 @@ Native proof logs and independent evidence review in the investigation directory
 Native scan measurement:256 sparse16MiB files (4GiB logical) scanned once in8038ms, RSS increase44,908,544bytes. This is a pessimistic all-candidate logical scan, not a cold physical-disk measurement; production filters to AIT-bound candidates. The prototype uses a fixed read block and only decodes candidate metadata blocks. Ordinary storage calls must not repeat it.
 
 Clocked native2.1.322 non-bare proof native-2n63kdc1: continued-in at17:57:52.900Z; child first MCP event158.696ms later. Ordering safety does not rely on that observed order. Independent reviewer @ait-skills-dev approved build after these conditions; activation remains notGO.
+
+Implementation evidence (2026-11-11):
+
+- `npm --prefix mcp run build`; `node mcp/scripts/claude-background-test.mjs`:
+  late metadata in the same MCP, original authenticated DID, pending notifications,
+  durable respawn, fork/config/project isolation, verified successive transitions,
+  old registration/listener retirement, and foreground replay all PASS.
+- `node mcp/scripts/channel-sink-test.mjs`, `node mcp/scripts/cursor-test.mjs`,
+  `node mcp/scripts/push-mode-test.mjs`, `node mcp/scripts/session-picker-test.mjs`,
+  `node mcp/scripts/handles-test.mjs` and `bin/ait-test.sh` PASS. The push-mode
+  fixture's existing @bob.test expectation was stale against the base's friendly
+  display; it now expects @bob, with no corresponding runtime formatting change.
+- Actual resolver scan: 16,856,520 transcript bytes on first pending lookup,
+  zero on unchanged retry, 8,330 after appending the continuation.
+- `python3 mcp/scripts/claude-native-background-test.py` on native2.1.322:
+  non-bare /bg, child initialize, Esc, native attach plus local-stub prompt,
+  supported stop and foreground resume PASS (native-3glgmbl5).
+  Child initialize was 154.557ms after continued-in. Stop returns before the
+  native running guard clears; the fixture observes that guard until it clears.
+  Retirement remains true after attach. No external model/account calls.
+- `FIXTURE_COMMAND=/fork python3 mcp/scripts/claude-native-background-test.py`:
+  independent /fork and manual --fork-session emit no outgoing continued-in
+  (native-vl9culgs). Both fixture supervisors stopped in cleanup.
+- Correction to earlier investigation notes: jobs/<shortid>/ holds worker state,
+  not necessarily a transcript. The saved worker transcript was observed under
+  projects/ only after a prompt/response. An active worker must be attached,
+  not resumed concurrently. No native active-worker resume success is claimed.
+- Source-match and late-cursor mutations fail their specific assertions. Logs
+  are under /private/tmp/ait-claude-native-proof. The native activation proof
+  remains unproved: the fake API fixture explicitly has no active channels.
+
+Systems check: runtime UUID, verified native continuation edge, canonical encrypted
+account/checkpoint, and existing callback lifecycle remain the four responsibilities.
+The sole added persisted object is a successful identifier binding; no credentials,
+negative lookup, new supervisor, or new heartbeat is persisted. Registration and
+channel delivery recheck retirement; ordinary forks never use a source resume UUID
+as their own ID. Independent review must also reconcile security's concurrent
+stdio/listener-generation changes before any combined delivery.

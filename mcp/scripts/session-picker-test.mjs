@@ -111,6 +111,7 @@ const appviewPort = await new Promise((resolve, reject) => {
 const env = {
   ...process.env,
   HOME: home,
+  CLAUDE_CONFIG_DIR: path.join(home, '.claude'),
   XDG_DATA_HOME: xdg,
   APPVIEW_URL: `http://127.0.0.1:${appviewPort}`,
   TZ: 'UTC',
@@ -259,6 +260,20 @@ result = run(claudeHandle)
 assertSelection(result, 'claude', claudeProject, claudeId)
 result = run('@claude-session')
 assertSelection(result, 'claude', claudeProject, claudeId)
+// Native continuation bindings select the latest runtime once, including a
+// worker stored under Claude's jobs directory rather than projects/.
+const bgId = 'a1111111-1111-4111-8111-111111111111'
+const bgNext = 'b1111111-1111-4111-8111-111111111111'
+const mapFile = id => path.join(xdg, 'ait-mcp', `claude-thread-${id}.json`)
+write(mapFile(bgId), JSON.stringify({ runtime: bgId, source: claudeId, identity: claudeId, project: claudeProject, config: path.join(home, '.claude') }))
+result = run('@claude-session')
+assertSelection(result, 'claude', claudeProject, bgId)
+write(mapFile(bgNext), JSON.stringify({ runtime: bgNext, source: bgId, identity: claudeId, project: claudeProject, config: path.join(home, '.claude') }))
+result = run('@claude-session')
+assertSelection(result, 'claude', claudeProject, bgNext)
+fs.unlinkSync(mapFile(bgId))
+fs.unlinkSync(mapFile(bgNext))
+
 result = run('@codex-session')
 assertSelection(result, 'codex', codexProject, codexId)
 result = run(claudeId)

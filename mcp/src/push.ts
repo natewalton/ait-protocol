@@ -1,3 +1,4 @@
+import { isClaudeRuntimeCurrent } from './claudeSession.js'
 import { displayHandle } from './handles.js'
 // Push delivery bridge for the MCP server (step 6 of specs/notification-push.md).
 //
@@ -146,7 +147,7 @@ export async function tryRegister(
   registerCall: RegisterCall = appViewCall,
   timeoutMs = REGISTER_TIMEOUT_MS,
 ): Promise<void> {
-  if (!canRegister()) return
+  if (!canRegister() || !isClaudeRuntimeCurrent()) return
   if (!listenerUrl || !getIdentity()) return
   if (registerInFlight) return registerInFlight
   registerInFlight = (async () => {
@@ -167,7 +168,7 @@ export async function tryRegister(
       // AppView returns the normalized starting cursor: for legacy `since` this
       // is its loss-safe seq predecessor; for a fresh identity it is the initial
       // baseline. Do not overwrite a cursor advanced by concurrent live delivery.
-      compareAndSwapNotificationCursor(checkpoint.value, result.cursor)
+      if (canRegister() && isClaudeRuntimeCurrent()) compareAndSwapNotificationCursor(checkpoint.value, result.cursor)
     } catch (err) {
       console.error('registerPushTarget error:', err)
     } finally {
@@ -213,6 +214,7 @@ async function handleNotify(
 export function channelSink(mcp: Server): NotificationSink {
   const seen = new Set<string>()
   return async (view: NotificationView) => {
+    if (!isClaudeRuntimeCurrent()) throw new Error('AIT session continued elsewhere; notification remains pending')
     if (seen.has(view.uri)) return
     seen.add(view.uri)
     try {
@@ -223,6 +225,7 @@ export function channelSink(mcp: Server): NotificationSink {
           meta: formatChannelMeta(view),
         },
       })
+      if (!isClaudeRuntimeCurrent()) throw new Error('AIT session continued during delivery; notification remains pending')
       updateLastSeenNotificationCursor(view.cursor)
     } catch (err) {
       // A failed sink call makes /notify return 500 and AppView drop the

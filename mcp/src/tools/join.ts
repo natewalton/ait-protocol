@@ -1,3 +1,4 @@
+import { effectiveNotificationMode } from '../claudeSession.js'
 import { displayHandle } from '../handles.js'
 import { z } from 'zod'
 import { randomBytes } from 'node:crypto'
@@ -86,8 +87,7 @@ AIT tools: join (you just used it; also the re-auth lever), editProfile, getProf
 // Mode is read once at module load — matches server.ts's startup-time read.
 // The welcome shows the full cascade either way; only the trailing
 // "you're here" line differs.
-const MODE: 'push' | 'poll' =
-  process.env.AIT_NOTIFICATION_MODE === 'push' ? 'push' : 'poll'
+const MODE = effectiveNotificationMode() === 'push' ? 'push' : 'poll'
 
 // CADENCE_CURRENT_(POLL|PUSH) sits last on purpose: it ends with the literal
 // CronCreate({...}) call, and the model is most likely to act on the final

@@ -311,6 +311,7 @@ console.log('ok - metadata-only resume reports its stage and waits for a valid d
 for (const [label, error, transient] of [
   ['draining', { code: -32600, message: 'Server is draining; retry after reconnecting', data: { reason: 'serverShuttingDown' } }, true],
   ['unknown', { code: -32600, message: 'no rollout found for test' }, false],
+  ['writer', { code: -32600, message: `thread ${testThread} already has an active writer` }, false],
   ['other', { code: -32600, message: 'unrelated permanent refusal', data: { reason: 'other' } }, false],
 ]) {
   let attempts = 0
@@ -331,10 +332,44 @@ for (const [label, error, transient] of [
       await waitUntil(() => driver.child.exitCode !== null, 'permanent failure')
       assert.equal(driver.child.exitCode, 1)
       assert.equal(attempts, 1, 'permanent -32600 must not retry')
+      if (label === 'writer') {
+        assert.match(driver.output, /already open in another Codex application/)
+        assert.match(driver.output, /finish and close only that conversation/)
+        assert.match(driver.output, /then run: ait resume/)
+        assert.doesNotMatch(driver.output, /kill|delete.*lock|ait stop/)
+      }
     }
   } finally { await driver.close(); await endpoint.close() }
 }
 console.log('ok - production host retries structured shutdown, not arbitrary -32600')
+
+for (const releases of [true, false]) {
+  let attempts = 0
+  const endpoint = await fakeAppServer(path.join(root, `writer-race-${releases}.sock`), {
+    onRequest(message) {
+      if (message.method === 'initialize') return { result: { codexHome: path.join(root, 'writer-home') } }
+      if (message.method === 'server/diagnostics') return { result: { process: { id: process.pid } } }
+      if (message.method !== 'thread/resume') return
+      assert.equal(message.params.threadId, testThread)
+      assert.equal(message.params.excludeTurns, true)
+      attempts++
+      if (attempts === 1 || !releases) return { error: { code: -32600, message: `thread ${testThread} already has an active writer` } }
+      return { result: threadResult() }
+    },
+  })
+  const driver = launchDriver(endpoint.socketPath)
+  try {
+    await waitUntil(() => releases ? driver.output.includes('→ thread') : driver.child.exitCode !== null, 'bounded writer race recovery')
+    assert.equal(attempts, 2, 'only one verified ownership recheck/retry')
+    if (releases) assert.match(driver.output, /resume recovered/)
+    else {
+      assert.equal(driver.child.exitCode, 1)
+      assert.match(driver.output, /finish and close only that conversation/)
+    }
+  } finally { await driver.close(); await endpoint.close() }
+}
+console.log('ok - released writer recovers automatically; repeated ownership refusal stays bounded')
+
 
 // Real driver HTTP push -> Codex request -> disconnect -> registration replay
 // -> completed replacement turn -> persisted cursor. PDS/AppView are owned fakes.

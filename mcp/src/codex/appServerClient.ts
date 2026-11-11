@@ -13,6 +13,7 @@
 //   2. Wire messages are JSON-RPC 2.0 with the "jsonrpc" field OMITTED.
 
 import WebSocket from 'ws'
+import * as nodePath from 'node:path'
 import {
   SERVER_OVERLOADED,
   type InitializeParams,
@@ -81,12 +82,14 @@ export class AppServerClient {
   private readonly mcpStatusListeners = new Set<(event: McpServerStatusUpdatedEvent) => void>()
   private readonly closeListeners = new Set<(err?: Error) => void>()
   private closed = false
+  private serverCodexHome: string | null = null
 
   constructor(private readonly socketPath: string) {}
 
   // Open the socket and run the initialize handshake. Resolves once the server
   // has acknowledged `initialize` and we've sent the `initialized` notification.
   async connect(timeoutMs = CODEX_PROTOCOL_TIMEOUT_MS): Promise<void> {
+    this.serverCodexHome = null
     // Collapse repeated slashes (e.g. a $TMPDIR ending in '/') so the ws+unix
     // parser splits the socket path from the request path on the ':' correctly.
     const path = this.socketPath.replace(/\/{2,}/g, '/')
@@ -121,12 +124,40 @@ export class AppServerClient {
       clientInfo: CLIENT_INFO,
       capabilities: { experimentalApi: true, requestAttestation: false },
     }
-    await this.withDeadline(
+    const initialized = await this.withDeadline(
       this.request('initialize', params),
       timeoutMs,
       'app-server initialize',
     )
+    if (initialized && typeof initialized === 'object' && 'codexHome' in initialized) {
+      const home = initialized.codexHome
+      if (typeof home === 'string' && nodePath.isAbsolute(home) && !/[\0\r\n]/.test(home)) {
+        this.serverCodexHome = home
+      }
+    }
     this.notify('initialized')
+  }
+
+  // The server's home, not this client's environment, defines the writer-lock
+  // namespace. Older protocols may not expose it or diagnostics; that is lack
+  // of early ownership evidence, never evidence that a thread has no writer.
+  async localServerInfo(timeoutMs = CODEX_PROTOCOL_TIMEOUT_MS): Promise<{ codexHome: string; pid: number } | null> {
+    if (this.serverCodexHome === null) return null
+    let diagnostic: unknown
+    try {
+      diagnostic = await this.withDeadline(
+        this.request('server/diagnostics', {}), timeoutMs, 'app-server server/diagnostics',
+      )
+    } catch (error) {
+      if (error instanceof RpcError && [-32600, -32601].includes(error.code)) return null
+      throw error
+    }
+    if (!diagnostic || typeof diagnostic !== 'object' || !('process' in diagnostic)) return null
+    const processInfo = diagnostic.process
+    if (!processInfo || typeof processInfo !== 'object' || !('id' in processInfo)) return null
+    const pid = processInfo.id
+    if (typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid <= 0) return null
+    return { codexHome: this.serverCodexHome, pid }
   }
 
   async assertResponsive(timeoutMs = CODEX_PROTOCOL_TIMEOUT_MS): Promise<void> {

@@ -124,8 +124,10 @@ done
 # app-server, opens our thread, and writes the socket + threadId to
 # $AIT_CODEX_SOCKET_FILE once live; its logs go to $log_file (off the terminal so
 # they don't corrupt the TUI). node inherits cwd → thread cwd.
-env AIT_NOTIFICATION_MODE=codex AIT_CODEX_SOCKET_FILE="$sock_file" \
-  node --enable-source-maps "$mcp_dir/dist/server.js" "$@" >"$log_file" 2>&1 &
+# fd 3 preserves the caller's stderr before logs are redirected. The driver
+# uses it only for a startup recovery notice that must precede its retry.
+env AIT_NOTIFICATION_MODE=codex AIT_CODEX_SOCKET_FILE="$sock_file" AIT_CODEX_STARTUP_NOTICE_FD=3 \
+  node --enable-source-maps "$mcp_dir/dist/server.js" "$@" 3>&2 >"$log_file" 2>&1 &
 driver_pid=$!
 
 cleanup() {

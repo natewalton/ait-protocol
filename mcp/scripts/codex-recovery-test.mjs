@@ -311,6 +311,7 @@ console.log('ok - metadata-only resume reports its stage and waits for a valid d
 for (const [label, error, transient] of [
   ['draining', { code: -32600, message: 'Server is draining; retry after reconnecting', data: { reason: 'serverShuttingDown' } }, true],
   ['unknown', { code: -32600, message: 'no rollout found for test' }, false],
+  ['writer', { code: -32600, message: `thread ${testThread} already has an active writer` }, false],
   ['other', { code: -32600, message: 'unrelated permanent refusal', data: { reason: 'other' } }, false],
 ]) {
   let attempts = 0
@@ -331,10 +332,76 @@ for (const [label, error, transient] of [
       await waitUntil(() => driver.child.exitCode !== null, 'permanent failure')
       assert.equal(driver.child.exitCode, 1)
       assert.equal(attempts, 1, 'permanent -32600 must not retry')
+      if (label === 'writer') {
+        assert.match(driver.output, /already open in another Codex application/)
+        assert.match(driver.output, /finish and close only that conversation/)
+        assert.match(driver.output, /then run: ait resume/)
+        assert.doesNotMatch(driver.output, /kill|delete.*lock|ait stop/)
+      }
     }
   } finally { await driver.close(); await endpoint.close() }
 }
 console.log('ok - production host retries structured shutdown, not arbitrary -32600')
+
+for (const [releases, noticeAvailable] of [[true, true], [false, true], [true, false]]) {
+  let attempts = 0
+  const noticePath = path.join(root, `writer-notice-${releases}-${noticeAvailable}.txt`)
+  const noticeFd = noticeAvailable ? fs.openSync(noticePath, 'w') : undefined
+  const endpoint = await fakeAppServer(path.join(root, `writer-race-${releases}-${noticeAvailable}.sock`), {
+    onRequest(message) {
+      if (message.method === 'initialize') return { result: { codexHome: path.join(root, 'writer-home') } }
+      if (message.method === 'server/diagnostics') return { result: { process: { id: process.pid } } }
+      if (message.method !== 'thread/resume') return
+      assert.equal(message.params.threadId, testThread)
+      assert.equal(message.params.excludeTurns, true)
+      attempts++
+      if (attempts === 2) assert.match(fs.readFileSync(noticePath, 'utf8'), /no external writer is visible; retrying this conversation once/,
+        'user notice must be written before the retry reaches the server')
+      if (attempts === 1 || !releases) return { error: { code: -32600, message: `thread ${testThread} already has an active writer` } }
+      return { result: threadResult() }
+    },
+  })
+  const driver = launchDriver(endpoint.socketPath, { AIT_CODEX_STARTUP_NOTICE_FD: '3' }, noticeFd)
+  try {
+    await waitUntil(() => releases && noticeAvailable ? driver.output.includes('→ thread') : driver.child.exitCode !== null, 'bounded writer race recovery')
+    assert.equal(attempts, noticeAvailable ? 2 : 1, 'only retry after displaying the notice')
+    if (!noticeAvailable) {
+      assert.equal(driver.child.exitCode, 1)
+      assert.match(driver.output, /could not display the recovery notice; resume was not retried/)
+    } else if (releases) assert.match(driver.output, /resume recovered/)
+    else {
+      assert.equal(driver.child.exitCode, 1)
+      assert.match(driver.output, /finish and close only that conversation/)
+    }
+  } finally { await driver.close(); await endpoint.close(); if (noticeFd !== undefined) fs.closeSync(noticeFd) }
+}
+console.log('ok - released writer recovers automatically; repeated ownership refusal stays bounded')
+
+// An overload during the retry reconnects, but does not grant a second writer
+// recovery attempt or print another pre-retry notice.
+{
+  let attempts = 0
+  const endpoint = await fakeAppServer(path.join(root, 'writer-retry-overload.sock'), {
+    onRequest(message) {
+      if (message.method === 'initialize') return { result: { codexHome: path.join(root, 'writer-home') } }
+      if (message.method === 'server/diagnostics') return { result: { process: { id: process.pid } } }
+      if (message.method !== 'thread/resume') return
+      attempts++
+      if (attempts === 2) return { error: { code: -32001, message: 'Server overloaded' } }
+      return { error: { code: -32600, message: `thread ${testThread} already has an active writer` } }
+    },
+  })
+  const driver = launchDriver(endpoint.socketPath)
+  try {
+    await waitUntil(() => driver.child.exitCode !== null, 'writer retry budget survives reconnect')
+    assert.equal(driver.child.exitCode, 1)
+    assert.equal(attempts, 3, 'initial resume, one safe retry, then reconnect refusal without another retry')
+    assert.equal(driver.output.split('retrying this conversation once').length - 1, 1)
+    assert.match(driver.output, /finish and close only that conversation/)
+  } finally { await driver.close(); await endpoint.close() }
+}
+console.log('ok - writer recovery retry budget is preserved across overload reconnects')
+
 
 // Real driver HTTP push -> Codex request -> disconnect -> registration replay
 // -> completed replacement turn -> persisted cursor. PDS/AppView are owned fakes.
@@ -473,11 +540,11 @@ async function waitUntil(check, label) {
   }
   assert.fail(`${label} did not complete`)
 }
-function launchDriver(socket, overrides = {}) {
+function launchDriver(socket, overrides = {}, noticeFd) {
   const child = spawn(process.execPath, [fileURLToPath(new URL('../dist/server.js', import.meta.url)), '--resume', testThread], {
     cwd: root,
     env: { ...process.env, HOME: path.join(root, 'home'), CODEX_HOME: path.join(root, 'codex'), AIT_NOTIFICATION_MODE: 'codex', AIT_CODEX_SHARED_SOCKET: socket, PDS_URL: 'http://127.0.0.1:1', APPVIEW_URL: 'http://127.0.0.1:1', ...overrides },
-    stdio: ['ignore', 'ignore', 'pipe'],
+    stdio: ['ignore', 'ignore', 'pipe', ...(noticeFd === undefined ? [] : [noticeFd])],
   })
   const driver = { child, output: '', async close() {
     if (child.exitCode !== null || child.signalCode !== null) return

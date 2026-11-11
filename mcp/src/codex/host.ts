@@ -39,6 +39,7 @@ import * as fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { AppServerClient, RpcError } from './appServerClient.js'
 import { SERVER_OVERLOADED } from './appServerTypes.js'
+import { probeCodexWriters, type CodexWriterOwner } from './writerOwnership.js'
 import { sharedAppServerSocketPath } from './paths.js'
 import { createCodexSink } from './sink.js'
 import {
@@ -48,7 +49,7 @@ import {
   type NotificationSink,
 } from '../push.js'
 import { loadIdentity } from '../storage.js'
-import { setIdentity, reloadIdentity } from '../session.js'
+import { setIdentity, reloadIdentity, getIdentity } from '../session.js'
 import { readThreadSessionId, writeThreadSessionId } from './threadMap.js'
 
 const IDENTITY_POLL_INTERVAL_MS = 1000
@@ -63,6 +64,11 @@ const AIT_CODEX_REASONING_EFFORT = 'medium'
 // "This thread does not exist" from thread/resume. The app-server answers a
 // missing rollout with InvalidRequest (-32600) and a message naming the id;
 // the code alone is too broad, so both are required.
+function isWriterConflict(err: unknown, threadId: string): boolean {
+  return err instanceof RpcError && err.code === -32600 &&
+    err.message.toLowerCase().includes(`thread ${threadId.toLowerCase()} already has an active writer`)
+}
+
 function isUnknownThread(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err)
   return message.includes('-32600') && /no rollout found/i.test(message)
@@ -180,22 +186,50 @@ export async function runCodexSession(): Promise<void> {
           console.error(`ait codex session: resuming thread ${threadId}`)
           started = await client.threadResume({ threadId, ...threadParams, excludeTurns: true })
         } catch (err) {
-          if (firstAttempt && isUnknownThread(err)) {
-            console.error(
-              `ait codex session: no codex thread ${threadId}. Check the id, or ` +
-                `launch without --resume to start a new session.`,
-            )
-            process.exit(1)
+          if (firstAttempt && isWriterConflict(err, threadId)) {
+            let owner: CodexWriterOwner | undefined
+            let recheckAvailable = false
+            try {
+              const info = await client.localServerInfo()
+              if (info) {
+                owner = (await probeCodexWriters(info, [threadId])).get(threadId)
+                recheckAvailable = true
+              }
+            } catch (checkError) {
+              console.error(`ait codex session: could not verify thread ownership: ${errMessage(checkError)}`)
+            }
+            // A previous owner can finish between selection and resume. Let
+            // Codex arbitrate one safe retry; never stop a writer or delete locks.
+            if (recheckAvailable && !owner) {
+              try {
+                started = await client.threadResume({ threadId, ...threadParams, excludeTurns: true })
+                console.error('ait codex session: previous writer released the thread; resume recovered')
+              } catch (retryError) { err = retryError }
+            }
+            if (!started && isWriterConflict(err, threadId)) {
+              const handle = getIdentity()?.handle
+              const resume = handle ? `ait resume @${displayHandle(handle)}` : `ait resume ${threadId}`
+              console.error(`ait codex session: this conversation is already open in ${owner?.application ?? 'another Codex application'}.`)
+              console.error(`Continue in that window, or finish and close only that conversation there, then run: ${resume}`)
+              process.exit(1)
+            }
           }
-          // Overload and structured server shutdown are transient. Other first
-          // resume errors are Codex's final word on this
-          // thread (archived, corrupt history), and retrying cannot change it.
-          // Its message says what to do, e.g. "Run `codex unarchive <id>`".
-          if (firstAttempt && err instanceof RpcError && err.code !== SERVER_OVERLOADED && !err.isServerShuttingDown) {
-            console.error(`ait codex session: could not resume codex thread ${threadId}: ${err.message}`)
-            process.exit(1)
+          if (!started) {
+            if (firstAttempt && isUnknownThread(err)) {
+              console.error(
+                `ait codex session: no codex thread ${threadId}. Check the id, or ` +
+                  `launch without --resume to start a new session.`,
+              )
+              process.exit(1)
+            }
+            // Only overload/structured shutdown is a reconnect signal. An
+            // unrelated permanent failure is never a reason to take ownership.
+            if (firstAttempt && err instanceof RpcError && err.code !== SERVER_OVERLOADED && !err.isServerShuttingDown) {
+              console.error(`ait codex session: could not resume codex thread ${threadId}: ${err.message}`)
+              process.exit(1)
+            }
+            throw err
           }
-          throw err
         }
       } else {
         console.error('ait codex session: creating thread')

@@ -31,7 +31,7 @@ Commands:
   unlink <key>      Revoke an approved computer's access.
   claude [args...]  Launch a Claude Code AIT session in the current directory.
   codex [args...]   Launch a Codex AIT session in the current directory.
-  resume [query]    Find and resume one stopped AIT session by its handle.
+  resume [query]    Find and resume one existing AIT session by its handle.
   skills <command>  Install, remove, or inspect the delivery-coordination skill.
   help [command]    Show this help or a command's complete help page.
   version           Show this checkout's release version and Git revision.
@@ -194,7 +194,12 @@ Normal result: resumes the selected session with its original AIT identity, or
 a never-joined Claude conversation ready to join.
 When an exact handle or identifier is still marked live, it prints a warning and
 asks `Resume it anyway? [y/N]`; only `y` or `yes` resumes it. The default is no.
-Partial searches still exclude live sessions. Recovery: no match, ambiguity, a
+Partial searches still exclude live AIT sessions. A Codex conversation open in
+another application is labelled in the table. Finish and close only that
+conversation there, then press Enter to recheck and resume here. AIT leaves
+other conversations running; it does not force a handoff or restart their server.
+A naturally released writer is retried safely with the original identity.
+Recovery: no match, ambiguity, a
 negative answer, EOF, and Ctrl-C launch nothing.
 Exit behavior: 0 when a launcher exits successfully, 1 when no session can be
 selected or discovery fails, 130 when selection is interrupted, 2 invalid

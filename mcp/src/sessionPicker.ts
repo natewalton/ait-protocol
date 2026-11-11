@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url'
 import { AppServerClient, CODEX_PROTOCOL_TIMEOUT_MS, RpcError } from './codex/appServerClient.js'
 import { SERVER_OVERLOADED, type ThreadReadResponse } from './codex/appServerTypes.js'
 import { sharedAppServerSocketPath } from './codex/paths.js'
+import { probeCodexWriters, type CodexWriterOwner } from './codex/writerOwnership.js'
 import { readThreadSessionId } from './codex/threadMap.js'
 import { canonicalUuid, readPublicIdentity, STORAGE_DIR } from './storage.js'
 import { displayHandle } from './handles.js'
@@ -31,6 +32,8 @@ export interface ResumableSession {
   project: string
   identifier: string
   modifiedAt: number
+  // Ephemeral ownership evidence; never persisted into an AIT identity.
+  codexWriter?: CodexWriterOwner
 }
 
 interface SessionDiscovery {
@@ -44,15 +47,17 @@ interface ActorBasic {
   live?: boolean
 }
 
-async function searchActors(handle: string, retiredOnly = false): Promise<ActorBasic[]> {
+async function searchActors(handle: string, retiredOnly = false, signal?: AbortSignal): Promise<ActorBasic[]> {
   const url = new URL('/xrpc/ait.actor.searchActors', APPVIEW_URL)
   url.searchParams.set('q', handle)
   url.searchParams.set('limit', '100')
   if (retiredOnly) url.searchParams.set('retiredOnly', 'true')
   let response: Response
   try {
-    response = await fetch(url)
-  } catch {
+    const timeout = AbortSignal.timeout(CODEX_PROTOCOL_TIMEOUT_MS)
+    response = await fetch(url, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout })
+  } catch (error) {
+    if (signal?.aborted) throw signal.reason
     throw new Error('could not check which AIT sessions are live; run: ait start')
   }
   if (!response.ok) {
@@ -154,7 +159,7 @@ async function claudeSessions(): Promise<ResumableSession[]> {
   return result
 }
 
-async function codexSessions(): Promise<ResumableSession[]> {
+async function codexSessions(signal?: AbortSignal): Promise<ResumableSession[]> {
   if (!commandInstalled('codex')) return []
   let maps: fs.Dirent[]
   try {
@@ -180,18 +185,24 @@ async function codexSessions(): Promise<ResumableSession[]> {
   const unavailable = 'Codex sessions not listed: the shared Codex server is not answering; run: ait start\n'
   const client = new AppServerClient(sharedAppServerSocketPath())
   const result: ResumableSession[] = []
+  const abort = (): void => client.close()
+  signal?.throwIfAborted()
+  signal?.addEventListener('abort', abort, { once: true })
   try {
     try {
       await client.connect(CODEX_PROTOCOL_TIMEOUT_MS)
     } catch {
+      if (signal?.aborted) throw signal.reason
       process.stderr.write(unavailable)
       return []
     }
     for (const { threadId, did, handle } of mappedThreads) {
+      signal?.throwIfAborted()
       let thread: ThreadReadResponse['thread']
       try {
         thread = (await client.threadRead(threadId)).thread
       } catch (err) {
+        if (signal?.aborted) throw signal.reason
         // An RPC error is the server answering for this one thread (gone,
         // unreadable); skip it. Overload, or a dropped or silent connection,
         // means the server is not answering.
@@ -209,14 +220,23 @@ async function codexSessions(): Promise<ResumableSession[]> {
         modifiedAt: thread.updatedAt * 1000,
       })
     }
+    try {
+      const owners = await probeCodexWriters(await client.localServerInfo(), result.map(session => session.identifier))
+      for (const session of result) session.codexWriter = owners.get(session.identifier)
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason
+      process.stderr.write(`Codex sessions not listed: ${error instanceof Error ? error.message : String(error)}. Check lsof/ps availability and retry ait resume.\n`)
+      return []
+    }
   } finally {
+    signal?.removeEventListener('abort', abort)
     client.close()
   }
   return result
 }
 
-export async function discoverSessions(): Promise<SessionDiscovery> {
-  const sessions = [ ...(await claudeSessions()), ...(await codexSessions()) ]
+export async function discoverSessions(signal?: AbortSignal): Promise<SessionDiscovery> {
+  const sessions = [ ...(await claudeSessions()), ...(await codexSessions(signal)) ]
   const liveDids = new Set<string>()
   const joined = new Map(sessions.flatMap((session) =>
     session.did === null || session.handle === null
@@ -224,15 +244,16 @@ export async function discoverSessions(): Promise<SessionDiscovery> {
       : [[session.did, session.handle.split('.')[0].toLocaleLowerCase() + '.'] as const],
   ))
   for (const [did, query] of joined) {
+    signal?.throwIfAborted()
     // Search the label prefix across old/new namespaces, then join by DID.
     // A namesake is never evidence that this local session is live.
-    const listed = (await searchActors(query)).find(
+    const listed = (await searchActors(query, false, signal)).find(
       (actor) => actor.did === did,
     )
     // A retired handle is intentionally absent from the public directory, but
     // its existing session can still be live. Check that separate view only
     // for a locally known DID missing from the listed set.
-    const actor = listed ?? (await searchActors(query, true)).find(
+    const actor = listed ?? (await searchActors(query, true, signal)).find(
       (candidate) => candidate.did === did,
     )
     if (actor?.live) liveDids.add(did)
@@ -242,10 +263,10 @@ export async function discoverSessions(): Promise<SessionDiscovery> {
   )
   return {
     offline: sorted.filter(
-      (session) => session.did === null || !liveDids.has(session.did),
+      (session) => session.codexWriter !== undefined || session.did === null || !liveDids.has(session.did),
     ),
     live: sorted.filter(
-      (session) => session.did !== null && liveDids.has(session.did),
+      (session) => session.codexWriter === undefined && session.did !== null && liveDids.has(session.did),
     ),
   }
 }
@@ -285,22 +306,24 @@ function render(
     number: `${index + 1}.`,
     handle: session.handle === null ? '(not joined)' : `@${displayHandle(session.handle)}`,
     harness: session.harness,
+    status: session.codexWriter ? `Open in ${session.codexWriter.application}` : '',
     project: session.project,
     modified: dateFormat.format(new Date(session.modifiedAt)),
   }))
   const numberWidth = Math.max('#'.length, ...rows.map((row) => row.number.length))
   const handleWidth = Math.max('SESSION'.length, ...rows.map((row) => row.handle.length))
+  const statusWidth = Math.max('STATUS'.length, ...rows.map(row => row.status.length))
   const harnessWidth = Math.max('HARNESS'.length, ...rows.map((row) => row.harness.length))
   const projectWidth = Math.max('PROJECT'.length, ...rows.map((row) => row.project.length))
 
   output.write(
     `${'#'.padEnd(numberWidth)}  ${'SESSION'.padEnd(handleWidth)}  ` +
-    `${'HARNESS'.padEnd(harnessWidth)}  ${'PROJECT'.padEnd(projectWidth)}  LAST USED\n`,
+    `${'STATUS'.padEnd(statusWidth)}  ${'HARNESS'.padEnd(harnessWidth)}  ${'PROJECT'.padEnd(projectWidth)}  LAST USED\n`,
   )
   rows.forEach((row, index) => {
     output.write(
       `${row.number.padEnd(numberWidth)}  ${row.handle.padEnd(handleWidth)}  ` +
-      `${row.harness.padEnd(harnessWidth)}  ${row.project.padEnd(projectWidth)}  ${row.modified}\n`,
+      `${row.status.padEnd(statusWidth)}  ${row.harness.padEnd(harnessWidth)}  ${row.project.padEnd(projectWidth)}  ${row.modified}\n`,
     )
     if (sessions[index].handle !== null && rows.filter((other) => other.handle === row.handle).length > 1) {
       output.write(`    @${sessions[index].handle} — ${sessions[index].identifier}\n`)
@@ -311,92 +334,111 @@ function render(
   }
 }
 
-function withPrompt<T>(
+type ReadAnswer = () => Promise<string | null>
+
+// One serial reader spans selection, liveness confirmation and handoff. Awaiting
+// a recheck must neither lose piped answers nor act after cancellation.
+async function withAnswers<T>(
   input: NodeJS.ReadableStream,
   output: NodeJS.WritableStream,
-  run: (
-    prompt: readline.Interface,
-    finish: (value: T | null, status?: number) => void,
-  ) => void,
+  run: (read: ReadAnswer, signal: AbortSignal) => Promise<T | null>,
 ): Promise<T | null> {
   const prompt = readline.createInterface({ input, crlfDelay: Infinity })
-  return new Promise((resolve) => {
-    let settled = false
-    const finish = (value: T | null, status = 0): void => {
-      if (settled) return
-      settled = true
-      prompt.close()
-      process.exitCode = status
-      resolve(value)
-    }
-    const cancel = (status = 0): void => {
-      output.write('\nresume cancelled; no harness was started\n')
-      finish(null, status)
-    }
-    const onSignal = (): void => cancel(130)
-    process.once('SIGINT', onSignal)
-    prompt.on('SIGINT', onSignal)
-    prompt.once('close', () => {
-      process.removeListener('SIGINT', onSignal)
-      prompt.removeListener('SIGINT', onSignal)
-      if (!settled) cancel()
-    })
-    run(prompt, finish)
-  })
+  const answers = prompt[Symbol.asyncIterator]()
+  let interrupted = false
+  const controller = new AbortController()
+  const onSignal = (): void => { interrupted = true; process.exitCode = 130; controller.abort(); prompt.close() }
+  process.once('SIGINT', onSignal)
+  prompt.on('SIGINT', onSignal)
+  const read: ReadAnswer = async () => {
+    if (interrupted) return null
+    const answer = await answers.next()
+    return answer.done ? null : answer.value
+  }
+  try {
+    const selected = await run(read, controller.signal)
+    return interrupted ? null : selected
+  } catch (error) {
+    if (interrupted) return null
+    throw error
+  } finally {
+    prompt.close()
+    process.removeListener('SIGINT', onSignal)
+    prompt.removeListener('SIGINT', onSignal)
+    if (interrupted) output.write('\nresume cancelled; no harness was started\n')
+  }
+}
+
+function cancelled(output: NodeJS.WritableStream, status = 0): null {
+  if (process.exitCode === 130) return null
+  output.write('\nresume cancelled; no harness was started\n')
+  if (process.exitCode !== 130) process.exitCode = status
+  return null
 }
 
 async function selectInteractive(
-  sessions: ResumableSession[],
-  input: NodeJS.ReadableStream,
-  output: NodeJS.WritableStream,
+  sessions: ResumableSession[], read: ReadAnswer, output: NodeJS.WritableStream,
 ): Promise<ResumableSession | null> {
-  return withPrompt(input, output, (prompt, finish) => {
-    const readAnswer = (choices: ResumableSession[]): void => {
-      prompt.once('line', (answer) => {
-        const trimmed = answer.trim()
-        if (/^\d+$/.test(trimmed)) {
-          const selected = choices[Number(trimmed) - 1]
-          if (selected) finish(selected)
-          else {
-            output.write('invalid session number; no harness was started\n')
-            finish(null, 1)
-          }
-          return
-        }
-        const narrowed = choices.filter((session) => matches(session, trimmed))
-        if (narrowed.length === 1) finish(narrowed[0])
-        else if (narrowed.length > 1) {
-          render(narrowed, output)
-          readAnswer(narrowed)
-        } else {
-          output.write('no resumable AIT session matched\n')
-          finish(null, 1)
-        }
-      })
+  let choices = sessions
+  output.write('Select a session by number or enter a search: ')
+  for (;;) {
+    const answer = await read()
+    if (answer === null) return cancelled(output)
+    const trimmed = answer.trim()
+    if (/^\d+$/.test(trimmed)) {
+      const selected = choices[Number(trimmed) - 1]
+      if (selected) return selected
+      output.write('invalid session number; no harness was started\n')
+      process.exitCode = 1
+      return null
     }
-    readAnswer(sessions)
-    output.write('Select a session by number or enter a search: ')
-  })
+    const narrowed = choices.filter(session => matches(session, trimmed))
+    if (narrowed.length === 1) return narrowed[0]
+    if (narrowed.length === 0) {
+      output.write('no resumable AIT session matched\n')
+      process.exitCode = 1
+      return null
+    }
+    choices = narrowed
+    render(choices, output)
+  }
 }
 
 async function confirmLiveResume(
-  session: ResumableSession,
-  input: NodeJS.ReadableStream,
-  output: NodeJS.WritableStream,
+  session: ResumableSession, read: ReadAnswer, output: NodeJS.WritableStream,
 ): Promise<ResumableSession | null> {
-  return withPrompt(input, output, (prompt, finish) => {
-    prompt.once('line', (answer) => {
-      if (/^(?:y|yes)$/i.test(answer.trim())) finish(session)
-      else {
-        output.write('resume cancelled; no harness was started\n')
-        finish(null, 1)
-      }
-    })
-    output.write(
-      `@${displayHandle(session.handle!)} checked in within the last five minutes and may still be open.\n` +
-        'Resume it anyway? [y/N] ',
-    )
-  })
+  output.write(`@${displayHandle(session.handle!)} checked in within the last five minutes and may still be open.\nResume it anyway? [y/N] `)
+  const answer = await read()
+  if (answer !== null && /^(?:y|yes)$/i.test(answer.trim())) return session
+  return cancelled(output, answer === null ? 0 : 1)
+}
+
+async function resolveWriterHandoff(
+  selected: ResumableSession, read: ReadAnswer, output: NodeJS.WritableStream, signal: AbortSignal,
+): Promise<ResumableSession | null> {
+  let session = selected
+  while (session.codexWriter) {
+    const handle = `@${displayHandle(session.handle!)}`
+    output.write(`${handle} is already open in ${session.codexWriter.application}.\n` +
+      `You can continue there. To use AIT here, finish and close only that conversation there first.\n` +
+      'Press Enter to recheck and resume, or type n to cancel: ')
+    const answer = await read()
+    if (answer === null) return cancelled(output)
+    if (answer.trim() !== '') return cancelled(output, 1)
+    // A fresh discovery uses the server's current home/PID and rechecks AIT
+    // presence too: a different live AIT driver still needs explicit consent.
+    const current = await discoverSessions(signal)
+    const offline = current.offline.find(s => s.harness === session.harness && s.identifier === session.identifier)
+    const live = current.live.find(s => s.harness === session.harness && s.identifier === session.identifier)
+    if (live) return confirmLiveResume(live, read, output)
+    if (!offline) {
+      output.write(`Could not recheck ${handle}; no harness was started. Retry: ait resume ${handle}\n`)
+      process.exitCode = 1
+      return null
+    }
+    session = offline
+  }
+  return session
 }
 
 export async function chooseSession(
@@ -412,19 +454,23 @@ export async function chooseSession(
     render([...liveExact, ...exact], output)
     return null
   }
-  if (liveExact.length === 1) return confirmLiveResume(liveExact[0], input, output)
-  if (exact.length === 1) return exact[0]
-  // Listings and searches show joined sessions only; a never-joined conversation
-  // is reachable by its exact UUID above and nowhere else.
-  const listable = sessions.filter((session) => session.handle !== null)
-  const narrowed = query ? listable.filter((session) => matches(session, query)) : listable
-  const hiddenLive = query ? live.filter((session) => matches(session, query)).length : live.length
-  if (narrowed.length === 0) {
-    output.write('no resumable AIT session matched\n')
-    return null
-  }
-  render(narrowed, output, hiddenLive)
-  return selectInteractive(narrowed, input, output)
+  return withAnswers(input, output, async (read, signal) => {
+    if (liveExact.length === 1) {
+      const confirmed = await confirmLiveResume(liveExact[0], read, output)
+      return confirmed && resolveWriterHandoff(confirmed, read, output, signal)
+    }
+    if (exact.length === 1) return resolveWriterHandoff(exact[0], read, output, signal)
+    const listable = sessions.filter(session => session.handle !== null)
+    const narrowed = query ? listable.filter(session => matches(session, query)) : listable
+    const hiddenLive = query ? live.filter(session => matches(session, query)).length : live.length
+    if (narrowed.length === 0) {
+      output.write('no resumable AIT session matched\n')
+      return null
+    }
+    render(narrowed, output, hiddenLive)
+    const selected = await selectInteractive(narrowed, read, output)
+    return selected && resolveWriterHandoff(selected, read, output, signal)
+  })
 }
 
 async function main(): Promise<void> {

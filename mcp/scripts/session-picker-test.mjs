@@ -53,6 +53,8 @@ const retiredFile = path.join(root, 'retired-handles.json')
 const actorsFile = path.join(root, 'directory-actors.json')
 const directoryActors = [claudeHandle, codexHandle].map((handle) => ({ did: actorDid(handle), handle }))
 const concurrencyFile = path.join(root, 'presence-concurrency')
+const presenceStall = path.join(root, 'presence-stall.json')
+write(presenceStall, 'false')
 const appviewServerFile = path.join(root, 'appview-server.mjs')
 write(liveFile, '[]')
 write(retiredFile, '[]')
@@ -61,13 +63,18 @@ write(concurrencyFile, '0')
 write(appviewServerFile, `
 import { readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
-const [liveFile, retiredFile, concurrencyFile, actorsFile] = process.argv.slice(2)
+const [liveFile, retiredFile, concurrencyFile, actorsFile, presenceStall] = process.argv.slice(2)
 let active = 0
 let peak = 0
 const server = createServer((request, response) => {
   active += 1
   peak = Math.max(peak, active)
   writeFileSync(concurrencyFile, String(peak))
+  if (JSON.parse(readFileSync(presenceStall, 'utf8'))) {
+    writeFileSync(presenceStall, JSON.stringify('entered'))
+    request.once('close', () => { active -= 1 })
+    return
+  }
   const url = new URL(request.url, 'http://localhost')
   const query = (url.searchParams.get('q') ?? '').toLowerCase()
   const live = new Set(JSON.parse(readFileSync(liveFile, 'utf8')))
@@ -89,7 +96,7 @@ server.listen(0, '127.0.0.1', () => {
 `)
 const appviewServer = spawn(
   process.execPath,
-  [appviewServerFile, liveFile, retiredFile, concurrencyFile, actorsFile],
+  [appviewServerFile, liveFile, retiredFile, concurrencyFile, actorsFile, presenceStall],
   { stdio: ['ignore', 'pipe', 'inherit'] },
 )
 const appviewPort = await new Promise((resolve, reject) => {
@@ -163,12 +170,16 @@ writeIdentity(missingId, 'missing-project.test')
 const unknownCodexId = '66666666-6666-4666-8666-666666666666'
 const corruptCodexId = '88888888-8888-4888-8888-888888888888'
 const codexServerFile = path.join(root, 'codex-server.mjs')
+const writerState = path.join(root, 'writer-state.json')
+const writerHome = path.join(root, 'native-server-home')
+const writerLock = path.join(writerHome, 'thread-writer-locks', `${codexId}.lock`)
+write(writerState, JSON.stringify({ enabled: false, calls: [] }))
 const codexSocket = path.join(fs.mkdtempSync('/tmp/aitp-'), 's.sock')
 write(codexServerFile, `
 import { createServer } from 'node:http'
 import { WebSocketServer } from ${JSON.stringify(new URL('../node_modules/ws/wrapper.mjs', import.meta.url).href)}
 import { readFileSync } from 'node:fs'
-const [socket, threadsJson, dropFile] = process.argv.slice(2)
+const [socket, threadsJson, dropFile, writerState, writerHome] = process.argv.slice(2)
 const threads = JSON.parse(threadsJson)
 const http = createServer()
 const server = new WebSocketServer({ server: http })
@@ -176,7 +187,9 @@ http.listen(socket, () => process.stdout.write('ready\\n'))
 server.on('connection', (ws) => ws.on('message', (data) => {
   const message = JSON.parse(String(data))
   if (message.id === undefined) return
-  if (message.method === 'initialize') return ws.send(JSON.stringify({ id: message.id, result: {} }))
+  const state = JSON.parse(readFileSync(writerState, 'utf8'))
+  if (message.method === 'initialize') return ws.send(JSON.stringify({ id: message.id, result: state.enabled ? { codexHome: writerHome } : {} }))
+  if (message.method === 'server/diagnostics') return ws.send(JSON.stringify({ id: message.id, result: { process: { id: process.pid } } }))
   if (JSON.parse(readFileSync(dropFile, 'utf8')).includes(message.params?.threadId)) return ws.terminate()
   const thread = message.method === 'thread/read' ? threads[message.params.threadId] : undefined
   if (thread) return ws.send(JSON.stringify({ id: message.id, result: { thread } }))
@@ -192,7 +205,7 @@ write(codexDropFile, '[]')
 const codexServer = spawn(process.execPath, [codexServerFile, codexSocket, JSON.stringify({
   [codexId]: { id: codexId, cwd: codexProject, updatedAt: Math.floor(Date.now() / 1000) + 1000 },
   [deletedCwdCodexId]: { id: deletedCwdCodexId, cwd: missingProject, updatedAt: 1 },
-}), codexDropFile], { stdio: ['ignore', 'pipe', 'inherit'] })
+}), codexDropFile, writerState, writerHome], { stdio: ['ignore', 'pipe', 'inherit'] })
 await new Promise((resolve, reject) => {
   codexServer.stdout.once('data', resolve)
   codexServer.once('exit', (status) => reject(new Error(`fixture Codex server exited ${status}`)))
@@ -575,6 +588,115 @@ assert.equal(result.stderr.includes('(not joined)'), false)
 writeIdentity(claudeId, claudeHandle)
 fs.rmSync(missingProject, { recursive: true, force: true })
 
+// Ownership is separate from AIT presence. All process commands are fixture
+// children; ownership files and unrelated sessions must remain untouched.
+write(writerLock, '')
+write(path.join(bin, 'lsof'), `#!${process.execPath}
+const fs=require('node:fs'), state=JSON.parse(fs.readFileSync(${JSON.stringify(writerState)}));
+state.calls.push('lsof');state.probes=(state.probes??0)+1;
+fs.writeFileSync(${JSON.stringify(writerState)},JSON.stringify(state));
+if(state.error){console.error('fixture inspection denied');process.exit(2)}
+if(!process.argv.includes(${JSON.stringify(writerLock)}))process.exit(2);
+if(state.becomesLive && state.probes>=2)fs.writeFileSync(${JSON.stringify(liveFile)},JSON.stringify([${JSON.stringify(codexHandle)}]));
+if(state.stallOnRecheck && state.probes>=2)fs.writeFileSync(${JSON.stringify(presenceStall)},'true');
+if(state.delayMs)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,state.delayMs);
+if(!state.ownerPid || (state.releaseAt && state.probes>=state.releaseAt))process.exit(1);
+console.log('p'+state.ownerPid); console.log('f46'); console.log('au'); console.log('n'+${JSON.stringify(writerLock)});
+`)
+fs.chmodSync(path.join(bin, 'lsof'), 0o755)
+write(path.join(bin, 'ps'), `#!${process.execPath}
+const fs=require('node:fs'), state=JSON.parse(fs.readFileSync(${JSON.stringify(writerState)}));
+state.calls.push('ps');fs.writeFileSync(${JSON.stringify(writerState)},JSON.stringify(state));
+console.log('/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex');
+`)
+fs.chmodSync(path.join(bin, 'ps'), 0o755)
+const ownership = fields => write(writerState, JSON.stringify({ enabled: true, ownerPid: 7654321, calls: [], ...fields }))
+write(liveFile, '[]'); write(codexDropFile, '[]')
+ownership({})
+result = run('', '')
+assert.match(result.stderr, /STATUS/)
+assert.match(result.stderr, /Open in ChatGPT/)
+assert.equal(result.stdout, '')
+result = run(codexHandle, 'n\n')
+assert.equal(result.status, 1)
+assert.match(result.stderr, /finish and close only that conversation/)
+assert.equal(result.stdout, '')
+assert.equal(fs.existsSync(writerLock), true)
+assert.equal(fs.readFileSync(writerLock, 'utf8'), '')
+
+// A released/stale file requires no manual cleanup or extra invocation.
+ownership({ ownerPid: null })
+result = run(codexHandle)
+assertSelection(result, 'codex', codexProject, codexId)
+assert.equal(fs.existsSync(writerLock), true)
+ownership({ ownerPid: codexServer.pid })
+result = run(codexHandle)
+assertSelection(result, 'codex', codexProject, codexId)
+assert.deepEqual(JSON.parse(fs.readFileSync(writerState)).calls, ['lsof'])
+ownership({ releaseAt: 2 })
+result = run(codexHandle, '\n', { CODEX_HOME: path.join(root, 'wrong-client-home') })
+assertSelection(result, 'codex', codexProject, codexId)
+assert.match(result.stderr, /already open in ChatGPT/)
+ownership({ releaseAt: 2 })
+result = run('', '1\n\n')
+assertSelection(result, 'codex', codexProject, codexId)
+ownership({ releaseAt: 3 })
+result = run(codexHandle, '\n\n')
+assertSelection(result, 'codex', codexProject, codexId)
+assert.equal((result.stderr.match(/already open in ChatGPT/g) ?? []).length, 2)
+ownership({ releaseAt: 2, becomesLive: true })
+result = run(codexHandle, '\nn\n')
+assert.equal(result.status, 1)
+assert.equal(result.stdout, '')
+assert.match(result.stderr, /Resume it anyway\? \[y\/N\]/)
+write(liveFile, '[]')
+ownership({ releaseAt: 2, becomesLive: true })
+result = run(codexHandle, '\ny\n')
+assertSelection(result, 'codex', codexProject, codexId)
+write(liveFile, '[]')
+ownership({ error: true })
+result = run(claudeHandle)
+assertSelection(result, 'claude', claudeProject, claudeId)
+assert.match(result.stderr, /could not check Codex writer ownership/)
+assert.match(result.stderr, /retry ait resume/)
+
+// The user can cancel while an async recheck is pending; its eventual answer
+// cannot dispatch a harness after Ctrl-C.
+ownership({ releaseAt: 2 })
+const cancelling = spawn(process.execPath, [picker, codexHandle], { env, stdio: ['pipe','pipe','pipe'] })
+let cancellationOutput = '', cancellationStdout = ''
+cancelling.stderr.on('data', chunk => { cancellationOutput += chunk })
+cancelling.stdout.on('data', chunk => { cancellationStdout += chunk })
+const waitFor = async check => { const end=Date.now()+5000;while(!check()){assert(Date.now()<end,'fixture timed out');await new Promise(resolve=>setTimeout(resolve,10))} }
+await waitFor(() => cancellationOutput.includes('Press Enter to recheck'))
+const pendingOwner=JSON.parse(fs.readFileSync(writerState));pendingOwner.delayMs=500;write(writerState,JSON.stringify(pendingOwner))
+cancelling.stdin.write('\n')
+await waitFor(() => JSON.parse(fs.readFileSync(writerState)).probes >= 2)
+cancelling.kill('SIGINT')
+const cancelCode = await new Promise(resolve => cancelling.once('exit', resolve))
+assert.equal(cancelCode, 130)
+assert.equal(cancellationStdout, '')
+assert.equal((cancellationOutput.match(/resume cancelled; no harness was started/g) ?? []).length, 1)
+assert.equal(fs.existsSync(writerLock), true)
+ownership({ releaseAt: 2, stallOnRecheck: true })
+const stalledCancel = spawn(process.execPath, [picker, codexHandle], { env, stdio: ['pipe','pipe','pipe'] })
+let stalledOutput = '', stalledStdout = ''
+stalledCancel.stderr.on('data', chunk => { stalledOutput += chunk })
+stalledCancel.stdout.on('data', chunk => { stalledStdout += chunk })
+await waitFor(() => stalledOutput.includes('Press Enter to recheck'))
+stalledCancel.stdin.write('\n')
+await waitFor(() => JSON.parse(fs.readFileSync(presenceStall)) === 'entered')
+const cancelStarted = Date.now()
+stalledCancel.kill('SIGINT')
+assert.equal(await new Promise(resolve => stalledCancel.once('exit', resolve)), 130)
+assert(Date.now() - cancelStarted < 1500, 'Ctrl-C must abort stalled presence instead of waiting for its timeout')
+assert.equal(stalledStdout, '')
+assert.equal((stalledOutput.match(/resume cancelled; no harness was started/g) ?? []).length, 1)
+assert.doesNotMatch(stalledOutput, /error:/)
+write(presenceStall, 'false')
+write(writerState, JSON.stringify({ enabled: false, calls: [] }))
+console.log('writer-aware selection, same-invocation handoff, safe cancellation and unrelated-session isolation passed')
+
 // Removing the Codex thread-to-identity join makes that row disappear.
 fs.unlinkSync(path.join(xdg, 'ait-mcp', `codex-thread-${codexId}.json`))
 result = run(codexHandle)
@@ -604,6 +726,37 @@ const publicStdout = fs.readFileSync(publicOutput, 'utf8')
 assert.equal(result.status, 0, result.stderr)
 assert.match(publicStdout, new RegExp(`PUBLIC ${claudeProject} claude ${claudeId}`))
 assert.equal(result.stderr.includes(fakeSecret), false)
+
+// Public operator entry -> writer handoff -> one original-id/cwd dispatch.
+write(path.join(xdg, 'ait-mcp', `codex-thread-${codexId}.json`), JSON.stringify({ threadId: codexId, sessionId: codexId }))
+write(liveFile, '[]'); write(retiredFile, '[]')
+const handoffPty = path.join(root, 'public-handoff.exp')
+write(handoffPty, String.raw`
+set timeout 10
+spawn -noecho $env(AIT_PTY_EXECUTABLE) resume $env(AIT_PTY_HANDLE)
+expect -exact "Press Enter to recheck and resume, or type n to cancel: "
+if {$env(AIT_PTY_HANDOFF) eq "release"} { send "\r" } else { send "n\r" }
+expect eof
+set status [wait]
+exit [lindex $status 3]
+`)
+const publicHandoff = answer => spawnSync('/usr/bin/expect', [handoffPty], {
+  env: { ...env, AIT_PTY_EXECUTABLE: path.join(publicRoot, 'ait'), AIT_PTY_HANDLE: codexHandle, AIT_PTY_HANDOFF: answer },
+  cwd: root, encoding: 'utf8', timeout: 15000,
+})
+ownership({ releaseAt: 2 })
+result = publicHandoff('release')
+assert.ifError(result.error)
+assert.equal(result.status, 0, result.stdout + result.stderr)
+assert.ok(result.stdout.includes(`PUBLIC ${codexProject} codex ${codexId}`), result.stdout)
+assert.match(result.stdout, /already open in ChatGPT/)
+assert.equal((result.stdout.match(/PUBLIC /g) ?? []).length, 1)
+ownership({})
+result = publicHandoff('cancel')
+assert.ifError(result.error)
+assert.doesNotMatch(result.stdout + result.stderr, /PUBLIC /)
+assert.equal(fs.readFileSync(writerLock, 'utf8'), '')
+console.log('public ait resume owner handoff dispatches once; cancellation never dispatches')
 
 appviewServer.kill()
 await new Promise((resolve) => appviewServer.once('close', resolve))

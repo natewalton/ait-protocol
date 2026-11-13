@@ -102,6 +102,8 @@ jobs:
           node appview/scripts/duplicate-follow-test.mjs
           npm --prefix mcp run build
           node mcp/scripts/push-mode-test.mjs
+          node mcp/scripts/claude-background-test.mjs
+          node mcp/scripts/channel-sink-test.mjs
           node mcp/scripts/codex-writer-ownership-test.mjs
           node mcp/scripts/session-picker-test.mjs
           if [ "$GITHUB_REF" = refs/heads/build/private-peer-integration ]; then

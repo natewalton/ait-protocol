@@ -50,6 +50,8 @@ jobs:
           npm --prefix appview run build
           npm --prefix mcp run build
           node mcp/scripts/push-mode-test.mjs
+          node mcp/scripts/claude-background-test.mjs
+          node mcp/scripts/channel-sink-test.mjs
           node pds/scripts/mailer-security-test.mjs
           node bin/check-advisories-test.mjs
           node bin/security-workflow-test.mjs

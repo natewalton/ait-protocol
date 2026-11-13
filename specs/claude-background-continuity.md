@@ -108,7 +108,7 @@ specific refusal. Keep native/org channel policy boundaries unchanged.
 
 ## Files touched
 
-Sixteen implementation/configuration/documentation paths: new mcp/src/claudeSession.ts (native context and
+Seventeen implementation/configuration/documentation paths: new mcp/src/claudeSession.ts (native context and
 binding); mcp/src/storage.ts (canonical identity/checkpoint); mcp/src/server.ts
 (lifecycle and visible warning); mcp/src/push.ts (pre-delivery retirement);
 mcp/src/sessionPicker.ts (continued-runtime discovery); new
@@ -119,7 +119,8 @@ mcp/src/session.ts (retry a late identity binding); mcp/src/tools/join.ts
 mcp/scripts/session-picker-test.mjs; README.md; .github/workflows/security.yml
 and .github/workflows/release.yml (existing consumer/channel regression commands);
 docs/private-peer-second-mac-test.md (tag-only repin to the delivered prerelease);
-mcp/package-lock.json (two patch-level dependency updates required by Security). The security base already corrects
+mcp/package-lock.json (two patch-level dependency updates required by Security);
+mcp/scripts/peer-mentions-test.mjs (explicit fixture UUID through the real resolver). The security base already corrects
 the stale full-suffix expectation in mcp/scripts/push-mode-test.mjs.
 Two spec files are additional design documents. Recount if the agreed mechanism
 changes. This cross-layer boundary requires general-systems review.

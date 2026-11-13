@@ -1,11 +1,17 @@
 // Hermetic handler test: node --import tsx scripts/peer-mentions-test.mjs
 // Only the ephemeral HTTP fixture receives traffic. Tool session/storage is
 // mocked; routing checks use real AtpAgent session and XRPC request handling.
+// The real UUID resolver receives an explicit synthetic id, never a caller's
+// inherited harness id.
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { registerHooks } from 'node:module'
 import { AtpAgent } from '@atproto/api'
 import { ensureValidHandle } from '@atproto/syntax'
+
+const fixtureUuid = '77777777-7777-4777-8777-777777777777'
+const oldFixtureUuid = process.env.AIT_MCP_TEST_SESSION_ID
+process.env.AIT_MCP_TEST_SESSION_ID = fixtureUuid
 
 const { registerAitLexicons, assertValidAitRecord, localPdsFetch } = await import('../src/atproto/aitClient.ts')
 const A = `did:plc:${'a'.repeat(24)}`
@@ -40,6 +46,7 @@ const agent = {
 }
 globalThis.__aitPeerFixture = {
   agent,
+  uuidArguments: [],
   identity: { did: SELF, handle: 'luna.test', password: 'fixture', accessJwt: 'old-access', refreshJwt: 'old-refresh' },
   validate: (a, nsid, record) => {
     assertValidAitRecord(a, nsid, record)
@@ -64,8 +71,14 @@ const hooks = registerHooks({
           if (!globalThis.__aitPeerFixture.identity) throw new Error('No fixture identity');
           return globalThis.__aitPeerFixture.identity;
         };
-        export const getIdentity = () => globalThis.__aitPeerFixture.identity;
-        export const setIdentity = id => { globalThis.__aitPeerFixture.identity = id; };
+        export const getIdentity = uuid => {
+          if (uuid !== undefined) globalThis.__aitPeerFixture.uuidArguments.push(['read', uuid]);
+          return globalThis.__aitPeerFixture.identity;
+        };
+        export const setIdentity = (id, uuid) => {
+          globalThis.__aitPeerFixture.uuidArguments.push(['write', uuid]);
+          globalThis.__aitPeerFixture.identity = id;
+        };
         export const updateIdentityTokens = patch => Object.assign(globalThis.__aitPeerFixture.identity, patch);
         export const resolveTargetActor = actor => actor ?? requireIdentity().did;
       `
@@ -368,6 +381,7 @@ try {
   globalThis.__aitPeerFixture.identity = null
   const { joinHandler } = await import('../src/tools/join.ts')
   const joined = await joinHandler({ handle_hint: 'new-peer' })
+  assert.deepEqual(globalThis.__aitPeerFixture.uuidArguments, [['read', fixtureUuid], ['write', fixtureUuid]], 'join captures one explicit fixture UUID for read and write')
   assert.equal(accounts.at(-1).handle, `new-peer${domain}`)
   assert.equal(globalThis.__aitPeerFixture.identity.handle, `new-peer${domain}`)
   assert.ok(joined.content[0].text.includes('Handle: @new-peer\n'))
@@ -504,6 +518,8 @@ try {
   globalThis.fetch = realFetch
   if (oldAppView === undefined) delete process.env.APPVIEW_URL
   else process.env.APPVIEW_URL = oldAppView
+  if (oldFixtureUuid === undefined) delete process.env.AIT_MCP_TEST_SESSION_ID
+  else process.env.AIT_MCP_TEST_SESSION_ID = oldFixtureUuid
   hooks.deregister()
   delete globalThis.__aitPeerFixture
   server.closeAllConnections()

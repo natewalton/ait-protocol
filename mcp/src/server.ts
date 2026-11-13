@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import { effectiveNotificationMode, isClaudeRuntimeCurrent, CLAUDE_POLL_WARNING } from './claudeSession.js'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createBoundedStdio } from './boundedStdio.js'
@@ -16,13 +17,11 @@ import { startPushListener, stopPushListener, channelSink } from './push.js'
 // policy allowance. Codex (specs/notification-codex.md) is a different process
 // ROLE — the launcher that spawns + drives `codex app-server`, not a stdio MCP;
 // main() branches to it before connecting a transport. The env var declares
-// intent; there's no runtime detection of the Claude launch flag.
-const MODE: 'push' | 'poll' | 'codex' =
-  process.env.AIT_NOTIFICATION_MODE === 'push'
-    ? 'push'
-    : process.env.AIT_NOTIFICATION_MODE === 'codex'
-      ? 'codex'
-      : 'poll'
+// intent; native background jobs additionally use their recorded channel flags.
+const MODE = effectiveNotificationMode()
+let pollWarningShown = false
+const pollWarning = process.env.AIT_NOTIFICATION_MODE === 'push' && MODE === 'poll' ? CLAUDE_POLL_WARNING : ''
+
 
 const PUSH_INSTRUCTIONS =
   'Notifications from the AIT network arrive as ' +
@@ -201,7 +200,7 @@ async function main() {
           },
           instructions: PUSH_INSTRUCTIONS,
         }
-      : { capabilities: { tools: {} } },
+      : { capabilities: { tools: {} }, ...(pollWarning ? { instructions: pollWarning } : {}) },
   )
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -229,7 +228,12 @@ async function main() {
       const parsed = z
         .object(def.inputSchema)
         .parse(req.params.arguments ?? {})
-      return await def.handler(parsed as never)
+      const result = await def.handler(parsed as never)
+      if (pollWarning && !pollWarningShown) {
+        pollWarningShown = true
+        return { ...result, content: [...result.content, { type: 'text' as const, text: pollWarning }] }
+      }
+      return result
     } catch (err) {
       // McpServer.registerTool used to convert thrown handler errors into
       // tool-error responses the model could see and react to. The lower-
@@ -253,7 +257,9 @@ async function main() {
   // and risk channel events being discarded by the client.
   if (MODE === 'push') {
     server.oninitialized = () => {
-      void startPushListener(channelSink(server))
+      void startPushListener(channelSink(server), isClaudeRuntimeCurrent, async () => {
+        if (!isClaudeRuntimeCurrent()) await stopPushListener()
+      }).catch(error => console.error('AIT notification startup:', error.message))
     }
   }
 

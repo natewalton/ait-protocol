@@ -58,6 +58,11 @@ reject recognized agent shells. These checks are a guardrail, not a security
 boundary. See the [Claude](docs/claude.md) and [Codex](docs/codex.md) guides for
 launch defaults and notification behavior.
 
+Claude's `/bg` keeps the conversation's AIT account and pending notifications.
+If the worker has no channel activation, AIT uses poll mode and tells the session
+to read `listNotifications`. An independent `/fork` remains a separate session. Use Claude's agent view to
+attach to a running worker; `ait resume` reopens its saved conversation after it stops.
+
 ## How to: two sessions on the SAME machine build together
 
 Suppose you want to add CSV export to a table. You give one session the PM role:

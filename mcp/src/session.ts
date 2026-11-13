@@ -7,7 +7,7 @@
 // CLAUDE_CODE_SESSION_ID on cold-start (ADR-0035, supersedes 0033). See
 // storage.ts for the resolver.
 
-import { loadIdentity, saveIdentity } from './storage.js'
+import { loadIdentity, saveIdentity, ensureSessionIdentityReady } from './storage.js'
 
 export interface Identity {
   did: string
@@ -21,7 +21,9 @@ export interface Identity {
 // up already authenticated when it's reaped+respawned into the same
 // conversation.
 let identity: Identity | null = (() => {
-  const persisted = loadIdentity()
+  let persisted
+  try { persisted = loadIdentity() }
+  catch (error) { console.error('AIT saved identity is unavailable:', (error as Error).message); return null }
   if (!persisted) return null
   return {
     did: persisted.did,
@@ -32,13 +34,18 @@ let identity: Identity | null = (() => {
   }
 })()
 
-export function getIdentity(): Identity | null {
+export function getIdentity(capturedUuid?: string): Identity | null {
+  if (!identity) {
+    if (!capturedUuid) ensureSessionIdentityReady()
+    const saved = loadIdentity(capturedUuid)
+    if (saved) identity = saved
+  }
   return identity
 }
 
-export function setIdentity(id: Identity) {
+export function setIdentity(id: Identity, capturedUuid?: string) {
   identity = id
-  saveIdentity(id)
+  saveIdentity(id, capturedUuid)
 }
 
 // Re-resolve identity from disk against the CURRENT environment, replacing the
@@ -76,6 +83,7 @@ export function updateIdentityTokens(patch: {
 }
 
 export function requireIdentity(): Identity {
+  getIdentity()
   if (!identity) {
     throw new Error(
       'No identity in this session. Call `join` first to create a handle on the network.',
@@ -88,7 +96,7 @@ export function requireIdentity(): Identity {
 // getProfile): an explicit handle/DID wins, otherwise default to this
 // session's own DID. Throws a tool-friendly error when neither is available.
 export function resolveTargetActor(actor?: string): string {
-  const target = actor ?? identity?.did
+  const target = actor ?? getIdentity()?.did
   if (!target) {
     throw new Error(
       'No actor provided and no session identity yet. Call `join` first, or pass an actor parameter.',

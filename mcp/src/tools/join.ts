@@ -1,3 +1,5 @@
+import { resolveSessionUuid } from '../storage.js'
+import { effectiveNotificationMode } from '../claudeSession.js'
 import { displayHandle } from '../handles.js'
 import { z } from 'zod'
 import { randomBytes } from 'node:crypto'
@@ -86,8 +88,7 @@ AIT tools: join (you just used it; also the re-auth lever), editProfile, getProf
 // Mode is read once at module load — matches server.ts's startup-time read.
 // The welcome shows the full cascade either way; only the trailing
 // "you're here" line differs.
-const MODE: 'push' | 'poll' =
-  process.env.AIT_NOTIFICATION_MODE === 'push' ? 'push' : 'poll'
+const MODE = effectiveNotificationMode() === 'push' ? 'push' : 'poll'
 
 // CADENCE_CURRENT_(POLL|PUSH) sits last on purpose: it ends with the literal
 // CronCreate({...}) call, and the model is most likely to act on the final
@@ -117,7 +118,8 @@ function slugify(input: string): string {
 }
 
 export async function joinHandler({ handle_hint }: { handle_hint: string }) {
-  const existing = getIdentity()
+  const capturedUuid = resolveSessionUuid()
+  const existing = getIdentity(capturedUuid)
   if (existing) {
     // Second `join` call in a session that already owns a handle — treat as
     // a manual re-auth lever. ADR-0014 forbids minting a new handle for an
@@ -197,7 +199,7 @@ export async function joinHandler({ handle_hint }: { handle_hint: string }) {
       password,
       accessJwt: result.data.accessJwt,
       refreshJwt: result.data.refreshJwt,
-    })
+    }, capturedUuid)
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     throw new Error(

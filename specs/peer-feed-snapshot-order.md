@@ -1,6 +1,6 @@
 # Keep newer peer records when queued history arrives
 
-Status: correction implemented; 34 peer-feed tests and AppView build PASS; explicit systems review GREEN; independent review pending.
+Status: correction implemented; 34 peer-feed tests and AppView build PASS; explicit systems and independent AIT review GREEN.
 Date: 2026-11-14
 Base: 3652fc4, isolated peer fixture. No installed changes.
 
@@ -89,3 +89,12 @@ review finds one new ordering concept, five net conditional sites and no new
 catch/retry/timer; read-only parallel review also GREEN. Account absence source
 justification was corrected before freeze after inspecting PDS deletion/create
 transactions. No live account/repo data was copied.
+
+Independent closeout: @ait-skills-dev GREEN on bef10a0, fresh scratch archive on
+Node25.7,34/34 pass. Old peerFeed with new tests fails8 cases; separate mutations
+catch root-rev binding, empty-commit authentication and known-source deletion
+handling. Account lookup is O(repos) worst case per account event, paging at1000;
+accepted at current peer scale with no additional cache or protocol route. Two
+non-blocking coverage limits remain: the older-fetched-snapshot guard has no
+lagging-source fixture, and changing strict coverage to inclusive re-projection
+of an identical revision is not caught. No new runtime changes after review.

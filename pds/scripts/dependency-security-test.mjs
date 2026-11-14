@@ -21,8 +21,9 @@ const checks = ['file-type-stream', 'elliptic-public-key'];
 
 if (process.argv.includes('--buffer-control')) {
   // This deliberately vulnerable API must never execute on the HTTP event loop.
+  const fromBuffer = require('file-type').fromBuffer;
   process.stdout.write('buffer-control-started\n');
-  await require('file-type').fromBuffer(asf);
+  await fromBuffer(asf);
   throw new Error('buffer positive control unexpectedly completed');
 } else if (process.argv.includes('--fixture-child')) {
   await fixture(process.argv.at(-1));

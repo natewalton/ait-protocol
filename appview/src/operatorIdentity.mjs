@@ -41,7 +41,7 @@ export function resolveLocalOperator(accountFile, configured) {
   try { ensureValidDid(did) }
   catch { return disabled('the selected local account has an invalid DID') }
   return { did, legacy: !explicitDid,
-    diagnostic: `operator ${did} bound to the local PDS account${explicitDid ? '' : '; legacy reference accepted, preparation will save its DID'}` }
+    diagnostic: `operator ${did} bound to the local PDS account${explicitDid ? '' : '; legacy reference accepted; configure its DID to make this explicit'}` }
 }
 
 // Match run-pds.sh: inherited environment followed by sourced shell config,

@@ -1,6 +1,6 @@
 # Keep operator authority local and reject unsupported startup ports
 
-Status: isolated extraction; independent review pending.
+Status: isolated extraction; independent review GREEN with diagnostic wording corrected.
 Date: 2026-11-14
 
 ## Why

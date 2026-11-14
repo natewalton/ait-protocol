@@ -121,3 +121,26 @@ export function assertRepoCarBounds(bytes) {
   }
   return bytes
 }
+
+// Bound JSON structure before JSON.parse materializes a metadata/page response.
+// Syntax remains JSON.parse's job; strings and primitives are counted, not built.
+export function assertJsonBounds(bytes) {
+  let depth = 0, nodes = 0, string = false, escaped = false, primitive = false
+  const node = () => { if (++nodes > INPUT_BOUNDS.frameNodes) limit('JSON node count exceeded') }
+  for (const byte of bytes) {
+    if (string) {
+      if (escaped) escaped = false
+      else if (byte === 92) escaped = true
+      else if (byte === 34) string = false
+      continue
+    }
+    if (byte === 34) { string = true; primitive = false; node() }
+    else if (byte === 123 || byte === 91) {
+      node(); primitive = false
+      if (++depth > INPUT_BOUNDS.depth) limit('JSON depth exceeded')
+    } else if (byte === 125 || byte === 93) { depth--; primitive = false }
+    else if (byte === 44 || byte === 58 || byte === 32 || byte === 9 || byte === 10 || byte === 13) primitive = false
+    else if (!primitive) { node(); primitive = true }
+  }
+  return bytes
+}

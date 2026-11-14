@@ -32,3 +32,12 @@ Managed `ait start` requires the effective PLC `PORT=2582`, PDS
 launching services. Direct service fixtures may still use ephemeral ports.
 `node bin/managed-ports-test.mjs` checks this boundary with copied launchers and
 owned configuration. It never reaches installed services.
+
+Main's AppView bootstraps current local AIT records before reporting readiness,
+then applies queued subscription events in order. It upserts without sweeping
+retained rows. Historical bootstrap writes retain notification rows but suppress
+immediate pushes; a mention overlapping bootstrap may wait for the next existing
+push-registration replay. Health is starting until coverage is proved, and
+projection failures remain degraded until repair/restart. Quiet working streams
+remain healthy. `appview/scripts/startup-readiness-test.mjs` exercises compiled
+main with owned loopback PDS fixtures. This differs from peer's verified feed.

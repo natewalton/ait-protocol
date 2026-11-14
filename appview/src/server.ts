@@ -56,27 +56,16 @@ async function main() {
   const idResolver = new IdResolver({ plcUrl: PLC_URL, didCache: idCache })
   const verifyViewer = makeVerifyViewer(idResolver, APPVIEW_DID!)
 
-  // Always subscribe from seq 0. Without a cursor, @atproto/sync's
-  // Subscription sends no `cursor` param, which subscribeRepos treats as
-  // "start at the live head" — meaning a wiped-and-restarted AppView never
-  // replays pre-restart records. The indexer's upserts are idempotent, so
-  // replaying from 0 on every restart is safe; durability/persistence of a
-  // cursor can come later if replay time becomes meaningful.
-  //
-  // A bounded stream applies backpressure while one event is projected.
+  // Bootstrap current local records after opening the bounded subscription,
+  // then apply queued events serially. Retain rows absent from the snapshot;
+  // this is startup coverage, not a retention-policy or database migration.
   const firehose = createLocalFeed({
     idResolver,
     service: PDS_WS_URL,
+    pdsUrl: PDS_URL,
+    handleSnapshotEvent: (evt: Event) => handleEvent(db, evt),
     handleEvent: async (evt: Event) => {
-      try {
-        // idResolver carries the cache for #identity invalidation AND is
-        // needed for hydrating notification pushes; idCache passed
-        // explicitly because the resolver's internal cache field isn't
-        // part of the typed public surface.
-        await handleEvent(db, evt, idResolver, idCache)
-      } catch (err) {
-        console.error('indexer error:', err)
-      }
+      await handleEvent(db, evt, idResolver, idCache)
     },
     onError: (err: Error) => {
       const cause = (err as Error & { cause?: unknown }).cause
@@ -98,8 +87,12 @@ async function main() {
   // this one route handler.
   xrpc.routes.get(
     '/xrpc/_health',
-    (_req: unknown, res: { json: (body: unknown) => void }) => {
-      res.json({ status: 'ok' })
+    (_req: unknown, res: { status: (code: number) => { json: (body: unknown) => void } }) => {
+      const indexing = firehose.getStatus()
+      const ready = indexing.state === 'running'
+      res.status(ready ? 200 : 503).json({
+        status: ready ? 'ok' : indexing.state === 'starting' ? 'starting' : 'degraded', indexing,
+      })
     },
   )
 

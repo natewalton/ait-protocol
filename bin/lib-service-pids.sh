@@ -5,6 +5,29 @@
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 CODEX_SOCK="${AIT_CODEX_SHARED_SOCKET:-$HOME/.ait/codex-shared.sock}"
 
+# One interpretation of AppView's HTTP readiness for status and startup. Keep
+# the body on 503: starting is progress, while a failed consumer needs repair.
+appview_health() {
+  local response body code
+  response="$(curl -sS --max-time 3 -w $'\n%{http_code}' http://localhost:2585/xrpc/_health 2>/dev/null)" || {
+    printf '%s\n' unreachable; return
+  }
+  code="${response##*$'\n'}"
+  body="${response%$'\n'*}"
+  node -e '
+    try {
+      const value = JSON.parse(process.argv[1]), code = process.argv[2];
+      const state = value.indexing?.state;
+      if (code === "200" && value.status === "ok" && state === "running") console.log("running");
+      else if (code === "503" && value.status === "starting" && state === "starting") console.log("starting");
+      else if (code === "503" && value.status === "degraded" && ["failed", "stopped"].includes(state)) {
+        const reason = String(value.indexing.error || "local indexing stopped").replace(/[\r\n\t\x00-\x1f\x7f]/g, " ");
+        console.log("degraded: " + reason);
+      } else console.log("protocol-unhealthy");
+    } catch { console.log("protocol-unhealthy"); }
+  ' "$body" "$code"
+}
+
 # The managed service discovery contract has fixed ports. PLC/PDS wrappers
 # source their env files; AppView dotenv preserves inherited assignments.
 # Validate the effective configuration before starting any service.

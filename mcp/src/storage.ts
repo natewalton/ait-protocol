@@ -8,38 +8,11 @@
 // conversation recovers its identity, but a different conversation
 // gets its own.
 //
-// Session UUID resolution, in priority order (ADR-0035, supersedes 0033's
-// newest-mtime probe):
-//   1. process.env.AIT_MCP_TEST_SESSION_ID — test-only override for
-//      runners without a Claude Code harness (test scripts, direct CLI).
-//   2. process.env.AIT_SESSION_ID — Codex host: the codex-mode launcher
-//      pre-mints a UUID and sets it in the tool-MCP's env before
-//      thread/start (specs/notification-codex.md, Identity). Codex passes
-//      no per-thread id to child MCPs (env, argv, MCP initialize._meta all
-//      clean; verified against codex-cli 0.144.3), so identity must be
-//      supplied this way. Ranked above the Claude sources so leaked Claude
-//      env (a codex session launched from inside one inherits it) can't
-//      shadow the explicit codex id. Never set on the Claude path.
-//   3. uuidFromParentArgv() — parse the parent claude process's argv via
-//      `ps -o command= -p <ppid>` for `--resume <UUID>`. The harness
-//      passes its own conversation UUID through this flag on resume; it
-//      is the authoritative per-conversation identifier (verified via
-//      `ps` against both Desktop and CLI harnesses).
-//   4. process.env.CLAUDE_CODE_SESSION_ID — cold-start case: when the
-//      harness launched fresh (no --resume), the env var it propagates
-//      to the MCP child equals the new transcript UUID (verified via
-//      `ps -E` against the CLI launcher; also true for Desktop's first
-//      conversation in a project).
-//
-// ADR-0033's newest-mtime *.jsonl probe was the right call against
-// Claude Code 2.1.149's "harness doesn't propagate CLAUDE_CODE_SESSION_ID
-// to MCP children" behavior, but produced a multi-conversation-same-CWD
-// collision the ADR explicitly deferred: when two live conversations
-// share a project dir, the resolver picks whichever jsonl was most
-// recently written, not the conversation that just spawned this MCP
-// child. The parent-argv signal is authoritative — the harness knows
-// which conversation it's resuming because the launcher passed
-// `--resume <UUID>` on its command line.
+// Test and explicit Codex UUIDs retain priority. Claude runtime resolution
+// lives in claudeSession.ts: ordinary resume uses its explicit UUID; a native
+// fork uses its own UUID and only verified continued-in metadata can bind it
+// back to an existing account. Neither newest transcript nor cwd selects an
+// account. A successful continuation keeps the original encryption/cursor key.
 //
 // Resolution runs fresh on every public storage call — no module-level
 // cache. Each public function calls resolveSessionUuid() once at entry
@@ -65,7 +38,6 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
-import { execFileSync } from 'node:child_process'
 import {
   createCipheriv,
   createDecipheriv,
@@ -73,6 +45,7 @@ import {
   randomBytes,
 } from 'node:crypto'
 import type { Identity } from './session.js'
+import { claudeRuntimeUuid, resolveClaudeIdentity, claudeIdentityUuid, ClaudeHandoverPending } from './claudeSession.js'
 
 export const STORAGE_DIR = path.join(
   process.env.XDG_DATA_HOME ?? path.join(os.homedir(), '.local', 'share'),
@@ -113,34 +86,6 @@ export function canonicalUuid(raw: string | null | undefined): string | null {
   return UUID_SHAPE.test(uuid) ? uuid : null
 }
 
-// Re-pattern: same shape as UUID_SHAPE but with capturing group, for
-// extracting the UUID following a `--resume` token in argv.
-const RESUME_UUID_RE =
-  /--resume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i
-
-// Read the parent claude process's command-line argv via `ps` and extract
-// the UUID following `--resume`. This is the authoritative signal for
-// resumed conversations (Desktop, and any harness that respawns with
-// --resume) because the launcher passed the conversation's UUID to the
-// new claude process directly. Returns null on any failure (no parent
-// PID, ps fails, no --resume in argv). `execFileSync` avoids shell
-// interpolation; argv flows through directly.
-function uuidFromParentArgv(): string | null {
-  const ppid = process.ppid
-  if (!ppid || ppid === 1) return null
-  let argv: string
-  try {
-    argv = execFileSync('ps', ['-o', 'command=', '-p', String(ppid)], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    })
-  } catch {
-    return null
-  }
-  const match = RESUME_UUID_RE.exec(argv)
-  return match ? canonicalUuid(match[1]) : null
-}
-
 // Four-source resolver. Each source serves a distinct host type (not
 // tier-hedging): test override for headless runners, parent argv for
 // resumed Claude conversations, env var for cold-start Claude, and
@@ -148,7 +93,7 @@ function uuidFromParentArgv(): string | null {
 // (no module-level memoization). Override is shape-validated the same
 // way the production sources are — an asymmetric trust gap would let a
 // malformed value silently produce a stable-but-wrong identity file.
-function resolveSessionUuid(): string {
+export function resolveSessionUuid(): string {
   const rawOverride = process.env.AIT_MCP_TEST_SESSION_ID
   if (rawOverride !== undefined) {
     const override = canonicalUuid(rawOverride)
@@ -167,13 +112,13 @@ function resolveSessionUuid(): string {
   // ABOVE the Claude sources so a leaked CLAUDE_CODE_SESSION_ID or --resume argv
   // — e.g. a codex session launched from inside a Claude session, which inherits
   // that env — can't shadow the explicit codex id. Never set on the Claude path,
-  // so Claude resolution below stays byte-identical.
+  // so Claude resolution stays independent of this explicit binding.
   const fromCodex = canonicalUuid(process.env.AIT_SESSION_ID)
   if (fromCodex) return fromCodex
-  const fromArgv = uuidFromParentArgv()
-  if (fromArgv) return fromArgv
-  const fromEnv = canonicalUuid(process.env.CLAUDE_CODE_SESSION_ID)
-  if (fromEnv) return fromEnv
+  // A real native fork/background worker has its own runtime UUID. Only
+  // Claude's explicit continued-in evidence can authorize the original identity.
+  const runtime = claudeRuntimeUuid()
+  if (runtime) return resolveClaudeIdentity(runtime)
   throw new MissingSessionIdError()
 }
 
@@ -195,7 +140,8 @@ const PUBLIC_HANDLE_SHAPE = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i
 export function readPublicIdentity(
   sessionUuid: string,
 ): { did: string; handle: string } | null {
-  const uuid = canonicalUuid(sessionUuid)
+  const rawUuid = canonicalUuid(sessionUuid)
+  const uuid = rawUuid ? claudeIdentityUuid(rawUuid) : null
   if (!uuid) return null
   const p = identityPath(uuid)
   let raw: Partial<OnDiskShape>
@@ -278,14 +224,14 @@ function decryptInner(
   return JSON.parse(pt.toString('utf8')) as EncryptedInner
 }
 
-export function loadIdentity(): PersistedIdentity | null {
+export function loadIdentity(capturedUuid?: string): PersistedIdentity | null {
   // Resolver failure → no identity (rather than crashing the MCP child on
   // module init). Callers see this as "first run, please call join".
   let uuid: string
   try {
-    uuid = resolveSessionUuid()
+    uuid = capturedUuid ?? resolveSessionUuid()
   } catch (err) {
-    if (err instanceof MissingSessionIdError) return null
+    if (err instanceof MissingSessionIdError || err instanceof ClaudeHandoverPending) return null
     throw err
   }
   const p = identityPath(uuid)
@@ -317,11 +263,11 @@ export function loadIdentity(): PersistedIdentity | null {
   }
 }
 
-export function saveIdentity(identity: Identity): void {
+export function saveIdentity(identity: Identity, capturedUuid?: string): void {
   // Resolve once at entry, thread the UUID through path + key derivation,
   // so a mid-call mtime fluctuation can't split path-from-key. Throws on
   // unresolvable session — surface to caller (test-misconfig contract).
-  const uuid = resolveSessionUuid()
+  const uuid = capturedUuid ?? resolveSessionUuid()
   const p = identityPath(uuid)
   fs.mkdirSync(path.dirname(p), { recursive: true, mode: 0o700 })
   // Preserve the notification cursor across rewrites: saveIdentity is called
@@ -462,3 +408,6 @@ export function clearIdentity(): void {
   const p = identityPath(uuid)
   if (fs.existsSync(p)) fs.unlinkSync(p)
 }
+
+// Expose a pending handover instead of recommending a new join.
+export function ensureSessionIdentityReady(): void { resolveSessionUuid() }

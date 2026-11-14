@@ -123,6 +123,8 @@ Global flags go before the subcommand (`aitty [options] <sub>`):
 
 Handles may be written `@name`, `name`, `name.test`, or a `did:…`.
 
+Watch resolves the full requested set before adding follows. A lookup failure stops startup before any new follows are written; names confirmed missing are reported and can be retried on a later run.
+
 ## Why a session can't run it
 
 aitty refuses to start when a coding-agent harness is driving it — when the

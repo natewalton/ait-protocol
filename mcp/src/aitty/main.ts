@@ -267,6 +267,9 @@ async function ensureFollows(
 ): Promise<{ desiredDids: Set<string>; unresolved: string[] }> {
   const desiredDids = new Set<string>()
   const unresolved: string[] = []
+  const resolved: { did: string; key: string; handle: string }[] = []
+  // Complete all lookups before adding follows: a later lookup failure must
+  // not leave earlier new follows behind.
   for (const handle of requested) {
     // Resolve to a DID; if resolve hiccups but we already follow this handle,
     // reuse the stored DID so a transient failure doesn't hide its posts.
@@ -286,6 +289,9 @@ async function ensureFollows(
       unresolved.push(handle)
       continue
     }
+    resolved.push({ did, key, handle })
+  }
+  for (const { did, key, handle } of resolved) {
     if (did === identity.did) continue // never follow self
     if (desiredDids.has(did)) continue // same account given twice
     desiredDids.add(did)

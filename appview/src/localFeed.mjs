@@ -3,9 +3,10 @@
 import assert from 'node:assert/strict'
 import { setTimeout as delay } from 'node:timers/promises'
 import { schemas } from '@atproto/api'
+import { cborDecode } from '@atproto/common'
 import { AtUri } from '@atproto/syntax'
 import { Lexicons, jsonToLex } from '@atproto/lexicon'
-import { parseCommitUnauthenticated, parseAccount, parseIdentity } from '@atproto/sync'
+import { parseCommitUnauthenticated, parseAccount, parseIdentity, parseSync } from '@atproto/sync'
 import { ensureChunkIsMessage } from '@atproto/xrpc-server'
 import { boundedStream } from './boundedStream.mjs'
 import { assertFrameBounds, assertRepoCarBounds, assertJsonBounds, INPUT_BOUNDS } from './inputBounds.mjs'
@@ -18,13 +19,13 @@ export function createLocalFeed({ service, pdsUrl, idResolver, handleEvent, hand
   const controller = new AbortController()
   let cursor = 0, running
   let status = { state: 'starting' }
-  let targets = new Map()
+  let revisions = new Map()
   const fail = error => {
     if (status.state !== 'stopped') status = { state: 'failed', error: error.message ?? String(error) }
     onError(error)
   }
   const ready = () => {
-    if (targets.size === 0 && status.state === 'starting') status = { state: 'running' }
+    if (status.state === 'starting' && [...revisions.values()].every(value => value.target === null)) status = { state: 'running' }
   }
   const origin = new URL(pdsUrl)
   const json = async (method, params) => {
@@ -33,13 +34,13 @@ export function createLocalFeed({ service, pdsUrl, idResolver, handleEvent, hand
     const timeout = new AbortController()
     const abort = () => timeout.abort(controller.signal.reason)
     controller.signal.addEventListener('abort', abort, { once: true })
-    const timer = setTimeout(() => timeout.abort(Error('local bootstrap request timed out')), 10_000)
+    const timer = setTimeout(() => timeout.abort(new DOMException('local bootstrap request timed out', 'TimeoutError')), 10_000)
     const max = method === 'com.atproto.repo.listRecords' ? 8 * 1024 * 1024 : 512 * 1024
     let response
     try {
       controller.signal.throwIfAborted()
       response = await fetch(url, { signal: timeout.signal, redirect: 'error' })
-      if (!response.ok) throw Error(`local bootstrap ${method} failed: ${response.status}`)
+      if (response.status >= 500) throw Object.assign(Error(`local bootstrap ${method} failed: ${response.status}`), { status: response.status })
       const length = Number(response.headers.get('content-length'))
       if (length > max) throw Error('local bootstrap response byte limit exceeded')
       const chunks = []; let size = 0
@@ -49,6 +50,7 @@ export function createLocalFeed({ service, pdsUrl, idResolver, handleEvent, hand
         chunks.push(chunk)
       }
       const result = JSON.parse(assertJsonBounds(Buffer.concat(chunks, size)).toString('utf8'))
+      if (!response.ok) throw Object.assign(Error(`local bootstrap ${method} failed: ${response.status}`), { status: response.status, error: result.error })
       lexicons.assertValidXrpcOutput(method, result)
       return result
     } finally {
@@ -69,12 +71,12 @@ export function createLocalFeed({ service, pdsUrl, idResolver, handleEvent, hand
   }
   async function bootstrap() {
     if (status.state !== 'failed') status = { state: 'starting' }
-    targets = new Map()
+    revisions = new Map()
     for await (const repo of pages('com.atproto.sync.listRepos', { limit: 1000 }, 'repos')) {
       const account = parseAccount({ did: repo.did, active: repo.active !== false, status: repo.status, seq: cursor, time: new Date().toISOString() })
       if (account) await handleSnapshotEvent(account)
       if (repo.active === false) continue
-      targets.set(repo.did, repo.rev)
+      revisions.set(repo.did, { snapshot: repo.rev, target: repo.rev })
       for (const collection of collections) {
         for await (const item of pages('com.atproto.repo.listRecords', { repo: repo.did, collection, limit: 1 }, 'records')) {
           const uri = new AtUri(item.uri)
@@ -88,10 +90,10 @@ export function createLocalFeed({ service, pdsUrl, idResolver, handleEvent, hand
       }
       const after = await json('com.atproto.sync.getRepoStatus', { did: repo.did })
       assert.equal(after.did, repo.did, 'local bootstrap status DID mismatch')
-      if (!after.active || after.rev === repo.rev) targets.delete(repo.did)
+      if (!after.active || after.rev === repo.rev) revisions.get(repo.did).target = null
       else {
         assert(after.rev && after.rev >= repo.rev, 'local bootstrap revision went backwards')
-        targets.set(repo.did, after.rev)
+        revisions.get(repo.did).target = after.rev
       }
     }
     ready()
@@ -115,24 +117,50 @@ export function createLocalFeed({ service, pdsUrl, idResolver, handleEvent, hand
     }
     let events = []
     if (value.$type === METHOD + '#commit') {
+      const parsed = await parseSync({ ...value, did: value.repo })
+      assert.equal(parsed.cid.toString(), value.commit.toString(), 'local commit root CID mismatch')
+      const root = cborDecode(parsed.blocks.get(parsed.cid))
+      assert.equal(root.did, value.repo, 'local commit root DID mismatch')
+      assert.equal(root.rev, value.rev, 'local commit root revision mismatch')
       events = await parseCommitUnauthenticated(value, collection => collections.has(collection))
       const selected = value.ops.filter(op => collections.has(op.path.split('/')[0]))
       assert.equal(events.length, selected.length, 'Selected commit operation is missing its record or CID')
     }
     else if (value.$type === METHOD + '#identity') events = [await parseIdentity(idResolver, value, true)]
-    else if (value.$type === METHOD + '#account') events = [parseAccount(value)]
+    else if (value.$type === METHOD + '#account') {
+      // Account events have no commit revision. Read current local authority
+      // rather than applying an old active flag after the bootstrap.
+      let current
+      try {
+        current = await json('com.atproto.sync.getRepoStatus', { did: value.did })
+        assert.equal(current.did, value.did, 'local account status DID mismatch')
+      } catch (error) {
+        if (error.status !== 400 || error.error !== 'RepoNotFound') throw error
+        current = { active: false, status: 'deleted' }
+      }
+      const account = parseAccount({ ...value, active: current.active, status: current.status })
+      assert(account, 'unsupported current local account status')
+      if (current.active && !revisions.has(value.did)) await bootstrap()
+      events = [account]
+    }
     // Validate the full selected commit before any earlier valid record writes.
     for (const event of events) if (event?.event === 'create' || event?.event === 'update') {
       lexicons.assertValidRecord(event.collection, event.record)
+    }
+    const revision = revisions.get(value.repo)
+    // The snapshot already contains this revision or newer record values.
+    // Validate historical input, but never replay its writes over that snapshot.
+    if (value.$type === METHOD + '#commit' && revision && value.rev <= revision.snapshot) {
+      cursor = Math.max(cursor, value.seq ?? cursor)
+      return
     }
     for (const event of events) if (event) {
       controller.signal.throwIfAborted()
       await handleEvent(event)
     }
     cursor = Math.max(cursor, value.seq ?? cursor)
-    const target = targets.get(value.repo)
-    if (value.$type === METHOD + '#commit' && target && value.rev >= target) targets.delete(value.repo)
-    if (value.$type === METHOD + '#account' && !value.active) targets.delete(value.did)
+    if (value.$type === METHOD + '#commit' && revision?.target && value.rev >= revision.target) revision.target = null
+    if (value.$type === METHOD + '#account' && events[0]?.active === false && revisions.has(value.did)) revisions.get(value.did).target = null
     ready()
   }
   async function consume() {
@@ -157,18 +185,18 @@ export function createLocalFeed({ service, pdsUrl, idResolver, handleEvent, hand
         // bootstrap. Its gap is already covered; later reconnect gaps bootstrap.
         if (!next.done) {
           try { await processChunk(next.value, true) }
-          catch (error) { report(error) }
+          catch (error) { if (retryable(error)) throw error; report(error) }
           next = await iterator.next()
         }
         while (!next.done) {
-          try { await processChunk(next.value) } catch (error) { report(error) }
+          try { await processChunk(next.value) } catch (error) { if (retryable(error)) throw error; report(error) }
           next = await iterator.next()
         }
         if (!controller.signal.aborted) {
           if (status.state !== 'failed') status = { state: 'starting' }
           onError(Error('local subscription ended; reconnecting'))
         }
-      } catch (error) { if (!controller.signal.aborted) fail(error) }
+      } catch (error) { report(error) }
       finally {
         attempt.abort()
         await first.catch(() => {})
@@ -178,9 +206,16 @@ export function createLocalFeed({ service, pdsUrl, idResolver, handleEvent, hand
       if (!controller.signal.aborted) await delay(3000, undefined, { signal: controller.signal }).catch(() => {})
     }
   }
+  function retryable(error) {
+    const networkCodes = ['ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED', 'EPIPE', 'ETIMEDOUT', 'ECANCELED', 'UND_ERR_SOCKET']
+    const cause = error.cause ?? error
+    const network = networkCodes.includes(cause.code) ||
+      (cause instanceof AggregateError && cause.errors.length > 0 && cause.errors.every(item => networkCodes.includes(item.code)))
+    return error.error === 'ConsumerTooSlow' || error.name === 'TimeoutError' || network || error.status >= 500
+  }
   function report(error) {
     if (controller.signal.aborted) return
-    if (error.error === 'ConsumerTooSlow') {
+    if (retryable(error)) {
       if (status.state !== 'failed') status = { state: 'starting' }
       onError(error)
     } else fail(error)

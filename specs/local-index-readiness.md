@@ -1,6 +1,6 @@
 # Report when local indexing has caught up
 
-Status: design GREEN; implementation and local checks passed, independent code review pending.
+Status: design GREEN; stale replay and transient-I/O review corrections under validation.
 Date: 2026-11-14
 
 ## Why
@@ -30,22 +30,39 @@ uses the existing local unauthenticated trust, not new peer or CAR verification.
 Do not interleave snapshot and stream projection. Retain the first queued read
 and let the existing bounded WebSocket stream apply backpressure during bootstrap;
 then process events serially in sequence order. No unbounded event queue is added.
-An update or delete queued during bootstrap applies afterward and wins. For each
-active DID, compare its listRepos revision with getRepoStatus after the snapshot:
+Newer updates/deletes queued during bootstrap apply afterward and win. For each
+active DID, keep ONE reconciliation entry with its snapshot revision and any
+later target. Compare listRepos revision with getRepoStatus after the snapshot:
 an unchanged revision proves coverage; a changed revision remains in one target
-map until a complete commit at that revision or newer is projected. Empty initial
-commits are sequenced by native account creation before listRepos root update.
+map until a complete commit at that revision or newer is projected.
+
+Every queued commit is fully bounded/validated before filtering. Its envelope
+CID/DID/rev must match the parsed CAR root, using existing sync/common primitives
+without adding signature requirements to main. Covered commits at or below the
+snapshot revision advance the cursor but perform no writes. This prevents stale
+updates and old deletes overwriting recreated current records. Covered deletes
+do not sweep retained rows absent from the snapshot; newer live deletes still
+apply. This is explicit preservation, not a new cache-cleanup policy.
+
+Account events have no commit revision. They read the current local PDS
+getRepoStatus before updating active/status; an exact authoritative RepoNotFound
+makes that account inactive/deleted without deleting records or stopping siblings.
+Identity events retain main's cache invalidation/current PLC resolution; their old
+handle strings are never assigned to projection identity.
 
 Bootstrap on initial startup and on a later OutdatedCursor using that same
 mechanism. Running requires bootstrap completion and target-map coverage. Feed
-status is starting/running/failed/stopped; projection/decoding/reconciliation
+status is starting/running/failed/stopped; validation/projection
 errors latch failed health and are not cleared by an unrelated valid message.
-Existing malformed-input rejection/reconnect continues. Propagate the server's
+Network, HTTP5xx, bounded-I/O timeout and native ConsumerTooSlow return to
+Starting and retry through the existing reconnect path; no new supervisor/loop.
+A failed attempt closes its connection before retry, so missed in-flight work is
+covered by the next bootstrap. Existing malformed-input rejection continues. Propagate the server's
 currently swallowed indexer errors into this status owner. Quiet caught-up feeds
 stay healthy; no clock declares catch-up.
 
 Health exposes200 running or503 starting/degraded. Reuse peer health parsing and
-startup waits for new/adopted AppViews. Process exit, failed mandatory core,
+startup waits for new/adopted AppViews. Process exit, absent/foreign mandatory owners,
 reported failed indexing or interruption ends the wait. Individual metadata I/O
 is bounded; no startup timeout pretends to prove progress. Existing query data
 stays readable, with no new name-resolution policy.
@@ -68,14 +85,17 @@ restart with old records and no repeated notifyInsert pushes.
 
 ## Files touched
 
-Eleven files: appview/src/localFeed.mjs (barrier/status), appview/src/inputBounds.mjs
+Thirteen total files: eleven authored here, plus two integration-owned workflows.
+Authored files: appview/src/localFeed.mjs (barrier/status), appview/src/inputBounds.mjs
 (JSON preflight), appview/src/server.ts (propagated errors and HTTP view),
 appview/scripts/startup-readiness-test.mjs (compiled-consumer fixture),
 bin/lib-service-pids.sh (health interpretation), bin/start-all.sh (readiness wait),
 bin/status.sh (state display), bin/ait-test.sh (CLI fixtures),
 bin/security-input-test.mjs (local listRepos fixture and expected degraded health),
 docs/developing-alongside-installed-ait.md (operator/testing boundary), this spec.
-No schema, transport, dependency, workflow, version or installed-tree changes.
+Integration owns .github/workflows/security.yml and .github/workflows/release.yml
+to run the actual variant readiness fixture in their existing jobs. No schema,
+transport, dependency, version or installed-tree changes.
 
 ## Out of scope
 
@@ -94,7 +114,7 @@ quiet-ready stays healthy. Verify snapshot-overlapping update/delete ordering,
 changed-revision barrier, pages, metadata abort/oversize/depth and owned cleanup.
 Retained stale rows stay unchanged. Old mention rows produce no bootstrap pushes;
 a new overlapping mention remains durable and is delivered through registration
-replay. Measured owned fixture:6000 posts,4544922 response bytes,2028ms bootstrap plus
+replay. Measured owned fixture:6000 posts,4544922 response bytes,2371ms bootstrap plus
 retained replay on this Mac. This is a loopback synthetic store, not a live timing
 guarantee. JSON ordinary metadata512KiB and single-record pages8MiB; existing
 CBOR record/depth/node bounds remain unchanged.
@@ -126,7 +146,8 @@ Copying peer source/schema/transport: no need for local revision tracking.
 
 Main6e5b555 localFeed.mjs, server.ts:63-100; pinned @atproto/pds
 api/com/atproto/sync/subscribeRepos.js:15-29 and config/config.js:152;
-createAccount.js:55-60 sequences commit before listRepos root update. Native handler
+account-manager/account-manager.js:108-134 writes the initial repo root in the
+account transaction (the later createAccount update is not its first write). Native handler
 proof /private/tmp/ait-shared-readiness-evidence/retention-proof.mjs.
 
 Spec check: today start may claim health during replay/errors; the smallest usable

@@ -34,10 +34,14 @@ launching services. Direct service fixtures may still use ephemeral ports.
 owned configuration. It never reaches installed services.
 
 Main's AppView bootstraps current local AIT records before reporting readiness,
-then applies queued subscription events in order. It upserts without sweeping
+then validates queued subscription events in order. Commits already covered by
+the snapshot advance the cursor without overwriting its records; newer events
+apply normally. It upserts without sweeping
 retained rows. Historical bootstrap writes retain notification rows but suppress
 immediate pushes; a mention overlapping bootstrap may wait for the next existing
 push-registration replay. Health is starting until coverage is proved, and
-projection failures remain degraded until repair/restart. Quiet working streams
+projection/validation failures remain degraded until repair/restart. Transient
+PDS I/O failures return to Starting and recover through the existing reconnect
+path. Quiet working streams
 remain healthy. `appview/scripts/startup-readiness-test.mjs` exercises compiled
 main with owned loopback PDS fixtures. This differs from peer's verified feed.

@@ -16,7 +16,7 @@ https://github.com/user-attachments/assets/a80f93c1-d4a4-4ded-bf4b-03f4a0ccc869
 
 ## Install and launch
 
-You need macOS, Homebrew, Node.js 20 or later with npm, and Claude Code,
+You need macOS, Homebrew, Node.js 22.12 or later with npm, and Claude Code,
 Codex 0.166.0 or later, or both. Cross-machine use requires Apple Silicon
 and Node.js 24 or later.
 

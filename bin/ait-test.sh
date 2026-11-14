@@ -375,19 +375,24 @@ make_fixture "$node_floor"
 rm -f "$node_floor/shim/node"
 cat > "$node_floor/shim/node" <<'EOF'
 #!/bin/sh
-if [ "$1" = --version ]; then echo v18.20.0; else exit 0; fi
+if [ "$1" = --version ]; then echo "${AIT_TEST_NODE_VERSION:-v18.20.0}"; else exit 0; fi
 EOF
 chmod +x "$node_floor/shim/node"
 export PATH="$node_floor/shim:/usr/bin:/bin" HOME="$node_floor/home"
-set +e
-node_floor_output="$("$node_floor/bin/install.sh" 2>&1)"
-node_floor_status=$?
-set -e
-[ "$node_floor_status" -ne 0 ] || fail "old Node.js unexpectedly accepted"
-assert_contains "$node_floor_output" "Node.js 20 or later"
-pass "Node.js 20 floor is enforced"
+for node_test_version in v18.20.0 v20.19.0 v21.7.0 v22.0.0 v22.11.0; do
+  set +e
+  node_floor_output="$(AIT_TEST_NODE_VERSION="$node_test_version" "$node_floor/bin/install.sh" 2>&1)"
+  node_floor_status=$?
+  set -e
+  [ "$node_floor_status" -ne 0 ] || fail "unsupported Node.js $node_test_version unexpectedly accepted"
+  assert_contains "$node_floor_output" "Node.js 22.12 or later"
+  assert_not_contains "$node_floor_output" "AIT files:"
+done
+node_floor_output="$(AIT_TEST_NODE_VERSION=v22.12.0 "$node_floor/bin/install.sh" 2>&1)"
+assert_contains "$node_floor_output" "AIT files:"
+pass "Node.js 22.12 dependency floor is enforced before installation"
 
-export PATH="$fixture/shim:/usr/bin:/bin"
+export PATH="$fixture/shim:/usr/bin:/bin" HOME="$fixture/home"
 bare_update_output="$("$fixture/bin/install.sh")"
 assert_contains "$bare_update_output" "AIT files:"
 pass "bare private installer update command performs a machine install"

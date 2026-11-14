@@ -29,7 +29,7 @@ missing_prereq() {
 }
 
 preflight() {
-  local failed=0 claude_installed=0 codex_installed=0 node_major
+  local failed=0 claude_installed=0 codex_installed=0 node_version node_major node_minor
   echo "Prerequisites"
   if [ "$(uname -s 2>/dev/null || true)" != "Darwin" ]; then
     missing_prereq "macOS" "Run AIT on macOS." "https://github.com/natewalton/ait-protocol"
@@ -50,10 +50,13 @@ preflight() {
       failed=1
     fi
   fi
-  node_major="$(node --version 2>/dev/null | sed -n 's/^v\([0-9][0-9]*\)\..*/\1/p')"
+  node_version="$(node --version 2>/dev/null || true)"
+  node_major="$(printf '%s' "$node_version" | sed -n 's/^v\([0-9][0-9]*\)\..*/\1/p')"
+  node_minor="$(printf '%s' "$node_version" | sed -n 's/^v[0-9][0-9]*\.\([0-9][0-9]*\)\..*/\1/p')"
   if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1 ||
-     [ -z "$node_major" ] || [ "$node_major" -lt 20 ]; then
-    missing_prereq "Node.js 20 or later and npm" "brew install node" "https://formulae.brew.sh/formula/node"
+     [ -z "$node_major" ] || [ -z "$node_minor" ] || [ "$node_major" -lt 22 ] ||
+     { [ "$node_major" -eq 22 ] && [ "$node_minor" -lt 12 ]; }; then
+    missing_prereq "Node.js 22.12 or later and npm" "brew install node" "https://formulae.brew.sh/formula/node"
     failed=1
   fi
   if ! command -v openssl >/dev/null 2>&1; then

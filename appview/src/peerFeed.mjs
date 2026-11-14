@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { schemas } from '@atproto/api'
 import { Lexicons } from '@atproto/lexicon'
-import { cborToLexRecord, parseDataKey, verifyRepoCar } from '@atproto/repo'
+import { cborToLexRecord, parseDataKey, readCarWithRoot, verifyProofs, verifyRepoCar } from '@atproto/repo'
 import { parseAccount, parseCommitAuthenticated, parseIdentity } from '@atproto/sync'
 import { AtUri } from '@atproto/syntax'
 import { ensureChunkIsMessage } from '@atproto/xrpc-server'
@@ -20,6 +20,7 @@ const collections = new Set(['ait.feed.post', 'ait.graph.follow', 'ait.actor.pro
 export function createVerifiedFeed({ db, idResolver, service, agent, getJson, getRepo,
   source = 'local', isApprovedSource = () => true,
   onError = error => console.error(`feed ${source}:`, error) }) {
+  const snapshotRevisions = new Map()
   let cursor = 0
   let running
   let status = { state: 'starting' }
@@ -82,7 +83,7 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
   async function account(did, doc, active, status, meta) {
     const event = parseAccount({ ...meta, did, active, status })
     assert(event, `Unsupported account status for ${did}: ${status}`)
-    await project({ ...meta, event: 'identity', did, didDocument: doc })
+    if (doc) await project({ ...meta, event: 'identity', did, didDocument: doc })
     await project(event)
   }
 
@@ -105,6 +106,7 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       lexicons.assertValidRecord(entry.collection, record)
       records.push({ ...base, ...entry, uri, event: 'create', record })
     }
+    if (commit.rev < (snapshotRevisions.get(did) ?? '')) return
     await account(did, doc, true, undefined, meta)
     for (const record of records) await project(record)
     const previous = db.prepare(
@@ -118,9 +120,10 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       const uri = new AtUri(row.uri)
       await project({ ...base, event: 'delete', uri, collection: uri.collection, rkey: uri.rkey })
     }
+    snapshotRevisions.set(did, commit.rev)
   }
 
-  async function backfill() {
+  async function* listedRepos() {
     let pageCursor
     do {
       controller.signal.throwIfAborted()
@@ -128,15 +131,26 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       if (pageCursor) query.set('cursor', pageCursor)
       const page = await getJson(`/xrpc/${LIST}?${query}`, controller.signal)
       lexicons.assertValidXrpcOutput(LIST, page)
-      for (const repo of page.repos) {
-        const doc = await boundDocument(repo.did)
-        const meta = { seq: cursor, time: new Date().toISOString() }
-        if (repo.active === false) await account(repo.did, doc, false, repo.status, meta)
-        else await reconcile(repo.did, meta, doc)
-      }
+      yield* page.repos
       assert(!page.cursor || page.cursor !== pageCursor, 'listRepos pagination did not advance')
       pageCursor = page.cursor
     } while (pageCursor)
+  }
+
+  async function backfill() {
+    for await (const repo of listedRepos()) {
+      const doc = await boundDocument(repo.did)
+      const meta = { seq: cursor, time: new Date().toISOString() }
+      if (repo.active === false) await account(repo.did, doc, false, repo.status, meta)
+      else await reconcile(repo.did, meta, doc)
+    }
+  }
+
+  // Account events have no repo revision. A successful complete listing is
+  // current source authority; an HTTP/validation failure cannot become absence.
+  async function currentAccount(did) {
+    for await (const repo of listedRepos()) if (repo.did === did) return repo
+    return { did, active: false, status: 'deleted' }
   }
 
   async function processMessage(message) {
@@ -145,6 +159,17 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       return
     }
     const did = message.repo ?? message.did
+    // A deleted account may no longer expose its PLC log. Existing attribution
+    // permits only its already approved owner to update current account state;
+    // a new/replacement source must still prove the signed endpoint binding.
+    if (message.$type === `${METHOD}#account`) {
+      const previous = db.prepare('SELECT source FROM actors WHERE did = ?').get(did)?.source
+      const doc = previous === source ? undefined : await boundDocument(did)
+      const current = await currentAccount(did)
+      await account(did, doc, current.active !== false, current.status, message)
+      cursor = Math.max(cursor, message.seq)
+      return
+    }
     const doc = await boundDocument(did, message.$type === `${METHOD}#identity`)
     if (message.$type === `${METHOD}#sync` || message.tooBig === true) {
       await reconcile(did, message, doc)
@@ -156,13 +181,21 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       for (const event of events) {
         if (event.event === 'create' || event.event === 'update') lexicons.assertValidRecord(event.collection, event.record)
       }
-      for (const event of events) await project(event)
+      // The sync parser authenticates record claims, but copies rev/commit from
+      // the envelope. Bind those fields to that same signed CAR root before
+      // using its revision as an ordering decision (including empty commits).
+      const car = await readCarWithRoot(message.blocks)
+      const root = cborToLexRecord(car.blocks.get(car.root))
+      assert(car.root.equals(message.commit) && root.did === did && root.rev === message.rev,
+        `Commit envelope does not match authenticated root for ${did}`)
+      if (!expected.length) await verifyProofs(message.blocks, [], did, await idResolver.did.resolveAtprotoKey(did))
+      if (root.rev > (snapshotRevisions.get(did) ?? '')) {
+        for (const event of events) await project(event)
+      }
     } else if (message.$type === `${METHOD}#identity`) {
       const event = await parseIdentity(idResolver, message)
       assert(event, `Identity parsing failed for ${did}`)
       await project({ ...event, didDocument: doc })
-    } else if (message.$type === `${METHOD}#account`) {
-      await account(did, doc, message.active, message.status, message)
     } else {
       throw new Error(`Unsupported subscription message: ${message.$type}`)
     }

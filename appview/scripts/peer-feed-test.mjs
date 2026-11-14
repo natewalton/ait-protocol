@@ -46,6 +46,7 @@ async function commit(value, seq) {
 async function fixture(t, { repos = [], pages, messages, getRepo, getJson, source = SOURCE, isApprovedSource }) {
   const db = openDb(':memory:')
   const errors = [], requests = [], resolutions = []
+  let listReads = 0
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' })
   await once(server, 'listening')
   const connected = Promise.withResolvers()
@@ -78,7 +79,7 @@ async function fixture(t, { repos = [], pages, messages, getRepo, getJson, sourc
       assert.equal(url.pathname, '/xrpc/com.atproto.sync.listRepos')
       assert.equal(url.searchParams.get('limit'), '1000')
       const page = url.searchParams.get('cursor') ?? ''
-      return pages ? pages[page] : { repos: [] }
+      return pages ? pages[page] : { repos: listReads++ ? repos.map(listing) : [] }
     },
     getRepo: getRepo ?? (async did => repos.find(value => value.repo.did === did).car),
     onError: error => errors.push(error),
@@ -467,4 +468,112 @@ test('signed malformed commit records are all validated before projection', { ti
   assert.match(error.message, /text|Record/)
   for (const table of ['actors', 'posts', 'profiles', 'follows']) assert.equal(f.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0, table)
   assert.equal(f.feed.getCursor(), 0)
+})
+
+
+for (const scenario of ['stale-update', 'old-delete-recreated']) {
+ test(`queued history cannot overwrite snapshot: ${scenario}`, { timeout: 5000 }, async t => {
+  const initial = await signed(A, [post('same', 'original')])
+  const writes = scenario === 'stale-update'
+   ? [{...post('same', 'older update'), action:'update'}]
+   : [{action:'delete',collection:POST,rkey:'same'}]
+  const oldRepo = await initial.repo.applyWrites(writes,initial.signer)
+  const old = {repo:oldRepo,signer:initial.signer,car:await concatBytesAsync(getFullRepo(oldRepo.storage,oldRepo.cid))}
+  const event=await commit(old,1)
+  event.ops=[{action:scenario==='stale-update'?'update':'delete',path:`${POST}/same`,cid:scenario==='stale-update'?await old.repo.data.get(`${POST}/same`):null}]
+  const snapshotRepo = await oldRepo.applyWrites([{...post('same','newest snapshot'),action:scenario==='stale-update'?'update':'create'}],initial.signer)
+  const snapshot = {repo:snapshotRepo,signer:initial.signer,car:await concatBytesAsync(getFullRepo(snapshotRepo.storage,snapshotRepo.cid))}
+  assert(old.repo.commit.rev < snapshot.repo.commit.rev)
+  const f=await fixture(t,{repos:[snapshot],pages:{'':{repos:[listing(snapshot)]}},messages:[event,invalid()]})
+  const projected=[];f.db.function('capture_snapshot_order',value=>{projected.push(value);return 0})
+  f.db.exec(`CREATE TRIGGER capture_insert AFTER INSERT ON posts BEGIN SELECT capture_snapshot_order(NEW.text); END;
+    CREATE TRIGGER capture_update AFTER UPDATE ON posts BEGIN SELECT capture_snapshot_order(NEW.text); END;
+    CREATE TRIGGER capture_delete AFTER DELETE ON posts BEGIN SELECT capture_snapshot_order('DELETED'); END;`)
+  const error=await failed(f.feed);assert.match(error.message,/active|boolean/)
+  const retained=await getRecord(f.db,{repo:A,collection:POST,rkey:'same'})
+  console.log(JSON.stringify({scenario,snapshotRev:snapshot.repo.commit.rev,queuedRev:old.repo.commit.rev,projected,final:retained?.value.text??null,cursor:f.feed.getCursor()}))
+  assert.equal(projected[0],'newest snapshot','snapshot must land before queue replay')
+  assert.equal(retained?.value.text,'newest snapshot','queued older history must not undo authenticated snapshot')
+  assert.equal(f.feed.getCursor(),1,'validated covered event is still acknowledged')
+ })
+}
+
+for (const tamper of ['proof', 'rev', 'commit']) {
+ test(`covered commits still validate authenticated ${tamper}`, {timeout:5000}, async t=>{
+  const old=await signed(A,[post('same','older')])
+  const snapshot=await signed(A,[post('same','newest')],old.signer)
+  const event=await commit(old,1)
+  if(tamper==='proof') event.ops[0].path=`${POST}/not-authenticated`
+  if(tamper==='rev') event.rev=snapshot.repo.commit.rev
+  if(tamper==='commit') event.commit=snapshot.repo.cid
+  const f=await fixture(t,{repos:[snapshot],pages:{'':{repos:[listing(snapshot)]}},messages:[event,invalid()]})
+  const error=await failed(f.feed)
+  assert.match(error.message,tamper==='proof'?/Incomplete authenticated commit/:/envelope does not match/)
+  assert.equal(f.feed.getCursor(),0)
+  assert.equal((await getRecord(f.db,{repo:A,collection:POST,rkey:'same'})).value.text,'newest')
+ })
+}
+
+test('covered empty commits still authenticate their signed root', {timeout:5000}, async t=>{
+ const forged=await signed(A), snapshot=await signed(A,[post('same','newest')])
+ const f=await fixture(t,{repos:[snapshot],pages:{'':{repos:[listing(snapshot)]}},messages:[await commit(forged,1),invalid()]})
+ const error=await failed(f.feed);assert.match(error.message,/Invalid signature/)
+ assert.equal(f.feed.getCursor(),0)
+ assert.equal((await getRecord(f.db,{repo:A,collection:POST,rkey:'same'})).value.text,'newest')
+})
+
+test('commits newer than the snapshot still update and delete', {timeout:5000}, async t=>{
+ const snapshot=await signed(A,[post('same','snapshot')])
+ const repo2=await snapshot.repo.applyWrites([{...post('same','newer live'),action:'update'}],snapshot.signer)
+ const live={repo:repo2,signer:snapshot.signer,car:await concatBytesAsync(getFullRepo(repo2.storage,repo2.cid))}
+ const event2=await commit(live,1);event2.ops[0].action='update'
+ const repo3=await repo2.applyWrites([{action:'delete',collection:POST,rkey:'same'}],snapshot.signer)
+ const deleted={repo:repo3,signer:snapshot.signer,car:await concatBytesAsync(getFullRepo(repo3.storage,repo3.cid))}
+ const event3=await commit(deleted,2);event3.ops=[{action:'delete',path:`${POST}/same`,cid:null}]
+ const f=await fixture(t,{repos:[snapshot],pages:{'':{repos:[listing(snapshot)]}},messages:[event2,event3,invalid()]})
+ const seen=[];f.db.function('newer_live_seen',value=>{seen.push(value);return 0})
+ f.db.exec('CREATE TRIGGER capture_newer AFTER UPDATE ON posts BEGIN SELECT newer_live_seen(NEW.text); END')
+ await failed(f.feed)
+ assert(seen.includes('newer live'));assert.equal(await getRecord(f.db,{repo:A,collection:POST,rkey:'same'}),null)
+ assert.equal(f.feed.getCursor(),2)
+})
+
+for(const active of [true,false]) {
+ test(`account replay uses current listed active=${active}, not queued flag`,{timeout:5000},async t=>{
+  const value=await signed(A,[post('keep','retained')])
+  const current={...listing(value),active,...(!active?{status:'deactivated'}:{})}
+  const event={...account(A,1),active:!active,...(active?{status:'deactivated'}:{})}
+  const f=await fixture(t,{repos:[value],pages:{'':{repos:[current]}},messages:[event,invalid()]})
+  legacyPost(f.db,A,'legacy','retained legacy')
+  await failed(f.feed)
+  assert.deepEqual(f.db.prepare('SELECT active,status,source FROM actors WHERE did=?').get(A),{active:active?1:0,status:active?null:'deactivated',source:SOURCE})
+  assert.equal(f.feed.getCursor(),1)
+  assert(f.db.prepare('SELECT COUNT(*) AS n FROM posts WHERE did=?').get(A).n>0)
+ })
+}
+
+test('deleted known actor needs no missing PLC log, retains history and does not stop siblings',{timeout:5000},async t=>{
+ const value=await signed(B)
+ const f=await fixture(t,{repos:[value],pages:{'':{repos:[listing(value)]}},messages:[{...account(A,1),active:false,status:'deleted'},account(B,2),invalid()]})
+ f.db.prepare('INSERT INTO actors(did,source,active,indexedAt) VALUES(?,?,1,?)').run(A,SOURCE,TIME)
+ legacyPost(f.db,A,'keep','deleted actor history')
+ await failed(f.feed)
+ assert.deepEqual(f.db.prepare('SELECT active,status FROM actors WHERE did=?').get(A),{active:0,status:'deleted'})
+ assert.equal(f.db.prepare('SELECT text FROM posts WHERE did=?').get(A).text,'deleted actor history')
+ assert(!f.resolutions.some(call=>call.did===A),'deleted owned actor has no resolvable PLC log')
+ assert.equal(f.db.prepare('SELECT active FROM actors WHERE did=?').get(B).active,1)
+ assert.equal(f.feed.getCursor(),2)
+})
+
+test('account listing failure does not infer deletion or acknowledge the message',{timeout:5000},async t=>{
+ const value=await signed(A)
+ let reads=0
+ const f=await fixture(t,{repos:[value],messages:[account(A,1)],getJson:async()=>{
+  if(reads++===0)return {repos:[]}
+  throw Error('fixture current account unavailable')
+ }})
+ f.db.prepare('INSERT INTO actors(did,source,active,indexedAt) VALUES(?,?,1,?)').run(A,SOURCE,TIME)
+ const error=await failed(f.feed);assert.match(error.message,/fixture current account unavailable/)
+ assert.equal(f.db.prepare('SELECT active FROM actors WHERE did=?').get(A).active,1)
+ assert.equal(f.feed.getCursor(),0)
 })

@@ -102,6 +102,7 @@ jobs:
           node appview/scripts/duplicate-follow-test.mjs
           npm --prefix mcp run build
           node mcp/scripts/push-mode-test.mjs
+          node mcp/scripts/handles-test.mjs
           node mcp/scripts/claude-background-test.mjs
           node mcp/scripts/channel-sink-test.mjs
           node mcp/scripts/codex-writer-ownership-test.mjs
@@ -112,7 +113,6 @@ jobs:
             (cd appview && node --import tsx scripts/peer-projection-test.mjs)
             (cd appview && node --import tsx scripts/peer-feed-test.mjs)
             (cd appview && node --import tsx scripts/peer-lifecycle-test.mjs)
-            (cd mcp && node scripts/handles-test.mjs)
             (cd mcp && node --import tsx scripts/peer-mentions-test.mjs)
             brew list --versions postgresql@17 >/dev/null || brew install postgresql@17
             node appview/scripts/peer-link-test.mjs

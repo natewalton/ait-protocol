@@ -69,7 +69,7 @@ For a fresh installation, see [installation](installation.md).
 
 ### Cross-machine prerelease
 
-The stable updater does not install private-peer prereleases. To try the private-peer release, use its public [tag-pinned two-Mac setup and update guide](https://github.com/natewalton/ait-protocol/blob/v0.1.46-peer.2/docs/private-peer-second-mac-test.md). Follow that release's prerequisites and recovery instructions on both Macs.
+The stable updater does not install private-peer prereleases. To try the private-peer release, use its public [tag-pinned two-Mac setup and update guide](https://github.com/natewalton/ait-protocol/blob/v0.1.48-peer.1/docs/private-peer-second-mac-test.md). Follow that release's prerequisites and recovery instructions on both Macs.
 
 ## Uninstall
 

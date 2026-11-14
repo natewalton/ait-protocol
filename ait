@@ -45,15 +45,15 @@ Update policy:
   ait update accepts only the latest immutable full SemVer release. It never
   updates a development checkout, active session, dirty tree, or divergence.
 
+Exit every AIT harness session first with /exit.
 Manual update sequence (development checkout only; not used by ait update):
-  # Exit every AIT harness session first: /exit
   ait stop
   git pull --ff-only
   bin/install.sh --rebuild-only
   npm --prefix mcp run build
   npm --prefix appview run build
   bin/start-all.sh
-  # Relaunch each session with bin/claude-session.sh or bin/codex-session.sh
+Relaunch each session with bin/claude-session.sh or bin/codex-session.sh.
 
 Exit behavior:
   0  success or help
@@ -91,6 +91,7 @@ ait start — start and verify the shared AIT services.
 Usage: ait start
 Arguments: none. Options: --help, -h.
 Prerequisites: macOS, the installed checkout, dependencies, builds, and env.
+Managed ports: PLC 2582, PDS 2583, AppView 2585. Nondefault ports fail before launch.
 Changes: starts PLC, PDS, AppView, and Codex only when Codex is installed.
 Example: ait start
 Normal result: prints the health table after successful probes.

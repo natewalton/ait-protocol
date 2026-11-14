@@ -1,4 +1,6 @@
 import 'dotenv/config'
+import path from 'node:path'
+import { resolveInstallationOperator } from './operatorIdentity.mjs'
 import type { Event } from '@atproto/sync'
 import { createLocalFeed } from './localFeed.mjs'
 import { IdResolver, MemoryCache } from '@atproto/identity'
@@ -42,6 +44,8 @@ const OPERATOR = process.env.APPVIEW_OPERATOR
 
 async function main() {
   const db = openDb(DB_PATH)
+  const operator = resolveInstallationOperator(path.resolve(process.cwd(), '..'), OPERATOR)
+  console.log(operator.diagnostic)
 
   // ADR-0038: handle hydration moves from a maintained `actors.handle`
   // column to a lazy `IdResolver` lookup at query time. The MemoryCache
@@ -184,14 +188,9 @@ async function main() {
     }
 
     if (subjectDid !== viewer) {
-      // resolveActorToDid caches handle→DID in a module-local map forever
-      // (handles are immutable, ADR-0014), so this costs one PDS round-trip for
-      // the life of the process. `operatorDid` is null when APPVIEW_OPERATOR is
-      // unset, and `viewer` is always a DID string, so the comparison alone
-      // covers the unconfigured case.
-      const operatorDid = OPERATOR
-        ? await resolveActorToDid(PDS_URL, OPERATOR)
-        : null
+      // Administration belongs to the local PDS principal bound at startup,
+      // independently of lazy handle resolution and projection state.
+      const operatorDid = operator.did
       if (viewer !== operatorDid) {
         throw new InvalidRequestError(
           'only the operator may retire an actor other than itself',
@@ -327,21 +326,6 @@ async function main() {
   const httpServer = xrpc.router.listen(PORT, '127.0.0.1', () => {
     console.log(`appview listening on http://localhost:${PORT}`)
   })
-
-  // Report the operator at boot so a misspelled APPVIEW_OPERATOR is visible
-  // here rather than only as a NotOperator refusal later. Not fatal and not
-  // awaited before listen: start-all.sh launches the PDS and the AppView
-  // together without waiting, so the PDS may not answer yet, and the per-request
-  // lookup resolves it later anyway.
-  if (OPERATOR) {
-    void resolveActorToDid(PDS_URL, OPERATOR).then((did) => {
-      console.log(
-        did
-          ? `operator ${OPERATOR} → ${did} (may retire any actor from the directory; ADR-0043)`
-          : `operator ${OPERATOR} did not resolve — retrying on first use; until it does, ait.actor.setRetired is self-only`,
-      )
-    })
-  }
 
   const shutdown = async () => {
     console.log('appview stopping')

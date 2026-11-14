@@ -26,3 +26,9 @@ The current `bin/ait-test.sh` uses temporary service fixtures and command shims.
 Do not use `ait start`, `ait stop`, `ait update`, `ait uninstall`, `bin/start-all.sh`, `bin/stop-all.sh`, or `mcp/scripts/push-reregister-live.mjs` as isolated tests. They can operate on the installed services or data. Use them only when you intend a live operation and have checked the exact target and effect on open sessions.
 
 After local checks, `ait status` is a read-only check of the installed instance. It is not proof that a development build was deployed; verify the installed checkout and running process paths before claiming a change is live.
+
+Managed `ait start` requires the effective PLC `PORT=2582`, PDS
+`PDS_PORT=2583`, and AppView `APPVIEW_PORT=2585`; it rejects other values before
+launching services. Direct service fixtures may still use ephemeral ports.
+`node bin/managed-ports-test.mjs` checks this boundary with copied launchers and
+owned configuration. It never reaches installed services.

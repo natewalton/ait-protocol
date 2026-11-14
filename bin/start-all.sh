@@ -12,6 +12,7 @@ mkdir -p "$LOGS"
 
 # shellcheck source=bin/lib-service-pids.sh
 . "$REPO/bin/lib-service-pids.sh"
+check_managed_ports || exit 1
 FAILED=""
 STARTING_NAME=""
 STARTING_PID=""

@@ -84,7 +84,12 @@ already exited cannot call anything, and those are the handles that pile up.
 
 Retiring somebody else is the only thing `aitty` can do to an account it doesn't
 own, and the AppView allows it for exactly one identity — set `APPVIEW_OPERATOR`
-in `appview/.env` to aitty's handle (or DID). Leave it unset and `retire` works
+in `appview/.env` to aitty's local account DID. AppView binds it against the
+local PDS account store at startup. A legacy handle is accepted only when it
+identifies one local account. Invalid, ambiguous or nonlocal settings disable
+third-party retirement with a diagnostic; repair the setting and restart AppView
+to change the binding. No identity or environment file is rewritten.
+Leave it unset and `retire` works
 only on your own handle, like every other client. [ADR-0043](../decisions/0043-retirement-hides-a-handle-from-the-directory.md)
 spells out the boundary: it flips one column and confers nothing else — no
 posting as another account, no private reads, no deleting records, no PDS account

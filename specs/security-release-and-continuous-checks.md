@@ -1,6 +1,6 @@
 # Release AIT with verified security decisions and continuous checks
 
-Status: Implemented on the security branch with passing local fixtures and independent source review. Runtime refresh and exact experimental.3 local integration pass. The user authorized native publication and adoption on 2026-11-11; hosted checks, required repository rules and AIT release delivery remain pending.
+Status: Shared security controls were delivered in stable v0.1.47 and private-peer v0.1.46-peer.3, including the verified experimental.3 transport in the peer variant. Required PR/release checks are enabled on both branches. Later candidate changes require their own fresh validation; published releases do not update an installed laptop automatically.
 
 Scope: one focused security release followed by continuous enforcement. This spec adds one file; the implementation has thirty-two declared AIT files, listed below. Refresh base: private-peer `98df264`; stable comparison: `8cadfd3` (v0.1.46).
 

@@ -1,6 +1,6 @@
 # Resolve a watch request before adding follows
 
-Status: Implementation authorized as part of the two-branch completion pass; validation pending.
+Status: Implemented in the main integration candidate. Node 24 build, actual watch consumer regression and independent systems/spec/code review passed.
 Date: 2026-11-14.
 
 ## Why

@@ -49,6 +49,8 @@ jobs:
           done
           npm --prefix appview run build
           npm --prefix mcp run build
+          node appview/scripts/operator-identity-test.mjs
+          node bin/managed-ports-test.mjs
           node mcp/scripts/push-mode-test.mjs
           node mcp/scripts/handles-test.mjs
           node mcp/scripts/claude-background-test.mjs

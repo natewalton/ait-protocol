@@ -30,11 +30,11 @@ Keep main's Node20/platform requirements and existing local feed.
 
 ## Files touched
 
-Fourteen: appview/src/operatorIdentity.mjs, appview/src/server.ts,
+Sixteen including integration validation: appview/src/operatorIdentity.mjs, appview/src/server.ts,
 appview/.env.example, appview/scripts/operator-identity-test.mjs,
 bin/lib-service-pids.sh, bin/start-all.sh, bin/managed-ports-test.mjs, ait,
 docs/aitty.md, docs/developing-alongside-installed-ait.md, README.md,
-docs/installation.md, docs/operations.md, and this spec. Four runtime files plus
+docs/installation.md, docs/operations.md, this spec, and the security/release workflows. Those two workflows run the operator and managed-port consumer fixtures on both variants. Four runtime files plus
 CLI/config span authority and managed startup; tests and docs accompany each.
 
 ## Out of scope

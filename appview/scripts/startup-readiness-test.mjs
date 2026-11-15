@@ -112,7 +112,7 @@ test('old-window bootstrap is held until complete, preserves retained rows, and 
   assert.equal((await state.health()).status,'starting')
   state.release();await until(async()=> (await state.health()).code===200,'bootstrap ready')
   const response=await fetch(`http://127.0.0.1:${state.port}/xrpc/ait.feed.getAuthorFeed?actor=${A}`)
-  assert.equal(response.status,200);assert.equal((await response.json()).feed[0].post.record.text,'snapshot old mention')
+  assert.equal(response.status,200,(await response.clone().text())+'\n'+state.output);assert.equal((await response.json()).feed[0].post.record.text,'snapshot old mention')
   const db=openDb(state.dbPath);assert.equal(db.prepare('SELECT text FROM posts WHERE did=?').get(B).text,'retained stale row');db.close()
   await delay(100);assert.equal((await state.health()).status,'ok')
   await state.stop();await state.start();await until(async()=>(await state.health()).code===200,'older install restart ready')
@@ -125,7 +125,7 @@ test('a bootstrap failure is degraded while historical HTTP stays available',asy
   state.socket.send((await frame([record('force projection fail')])).bytes)
   await until(async()=>(await state.health()).status==='degraded','bad projection health')
   const response=await fetch(`http://127.0.0.1:${state.port}/xrpc/ait.feed.getAuthorFeed?actor=${B}`)
-  assert.equal(response.status,200)
+  assert.equal(response.status,200,(await response.clone().text())+'\n'+state.output)
 })
 test('stream update and delete queued during bootstrap win and changed revision waits',async t=>{
   const state=await fixture(t)

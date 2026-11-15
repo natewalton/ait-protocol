@@ -55,8 +55,8 @@ preflight() {
   node_minor="$(printf '%s' "$node_version" | sed -n 's/^v[0-9][0-9]*\.\([0-9][0-9]*\)\..*/\1/p')"
   if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1 ||
      [ -z "$node_major" ] || [ -z "$node_minor" ] || [ "$node_major" -lt 22 ] ||
-     { [ "$node_major" -eq 22 ] && [ "$node_minor" -lt 12 ]; }; then
-    missing_prereq "Node.js 22.12 or later and npm" "brew install node" "https://formulae.brew.sh/formula/node"
+     { [ "$node_major" -eq 22 ] && [ "$node_minor" -lt 19 ]; }; then
+    missing_prereq "Node.js 22.19 or later and npm" "brew install node" "https://formulae.brew.sh/formula/node"
     failed=1
   fi
   if ! command -v openssl >/dev/null 2>&1; then

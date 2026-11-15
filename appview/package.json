@@ -2,7 +2,7 @@
   "name": "ait-appview",
   "version": "0.0.1",
   "private": true,
-  "description": "AIT AppView — firehose subscriber + SQLite indexer + XRPC query endpoints.",
+  "description": "AIT AppView \u2014 firehose subscriber + SQLite indexer + XRPC query endpoints.",
   "type": "module",
   "scripts": {
     "build": "tsc",
@@ -11,16 +11,17 @@
     "postinstall": "../bin/check-single-lexicon.sh || true"
   },
   "dependencies": {
-    "@atproto/common": "^0.6.1",
-    "@atproto/identity": "^0.5.0",
-    "@atproto/lexicon": "^0.7.1",
-    "@atproto/sync": "^0.3.1",
-    "@atproto/syntax": "^0.6.1",
-    "@atproto/xrpc-server": "^0.11.1",
+    "@atproto/common": "0.8.10",
+    "@atproto/identity": "0.5.23",
+    "@atproto/lexicon": "0.7.19",
+    "@atproto/sync": "0.4.26",
+    "@atproto/syntax": "0.7.7",
+    "@atproto/xrpc-server": "0.13.12",
     "better-sqlite3": "^11.0.0",
     "dotenv": "^16.4.0",
     "ws": "8.21.0",
-    "@atproto/api": "0.20.4"
+    "@atproto/api": "0.32.0",
+    "@atproto-labs/fetch-node": "0.4.5"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",

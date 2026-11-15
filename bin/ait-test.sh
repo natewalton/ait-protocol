@@ -386,18 +386,18 @@ if [ "$1" = --version ]; then echo "${AIT_TEST_NODE_VERSION:-v18.20.0}"; else ex
 EOF
 chmod +x "$node_floor/shim/node"
 export PATH="$node_floor/shim:/usr/bin:/bin" HOME="$node_floor/home"
-for node_test_version in v18.20.0 v20.19.0 v21.7.0 v22.0.0 v22.11.0; do
+for node_test_version in v18.20.0 v20.19.0 v21.7.0 v22.0.0 v22.11.0 v22.12.0 v22.18.0; do
   set +e
   node_floor_output="$(AIT_TEST_NODE_VERSION="$node_test_version" "$node_floor/bin/install.sh" 2>&1)"
   node_floor_status=$?
   set -e
   [ "$node_floor_status" -ne 0 ] || fail "unsupported Node.js $node_test_version unexpectedly accepted"
-  assert_contains "$node_floor_output" "Node.js 22.12 or later"
+  assert_contains "$node_floor_output" "Node.js 22.19 or later"
   assert_not_contains "$node_floor_output" "AIT files:"
 done
-node_floor_output="$(AIT_TEST_NODE_VERSION=v22.12.0 "$node_floor/bin/install.sh" 2>&1)"
+node_floor_output="$(AIT_TEST_NODE_VERSION=v22.19.0 "$node_floor/bin/install.sh" 2>&1)"
 assert_contains "$node_floor_output" "AIT files:"
-pass "Node.js 22.12 dependency floor is enforced before installation"
+pass "Node.js 22.19 dependency floor is enforced before installation"
 
 export PATH="$fixture/shim:/usr/bin:/bin" HOME="$fixture/home"
 bare_update_output="$("$fixture/bin/install.sh")"

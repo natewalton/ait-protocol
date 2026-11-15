@@ -4,6 +4,7 @@ import { resolveInstallationOperator } from './operatorIdentity.mjs'
 import type { Event } from '@atproto/sync'
 import { createLocalFeed } from './localFeed.mjs'
 import { IdResolver, MemoryCache } from '@atproto/identity'
+import { createIdentityFetch } from './identityFetch.js'
 import {
   AuthRequiredError,
   InvalidRequestError,
@@ -53,7 +54,7 @@ async function main() {
   // PLC roundtrip. The same cache also accelerates JWT signature
   // verification through `resolveAtprotoKey` for free.
   const idCache = new MemoryCache()
-  const idResolver = new IdResolver({ plcUrl: PLC_URL, didCache: idCache })
+  const idResolver = new IdResolver({ plcUrl: PLC_URL, didCache: idCache, fetch: createIdentityFetch(PLC_URL) })
   const verifyViewer = makeVerifyViewer(idResolver, APPVIEW_DID!)
 
   // Bootstrap current local records after opening the bounded subscription,

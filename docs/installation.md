@@ -5,6 +5,11 @@ stable release installer. For cross-machine collaboration, follow the
 [two-Mac setup and update guide](private-peer-second-mac-test.md) for the private-peer prerelease.
 `ait update` selects stable releases and does not select a prerelease.
 
+Starting with `0.1.48-peer.4`, the `peer.N` counter keeps increasing across
+rebases and base-version changes. The base identifies the release line; changing
+it does not reset the peer counter. Existing published tags, including
+`0.1.48-peer.1`, remain unchanged.
+
 ## Install from a source checkout
 
 For a fresh installation where you want to inspect the source first, clone the

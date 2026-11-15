@@ -2,8 +2,13 @@
 
 The [README quick start](../README.md#install-and-launch) uses the published
 stable release installer. For cross-machine collaboration, follow the
-[two-Mac setup and update guide](https://github.com/natewalton/ait-protocol/blob/v0.1.48-peer.1/docs/private-peer-second-mac-test.md) for the private-peer prerelease.
+[two-Mac setup and update guide](https://github.com/natewalton/ait-protocol/blob/v0.1.48-peer.4/docs/private-peer-second-mac-test.md) for the private-peer prerelease.
 `ait update` selects stable releases and does not select a prerelease.
+
+Starting with `0.1.48-peer.4`, the `peer.N` counter keeps increasing across
+rebases and base-version changes. The base identifies the release line; changing
+it does not reset the peer counter. Existing published tags, including
+`0.1.48-peer.1`, remain unchanged.
 
 ## Install from a source checkout
 

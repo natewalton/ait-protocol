@@ -30,7 +30,7 @@ Initial implementation scope: **24 files**, plus this specification:
 
 - appview/package.json and appview/package-lock.json (2): coherent upstream client/indexer stack.
 - mcp/package.json and mcp/package-lock.json (2): upstream client stack.
-- mcp/src/server.ts and mcp/scripts/push-mode-test.mjs (2): replace the obsolete converter with official Zod 4 conversion and verify the actual advertised tool arguments, bounds and invalid-call recovery through MCP.
+- mcp/src/server.ts and mcp/scripts/list-tools-test.mjs (2): replace the obsolete converter with official Zod 4 conversion and verify the actual advertised tool arguments, bounds and invalid-call recovery through MCP using an owned test home.
 - pds/package.json and pds/package-lock.json (2): upstream PDS stack.
 - pds/scripts/mailer-security-test.mjs and pds/scripts/dependency-security-test.mjs (2): actual updated consumers, unchanged isolation and resource limits.
 - pds/scripts/xml-parser-test.cjs (1): exercise the new upstream AWS XML parser after its removed fast-xml-parser dependency, preserving actual parser rejection/availability checks.

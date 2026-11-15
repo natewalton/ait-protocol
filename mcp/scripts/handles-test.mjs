@@ -189,12 +189,27 @@ try {
   const fixture = join(root, 'watch-agent.mjs')
   writeFileSync(fixture, `
 import { AtpAgent } from ${JSON.stringify(new URL('../node_modules/@atproto/api/dist/index.js', import.meta.url).href)}
+import { appendFileSync } from 'node:fs'
+globalThis.fetch = async () => { throw new Error('unowned fixture network') }
 Object.defineProperty(process.stdin, 'isTTY', { value: true })
 Object.defineProperty(process.stdout, 'isTTY', { value: true })
 AtpAgent.prototype.login = async () => ({ success: true })
-AtpAgent.prototype.call = async (nsid) => {
-  if (nsid !== 'com.atproto.identity.resolveHandle') throw new Error('unexpected network action: ' + nsid)
-  throw Object.assign(new Error('Unable to resolve handle'), { status: 400, error: 'InvalidRequest' })
+AtpAgent.prototype.call = async (nsid, params, data) => {
+  if (process.env.AIT_WATCH_FIXTURE_RECEIPT) appendFileSync(process.env.AIT_WATCH_FIXTURE_RECEIPT, JSON.stringify({nsid,params,data})+'\\n')
+  if (nsid === 'com.atproto.identity.resolveHandle') {
+    if (params.handle === 'valid.test') return {data:{did:${JSON.stringify(did)}}}
+    if (params.handle === 'self.test') return {data:{did:${JSON.stringify(ownDid)}}}
+    if (params.handle === 'unavailable.test' || params.handle === 'cached.test') throw Object.assign(new Error('lookup unavailable'), {status:503,error:'UpstreamFailure'})
+    throw Object.assign(new Error('Unable to resolve handle'), {status:400,error:'InvalidRequest'})
+  }
+  if (nsid === 'ait.actor.searchActors') {
+    if (params.q === 'bare-cache.') throw new Error('lookup unavailable')
+    if (params.q === 'ambiguous.') return {data:{actors:[{did:'did:plc:first',handle:'ambiguous.test'},{did:'did:plc:second',handle:'ambiguous.example.com'}]}}
+    throw new Error('unexpected directory request')
+  }
+  if (nsid === 'com.atproto.repo.createRecord') return {data:{uri:${JSON.stringify(uri)},cid:${JSON.stringify(cid)}}}
+  if (nsid === 'ait.feed.getTimeline') { setImmediate(() => process.kill(process.pid,'SIGINT')); return {data:{feed:[]}} }
+  throw new Error('unexpected network action: ' + nsid)
 }
 `)
   const env = { ...process.env }
@@ -202,6 +217,43 @@ AtpAgent.prototype.call = async (nsid) => {
   const watched = spawnSync(process.execPath, ['--import', fixture, new URL('../dist/aitty/main.js', import.meta.url).pathname, 'watch', 'unknown.test'], { env, encoding: 'utf8', timeout: 5000 })
   assert.equal(watched.status, 0, watched.stderr)
   assert.match(watched.stderr, /none of those handles resolved: unknown.test/)
+  const receipt = join(root, 'watch-calls.jsonl')
+  const storedWatcher = { ...identity, follows: {} }
+  const watch = (requested, follows = {}) => {
+    writeFileSync(join(root, 'ait-watcher/identity.json'), JSON.stringify({ ...storedWatcher, follows }))
+    writeFileSync(receipt, '')
+    const result = spawnSync(process.execPath, ['--import', fixture, new URL('../dist/aitty/main.js', import.meta.url).pathname, 'watch', ...requested], {
+      env: { ...env, AIT_WATCH_FIXTURE_RECEIPT: receipt }, encoding: 'utf8', timeout: 5000,
+    })
+    assert.ifError(result.error)
+    const calls = readFileSync(receipt, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)
+    const saved = JSON.parse(readFileSync(join(root, 'ait-watcher/identity.json')))
+    return { ...result, calls, saved }
+  }
+  for (const requested of [['valid.test', 'unavailable.test'], ['valid.test', 'ambiguous']]) {
+    const result = watch(requested)
+    assert.equal(result.status, 1, result.stderr)
+    assert.match(result.stderr, /lookup unavailable|ambiguous/)
+    assert.doesNotMatch(result.stderr, /watching [0-9]/)
+    assert.equal(result.calls.filter(call => /createRecord|getTimeline/.test(call.nsid)).length, 0, 'all resolution precedes follows and polling')
+    assert.deepEqual(result.saved.follows, {})
+  }
+  const positive = watch(['valid.test', 'unknown.test', 'valid.test', 'self.test'])
+  assert.equal(positive.status, 0, positive.stderr)
+  assert.match(positive.stderr, /watching 1 handle/)
+  assert.match(positive.stderr, /not found yet.*unknown.test/)
+  assert.equal(positive.calls.filter(call => /createRecord/.test(call.nsid)).length, 1)
+  assert.deepEqual(Object.keys(positive.saved.follows), ['valid.test'])
+  const cached = { 'cached.test': {did, followUri:uri} }
+  const fallback = watch(['cached.test'], cached)
+  assert.equal(fallback.status, 0, fallback.stderr)
+  assert.match(fallback.stderr, /watching 1 handle/)
+  assert.equal(fallback.calls.filter(call => /createRecord/.test(call.nsid)).length, 0)
+  assert.deepEqual(fallback.saved.follows, cached)
+  const bare = watch(['bare-cache'], {'bare-cache': {did, followUri:uri}})
+  assert.equal(bare.status, 1, bare.stderr)
+  assert.match(bare.stderr, /lookup unavailable/)
+  assert.equal(bare.calls.filter(call => /createRecord|getTimeline/.test(call.nsid)).length, 0)
   console.log('all friendly handle consumer checks passed')
 } finally {
   rmSync(root, { recursive: true, force: true })

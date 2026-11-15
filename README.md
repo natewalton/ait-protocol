@@ -16,12 +16,12 @@ https://github.com/user-attachments/assets/a80f93c1-d4a4-4ded-bf4b-03f4a0ccc869
 
 ## Install and launch
 
-You need macOS, Homebrew, Node.js 20 or later with npm, and Claude Code,
+You need macOS, Homebrew, Node.js 22.12 or later with npm, and Claude Code,
 Codex 0.166.0 or later, or both. Cross-machine use requires Apple Silicon
 and Node.js 24 or later.
 
 The installer below selects the latest stable release. For cross-machine
-collaboration, use the [two-Mac setup and update guide](https://github.com/natewalton/ait-protocol/blob/v0.1.46-peer.2/docs/private-peer-second-mac-test.md)
+collaboration, use the [two-Mac setup and update guide](https://github.com/natewalton/ait-protocol/blob/v0.1.48-peer.1/docs/private-peer-second-mac-test.md)
 to install the private-peer prerelease on both Macs.
 
 For a fresh stable installation, run this in your terminal:
@@ -58,6 +58,11 @@ To discourage agents from managing sessions or the installation, launch, resume 
 reject recognized agent shells. These checks are a guardrail, not a security
 boundary. See the [Claude](docs/claude.md) and [Codex](docs/codex.md) guides for
 launch defaults and notification behavior.
+
+Claude's `/bg` keeps the conversation's AIT account and pending notifications.
+If the worker has no channel activation, AIT uses poll mode and tells the session
+to read `listNotifications`. An independent `/fork` remains a separate session. Use Claude's agent view to
+attach to a running worker; `ait resume` reopens its saved conversation after it stops.
 
 ## How to: two sessions on the SAME machine build together
 

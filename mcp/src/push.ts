@@ -1,3 +1,4 @@
+import { isClaudeRuntimeCurrent } from './claudeSession.js'
 import { displayHandle } from './handles.js'
 // Push delivery bridge for the MCP server (step 6 of specs/notification-push.md).
 //
@@ -92,7 +93,7 @@ export async function startPushListener(
   // /proc or lsof. Harmless in production — stderr isn't user-facing.
   console.error(`ait push listener: ${listenerUrl}`)
 
-  if (canRegister()) await tryRegister(canRegister)
+  await tryRegister(canRegister)
 
   // AppView registrations are in-memory and are deleted on restart or one
   // failed POST. Reassert for the listener lifetime; tryRegister coalesces a
@@ -106,8 +107,8 @@ export async function startPushListener(
       heartbeatTimer = null
       heartbeatWake = null
       if (listenerGeneration !== generation) return
-      if (canRegister()) await tryRegister(canRegister)
       try {
+        await tryRegister(canRegister)
         await onBeat()
       } catch (err) {
         console.error('push heartbeat error:', err)
@@ -146,8 +147,14 @@ export async function tryRegister(
   registerCall: RegisterCall = appViewCall,
   timeoutMs = REGISTER_TIMEOUT_MS,
 ): Promise<void> {
-  if (!canRegister()) return
-  if (!listenerUrl || !getIdentity()) return
+  try {
+    if (!canRegister() || !isClaudeRuntimeCurrent() || !listenerUrl || !getIdentity()) return
+  } catch (error) {
+    // A late native handover may not have an identity yet. Keep the existing
+    // listener/heartbeat alive so the next beat can resolve the same UUID.
+    console.error('AIT push identity unavailable:', (error as Error).message)
+    return
+  }
   if (registerInFlight) return registerInFlight
   registerInFlight = (async () => {
     const checkpoint = getNotificationRegistrationCheckpoint()
@@ -160,6 +167,7 @@ export async function tryRegister(
     registerController = controller
     const timeout = setTimeout(() => controller.abort(), timeoutMs)
     try {
+      if (!canRegister() || !isClaudeRuntimeCurrent()) return
       const result = await registerCall<{ status: 'ok'; cursor: string }>(
         'ait.notification.registerPushTarget',
         { data, signal: controller.signal },
@@ -167,7 +175,7 @@ export async function tryRegister(
       // AppView returns the normalized starting cursor: for legacy `since` this
       // is its loss-safe seq predecessor; for a fresh identity it is the initial
       // baseline. Do not overwrite a cursor advanced by concurrent live delivery.
-      compareAndSwapNotificationCursor(checkpoint.value, result.cursor)
+      if (canRegister() && isClaudeRuntimeCurrent()) compareAndSwapNotificationCursor(checkpoint.value, result.cursor)
     } catch (err) {
       console.error('registerPushTarget error:', err)
     } finally {
@@ -177,6 +185,8 @@ export async function tryRegister(
   })()
   try {
     await registerInFlight
+  } catch (error) {
+    console.error('AIT push registration unavailable:', (error as Error).message)
   } finally {
     registerInFlight = null
   }
@@ -213,6 +223,7 @@ async function handleNotify(
 export function channelSink(mcp: Server): NotificationSink {
   const seen = new Set<string>()
   return async (view: NotificationView) => {
+    if (!isClaudeRuntimeCurrent()) throw new Error('AIT session continued elsewhere; notification remains pending')
     if (seen.has(view.uri)) return
     seen.add(view.uri)
     try {
@@ -223,6 +234,7 @@ export function channelSink(mcp: Server): NotificationSink {
           meta: formatChannelMeta(view),
         },
       })
+      if (!isClaudeRuntimeCurrent()) throw new Error('AIT session continued during delivery; notification remains pending')
       updateLastSeenNotificationCursor(view.cursor)
     } catch (err) {
       // A failed sink call makes /notify return 500 and AppView drop the

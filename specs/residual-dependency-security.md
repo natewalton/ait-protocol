@@ -1,6 +1,6 @@
 # Remove remaining compatible dependency findings without interrupting sessions
 
-Status: Authorized implementation; independent scope/source review GO after explicit fixture-envelope and temporary-write clarifications. No installed update or release publication is included.
+Status: Implemented and independently reviewed GREEN. Node 24 consumer regressions and fresh candidate advisory gates passed for both variants during integration; required combined-head checks remain part of final delivery. No installed update or release publication is included.
 Date: 2026-11-13.
 Bases: main 6e5b555; peer 008900cd. Other AIT contributors may advance shared branches; reconcile onto their reviewed changes without imposing a release hold.
 

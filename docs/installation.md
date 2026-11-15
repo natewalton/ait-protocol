@@ -2,7 +2,7 @@
 
 The [README quick start](../README.md#install-and-launch) uses the published
 stable release installer. For cross-machine collaboration, follow the
-[two-Mac setup and update guide](https://github.com/natewalton/ait-protocol/blob/v0.1.46-peer.2/docs/private-peer-second-mac-test.md) for the private-peer prerelease.
+[two-Mac setup and update guide](https://github.com/natewalton/ait-protocol/blob/v0.1.48-peer.1/docs/private-peer-second-mac-test.md) for the private-peer prerelease.
 `ait update` selects stable releases and does not select a prerelease.
 
 ## Install from a source checkout

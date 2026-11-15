@@ -281,6 +281,13 @@ make_fixture() {
   cp "$REPO/bin/codex-session.sh" "$dir/bin/codex-session.sh"
   cp "$REPO/bin/check-single-lexicon.sh" "$dir/bin/check-single-lexicon.sh"
   chmod +x "$dir/ait" "$dir/bin/"*.sh
+  mkdir -p "$dir/appview/node_modules/dotenv"
+  cat > "$dir/appview/node_modules/dotenv/index.js" <<'EOF'
+exports.parse = text => Object.fromEntries(String(text).split(/\r?\n/).flatMap(line => {
+  const match = line.match(/^\s*(?:export\s+)?([A-Z_]+)\s*=\s*["']?([^"'#\r\n]*)/)
+  return match ? [[match[1], match[2].trim()]] : []
+}))
+EOF
   cat > "$dir/bin/status.sh" <<'EOF'
 #!/bin/sh
 echo 'AIT status:'
@@ -375,19 +382,24 @@ make_fixture "$node_floor"
 rm -f "$node_floor/shim/node"
 cat > "$node_floor/shim/node" <<'EOF'
 #!/bin/sh
-if [ "$1" = --version ]; then echo v18.20.0; else exit 0; fi
+if [ "$1" = --version ]; then echo "${AIT_TEST_NODE_VERSION:-v18.20.0}"; else exit 0; fi
 EOF
 chmod +x "$node_floor/shim/node"
 export PATH="$node_floor/shim:/usr/bin:/bin" HOME="$node_floor/home"
-set +e
-node_floor_output="$("$node_floor/bin/install.sh" 2>&1)"
-node_floor_status=$?
-set -e
-[ "$node_floor_status" -ne 0 ] || fail "old Node.js unexpectedly accepted"
-assert_contains "$node_floor_output" "Node.js 20 or later"
-pass "Node.js 20 floor is enforced"
+for node_test_version in v18.20.0 v20.19.0 v21.7.0 v22.0.0 v22.11.0; do
+  set +e
+  node_floor_output="$(AIT_TEST_NODE_VERSION="$node_test_version" "$node_floor/bin/install.sh" 2>&1)"
+  node_floor_status=$?
+  set -e
+  [ "$node_floor_status" -ne 0 ] || fail "unsupported Node.js $node_test_version unexpectedly accepted"
+  assert_contains "$node_floor_output" "Node.js 22.12 or later"
+  assert_not_contains "$node_floor_output" "AIT files:"
+done
+node_floor_output="$(AIT_TEST_NODE_VERSION=v22.12.0 "$node_floor/bin/install.sh" 2>&1)"
+assert_contains "$node_floor_output" "AIT files:"
+pass "Node.js 22.12 dependency floor is enforced before installation"
 
-export PATH="$fixture/shim:/usr/bin:/bin"
+export PATH="$fixture/shim:/usr/bin:/bin" HOME="$fixture/home"
 bare_update_output="$("$fixture/bin/install.sh")"
 assert_contains "$bare_update_output" "AIT files:"
 pass "bare private installer update command performs a machine install"
@@ -502,7 +514,11 @@ export HOME="$status_fixture/home"
 rm -f "$status_fixture/shim/curl"
 cat > "$status_fixture/shim/curl" <<'EOF'
 #!/bin/bash
-echo '{}'
+if [[ "$*" = *'%{http_code}'* ]]; then
+  printf '%s\n200' '{"status":"ok","indexing":{"state":"running"}}'
+else
+  echo '{}'
+fi
 EOF
 chmod +x "$status_fixture/shim/curl"
 cat > "$status_fixture/shim/codex" <<'EOF'
@@ -741,7 +757,11 @@ mkdir -p "$start_state" "$start_logs"
 rm -f "$start_fixture/shim/codex"
 cat > "$start_fixture/shim/curl" <<'EOF'
 #!/bin/bash
-echo '{}'
+if [[ "$*" = *'%{http_code}'* ]]; then
+  printf '%s\n200' '{"status":"ok","indexing":{"state":"running"}}'
+else
+  echo '{}'
+fi
 EOF
 cat > "$start_fixture/shim/lsof" <<'EOF'
 #!/bin/bash
@@ -850,6 +870,105 @@ if process_alive "$wrapper_pid"; then
 fi
 pass "interrupt stops an unbound wrapper and leaves no pidfile"
 
+# Keep all health traffic behind fixtures, including the shared readiness
+# parser. Adopted services must wait on indexing just like newly launched ones.
+cp "$REPO/bin/status.sh" "$start_fixture/bin/status.sh"
+cat > "$start_fixture/shim/curl" <<'EOF'
+#!/bin/bash
+if [ -n "${AIT_CORE_HTTP_SLOW_MARKER:-}" ] && [ -f "$AIT_CORE_HTTP_SLOW_MARKER" ] && [[ "$*" != *'%{http_code}'* ]]; then exit 28; fi
+if [[ "$*" = *'%{http_code}'* ]]; then
+  case "$(cat "$AIT_APPVIEW_PHASE_FILE")" in
+    starting) printf '%s\n503' '{"status":"starting","indexing":{"state":"starting"}}' ;;
+    failed) printf '%s\n503' '{"status":"degraded","indexing":{"state":"failed","error":"fixture backfill failed"}}' ;;
+    unreachable) exit 7 ;;
+    *) printf '%s\n200' '{"status":"ok","indexing":{"state":"running"}}' ;;
+  esac
+else
+  echo '{}'
+fi
+EOF
+chmod +x "$start_fixture/shim/curl"
+export AIT_APPVIEW_PHASE_FILE="$TMP_ROOT/appview-phase"
+export AIT_CORE_HTTP_SLOW_MARKER="$TMP_ROOT/core-http-slow"
+: > "$AIT_CORE_HTTP_SLOW_MARKER"
+printf starting > "$AIT_APPVIEW_PHASE_FILE"
+export AIT_START_MODE=delayed
+ready_output="$TMP_ROOT/start-indexing.out"
+"$start_fixture/bin/start-all.sh" > "$ready_output" 2>&1 &
+start_pid=$!
+for _ in $(seq 1 150); do
+  grep -Fq 'waiting for appview local indexing (starting)' "$ready_output" && break
+  kill -0 "$start_pid" 2>/dev/null || fail "start exited before the indexing barrier"
+  sleep 0.1
+done
+assert_contains "$(cat "$ready_output")" 'waiting for appview local indexing (starting)'
+kill -0 "$start_pid" 2>/dev/null || fail "bound AppView skipped initial indexing"
+rm "$AIT_CORE_HTTP_SLOW_MARKER"
+printf running > "$AIT_APPVIEW_PHASE_FILE"
+wait "$start_pid"
+assert_contains "$(cat "$ready_output")" 'appview ready'
+appview_owner="$(cat "$AIT_START_STATE/appview")"
+
+printf starting > "$AIT_APPVIEW_PHASE_FILE"
+"$start_fixture/bin/start-all.sh" > "$ready_output" 2>&1 &
+start_pid=$!
+for _ in $(seq 1 100); do
+  grep -Fq 'waiting for appview local indexing (starting)' "$ready_output" && break
+  kill -0 "$start_pid" 2>/dev/null || fail "adopted AppView skipped indexing wait"
+  sleep 0.1
+done
+assert_contains "$(cat "$ready_output")" 'adopted existing service'
+assert_contains "$(cat "$ready_output")" 'waiting for appview local indexing (starting)'
+assert_same "$appview_owner" "$(cat "$AIT_START_STATE/appview")"
+printf failed > "$AIT_APPVIEW_PHASE_FILE"
+set +e
+wait "$start_pid"
+failed_ready_status=$?
+status_text="$("$start_fixture/bin/status.sh")"
+failed_status=$?
+set -e
+[ "$failed_ready_status" -ne 0 ] || fail "failed indexer was declared ready"
+[ "$failed_status" -ne 0 ] || fail "status accepted a failed indexer"
+assert_contains "$status_text" 'degraded: fixture backfill failed'
+assert_contains "$(cat "$ready_output")" 'degraded: fixture backfill failed'
+kill -0 "$appview_owner" 2>/dev/null || fail "health failure killed the adopted service"
+printf unreachable > "$AIT_APPVIEW_PHASE_FILE"
+set +e
+status_text="$("$start_fixture/bin/status.sh")"
+set -e
+assert_contains "$status_text" 'unreachable'
+for wrapper in plc pds appview; do
+  pid="$(cat "$AIT_START_STATE/$wrapper")"
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  rm -f "$AIT_START_STATE/$wrapper" "$start_logs/ait-$wrapper.pid"
+done
+unset AIT_APPVIEW_PHASE_FILE AIT_CORE_HTTP_SLOW_MARKER
+pass "new and adopted AppViews wait for indexing; failed and unreachable health remain distinct"
+
+assert_contains "$("$REPO/ait" help start)" 'Nondefault ports fail before launch'
+# No wrapper is permitted to run while a managed port is unsupported.
+for assignment in 'PORT=3882' 'PDS_PORT=3883' 'APPVIEW_PORT=3885'; do
+  set +e
+  port_output="$(env "$assignment" "$start_fixture/bin/start-all.sh" 2>&1)"
+  port_status=$?
+  set -e
+  [ "$port_status" -ne 0 ] || fail "unsupported port accepted: $assignment"
+  assert_contains "$port_output" 'no services started'
+  for wrapper in plc pds appview; do assert_absent "$AIT_START_STATE/$wrapper"; done
+done
+printf 'export APPVIEW_PORT="3885"\n' > "$start_fixture/appview/.env"
+set +e
+port_output="$("$start_fixture/bin/start-all.sh" 2>&1)"
+port_status=$?
+set -e
+[ "$port_status" -ne 0 ] || fail "dotenv port override was ignored"
+assert_contains "$port_output" 'APPVIEW_PORT=2585'
+APPVIEW_PORT=2585 /bin/bash -c '. "$1/bin/lib-service-pids.sh"; check_managed_ports' fixture "$start_fixture"
+rm "$start_fixture/appview/.env"
+pass "effective managed ports reject before launch; inherited AppView setting retains dotenv precedence"
+
+
 http_root="$TMP_ROOT/http"
 http_port_file="$TMP_ROOT/http-port"
 http_marker="$TMP_ROOT/http-marker"
@@ -907,7 +1026,11 @@ process.exit(
 EOF
 cat > "$codex_start_fixture/shim/curl" <<'EOF'
 #!/bin/bash
-echo '{}'
+if [[ "$*" = *'%{http_code}'* ]]; then
+  printf '%s\n200' '{"status":"ok","indexing":{"state":"running"}}'
+else
+  echo '{}'
+fi
 EOF
 cat > "$codex_start_fixture/shim/lsof" <<'EOF'
 #!/bin/bash

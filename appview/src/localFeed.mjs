@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { schemas } from '@atproto/api'
 import { cborDecode } from '@atproto/common'
 import { AtUri } from '@atproto/syntax'
-import { Lexicons, jsonToLex } from '@atproto/lexicon'
+import { Lexicons, jsonToLex, ipldToLex } from '@atproto/lexicon'
 import { parseCommitUnauthenticated, parseAccount, parseIdentity, parseSync } from '@atproto/sync'
 import { ensureChunkIsMessage } from '@atproto/xrpc-server'
 import { boundedStream } from './boundedStream.mjs'
@@ -161,6 +161,9 @@ export function createLocalFeed({ service, pdsUrl, idResolver, handleEvent, hand
     }
     // Validate the full selected commit before any earlier valid record writes.
     for (const event of events) if (event?.event === 'create' || event?.event === 'update') {
+      // Current sync returns raw IPLD blobs; the legacy Lexicons validator
+      // expects its own BlobRef representation, just like bootstrap above.
+      event.record = ipldToLex(event.record)
       lexicons.assertValidRecord(event.collection, event.record)
     }
     const revision = revisions.get(value.repo)

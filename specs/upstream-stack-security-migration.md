@@ -26,7 +26,7 @@ A disposable global Zod 4.6.7 override makes MCP's package audit clean but cause
 
 ## Files touched
 
-Initial implementation scope: **25 files**, plus this specification:
+Initial implementation scope: **26 files**, plus this specification:
 
 - appview/package.json and appview/package-lock.json (2): coherent upstream client/indexer stack.
 - mcp/package.json and mcp/package-lock.json (2): upstream client stack.
@@ -36,11 +36,12 @@ Initial implementation scope: **25 files**, plus this specification:
 - pds/scripts/mailer-security-test.mjs and pds/scripts/dependency-security-test.mjs (2): actual updated consumers, unchanged isolation and resource limits.
 - pds/scripts/xml-parser-test.cjs (1): exercise the new upstream AWS XML parser after its removed fast-xml-parser dependency, preserving actual parser rejection/availability checks.
 - pds/scripts/upgrade-compatibility-test.mjs (1 new): old-data upgrade and rollback boundary.
-- bin/security-input-test.mjs (1): actual upstream ingress/dialect adaptations if required, preserving fixed budgets.
+- appview/src/localFeed.mjs (1): convert upstream sync's raw IPLD record representation with the official lexicon serializer before the existing full-commit validation. The actual avatar journey reproduced rejection of a valid typed blob; bootstrap already uses that upstream conversion through jsonToLex.
 - appview/scripts/startup-readiness-test.mjs (1): preserve full startup/account/push assertions and include actual response/server diagnostics when new upstream behavior fails them.
 - appview/src/identityFetch.ts, appview/src/server.ts and appview/scripts/identity-fetch-test.mjs (3): configure the upstream safe-fetch wrapper for the operator-selected PLC origin only. The new identity resolver blocks HTTP/private origins by default; preserve that default for other identity URLs, forbid trusted-origin redirects, and verify actual allowed/denied network requests and response bounds.
 - bin/install.sh, bin/ait-test.sh and README.md (3): enforce and document Node 22.19+ on stable, required by the new upstream fetch-node undici_v8 dependency. Peer retains its existing Node 24 requirement.
 - docs/security.md (1): accurate current component provenance and proven remaining decisions.
+- docs/operations.md (1): Node requirement and verified pre-upgrade-copy recovery boundaries for the PDS schema migration.
 - .github/workflows/security.yml and .github/workflows/release.yml (2): required persistence-upgrade execution.
 - bin/security-workflow-test.mjs (1): prevent omission of the upgrade journey.
 

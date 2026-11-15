@@ -617,8 +617,16 @@ async function localFeedTest() {
   const signer = await Secp256k1Keypair.create()
   const time = '2026-11-10T12:00:00.000Z'
   const { did } = await createOp({ signer, rotationKeys: [signer.did()], signingKey: signer.did(), handle: 'local-fixture.test', pds: 'https://fixture.test' })
+  let metadataAttack, metadataHead, metadataRev
   const server = http.createServer((request, response) => {
     response.setHeader('content-type', 'application/json')
+    const route = new URL(request.url, 'http://fixture').pathname.split('/').at(-1)
+    if (metadataAttack?.method === route) { response.end(metadataAttack.body); return }
+    if (route === 'com.atproto.sync.listRepos') {
+      response.end(JSON.stringify({ repos: metadataAttack ? [{ did, head: metadataHead, rev: metadataRev, active: true }] : [] })); return
+    }
+    if (route === 'com.atproto.repo.listRecords') { response.end('{"records":[]}'); return }
+    if (route === 'com.atproto.sync.getRepoStatus') { response.end(JSON.stringify({did,active:true,rev:metadataRev})); return }
     if (decodeURIComponent(new URL(request.url, 'http://fixture').pathname) === `/${did}`) response.end(JSON.stringify(formatDidDoc({ did,
       verificationMethods: { atproto: signer.did() }, rotationKeys: [signer.did()],
       alsoKnownAs: ['at://local-fixture.test'], services: { atproto_pds: { type: 'AtprotoPersonalDataServer', endpoint: `http://127.0.0.1:${server.address().port}` } } })))
@@ -671,6 +679,7 @@ async function localFeedTest() {
     const store = new MemoryBlockstore()
     const entries = records.map((record, i) => ({ action: 'create', collection: 'ait.feed.post', rkey: `${prefix}${i}`, record }))
     const repo = await Repo.create(store, did, signer, entries)
+    metadataHead = repo.cid.toString(); metadataRev = repo.commit.rev
     const blocks = await concatBytesAsync(getFullRepo(store, repo.cid))
     const ops = await Promise.all(entries.map(async entry => ({ action: 'create', path: entry.collection + '/' + entry.rkey, cid: await cidForRecord(entry.record) })))
     if (missing) ops.push({ action: 'create', path: 'ait.feed.post/missing', cid: await cidForRecord({ $type: 'ait.feed.post', text: 'not in CAR', createdAt: time }) })
@@ -715,10 +724,39 @@ async function localFeedTest() {
     connection.send(new MessageFrame(body, { type: '#commit' }).toBytes())
     await measured('stable-dense-car', () => until(() => diagnostics.length > beforeCar))
     check((await listing()).length === BUDGETS.representativeRecords, 'dense CAR changed projection')
+    // New current-record bootstrap JSON is a real consumer ingress. Keep the
+    // original WS/cursor/memory cases above and below unchanged.
+    for (const method of ['com.atproto.sync.listRepos', 'com.atproto.repo.listRecords', 'com.atproto.sync.getRepoStatus']) {
+      for (const [kind, body, expected] of [
+        ['dense', '{"padding":[' + Array(65_537).fill('0').join(',') + ']}', 'JSON node count'],
+        ['deep', '{"padding":' + '['.repeat(65) + '0' + ']'.repeat(65) + '}', 'JSON depth'],
+        ['huge-string', '{"padding":"' + 'x'.repeat((method === 'com.atproto.repo.listRecords' ? 8 * 1024 * 1024 : BUDGETS.ordinaryResponseBytes) + 1) + '"}', 'byte limit'],
+      ]) {
+        metadataAttack = {method,body}
+        const before = diagnostics.length
+        connection.send(new MessageFrame({name:'OutdatedCursor',message:'owned JSON ingress probe'},{type:'#info'}).toBytes())
+        await measured(`stable-bootstrap-${method.split('.').at(-1)}-${kind}`,()=>until(()=>diagnostics.slice(before).includes(expected)))
+        check((await listing()).length === BUDGETS.representativeRecords, 'bootstrap input changed retained records')
+        await assertRetained(`stable-bootstrap-retained-${method.split('.').at(-1)}-${kind}`,baseline,memory)
+      }
+    }
+    const lateInvalid = { ...valid('late-invalid JSON record'), facets: [
+      ...Array(4000).fill({ index: { byteStart: 0, byteEnd: 1 }, features: [{ $type: 'app.bsky.richtext.facet#link', uri: 'https://example.test' }] }), {},
+    ] }
+    metadataAttack = { method: 'com.atproto.repo.listRecords', body: JSON.stringify({ records: [{
+      uri: `at://${did}/ait.feed.post/late-invalid-json`, cid: (await cidForRecord(lateInvalid)).toString(), value: lateInvalid,
+    }] }) }
+    const beforeLate = diagnostics.length
+    connection.send(new MessageFrame({name:'OutdatedCursor',message:'owned late-invalid record probe'},{type:'#info'}).toBytes())
+    await measured('stable-bootstrap-late-invalid-record',()=>until(()=>diagnostics.slice(beforeLate).includes('Record/facets/4000')))
+    check((await listing()).length === BUDGETS.representativeRecords, 'late-invalid JSON record was admitted')
+    await assertRetained('stable-bootstrap-retained-late-invalid-record',baseline,memory)
+    metadataAttack = undefined
     const beforeOversize = diagnostics.length
     connection.send(Buffer.alloc(BUDGETS.websocketBytes + 1), { compress: true })
     await measured('stable-compressed-oversize-frame', () => until(() => diagnostics.length > beforeOversize))
-    check((await request(appPort, '/xrpc/_health', undefined, { method: 'GET' })).status === 200, 'oversized feed interrupted AppView HTTP')
+    const failedHealth = await request(appPort, '/xrpc/_health', undefined, { method: 'GET' })
+    check(failedHealth.status === 503 && JSON.parse(failedHealth.body).indexing.state === 'failed', 'invalid feed must leave HTTP available with honest degraded indexing')
     connection = undefined
     await connected()
     connection.send(await commitFrame([valid('recovered')], 'recovery'))

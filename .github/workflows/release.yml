@@ -102,6 +102,7 @@ jobs:
           node appview/scripts/duplicate-follow-test.mjs
           npm --prefix mcp run build
           node appview/scripts/operator-identity-test.mjs
+          node appview/scripts/startup-readiness-test.mjs
           node bin/managed-ports-test.mjs
           node mcp/scripts/push-mode-test.mjs
           node mcp/scripts/handles-test.mjs
@@ -110,7 +111,6 @@ jobs:
           node mcp/scripts/codex-writer-ownership-test.mjs
           node mcp/scripts/session-picker-test.mjs
           if [ "$GITHUB_REF" = refs/heads/build/private-peer-integration ]; then
-            (cd appview && node scripts/startup-readiness-test.mjs)
             (cd appview && node --import tsx scripts/peer-projection-test.mjs)
             (cd appview && node --import tsx scripts/peer-feed-test.mjs)
             (cd appview && node --import tsx scripts/peer-lifecycle-test.mjs)

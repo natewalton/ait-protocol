@@ -21,16 +21,17 @@ A disposable global Zod 4.6.7 override makes MCP's package audit clean but cause
 4. Preserve AppView's source ownership, bootstrap/replay ordering, account lifecycle and retained history. Preserve MCP's actual tool schemas, successful/invalid calls, push/channel notifications, cursor behavior and Claude/Codex session bindings. Main and peer retain their distinct local versus verified-feed trust and data models.
 5. After upstream validation, reassess remaining advisories. If a dependency migration is still necessary, use its native supported APIs and add consumer-specific tests. A Zod migration must preserve advertised input schemas and actual ATproto parsing; a PLC change must rebuild/inspect the executed bundle. No fake package versions, renamed vulnerable code, unreviewed overrides or /v3 imports to conceal findings. Broader source/fork changes require a concrete counted amendment and independent review, not another routine version assumption.
 
-   MCP amendment: the coherent latest API stack compiles and passes actual push/handle consumers but still depends on Zod 3. Migrate this process to official Zod 4.6.7 and native `z.toJSONSchema` (draft-07), removing zod-to-json-schema. This is an explicit client dependency migration, not a claim that upstream ATproto declares Zod 4 compatibility. Require actual tool-schema constraints, invalid-call recovery, client/record behavior and fixed-budget ingress tests before adopting the scoped MCP override. Do not apply it to PLC/PDS/AppView or infer their compatibility from MCP.
+   MCP amendment: the coherent latest API stack compiles and passes actual push/handle consumers but still depends on Zod 3. Migrate this process to official Zod 4.6.7 and native `z.toJSONSchema` (draft-07), removing AIT's direct dependency and use of zod-to-json-schema (the SDK may retain it for legacy compatibility). This is an explicit client dependency migration, not a claim that upstream ATproto declares Zod 4 compatibility. Require actual tool-schema constraints, invalid-call recovery, client/record behavior and fixed-budget ingress tests before adopting the scoped MCP override. Do not apply it to PLC/PDS/AppView or infer their compatibility from MCP.
 6. Remove dispositions only when their packages or vulnerable consumer paths are actually gone. Add any changed graph fingerprint only after the existing fixed-budget ingress and dialect regressions pass. Do not extend deadlines or suppress remaining findings. Add the real persistence-upgrade fixture to required PR/release checks so future stack changes cannot bypass it.
 
 ## Files touched
 
-Initial implementation scope: **24 files**, plus this specification:
+Initial implementation scope: **25 files**, plus this specification:
 
 - appview/package.json and appview/package-lock.json (2): coherent upstream client/indexer stack.
 - mcp/package.json and mcp/package-lock.json (2): upstream client stack.
 - mcp/src/server.ts and mcp/scripts/list-tools-test.mjs (2): replace the obsolete converter with official Zod 4 conversion and verify the actual advertised tool arguments, bounds and invalid-call recovery through MCP using an owned test home.
+- mcp/scripts/stack-migration-test.mjs (1 new): actual two-session MCP → owned PLC/PDS → AppView indexing/read/notification journey, including supported records, invalid writes and identity persistence. No installed services or data.
 - pds/package.json and pds/package-lock.json (2): upstream PDS stack.
 - pds/scripts/mailer-security-test.mjs and pds/scripts/dependency-security-test.mjs (2): actual updated consumers, unchanged isolation and resource limits.
 - pds/scripts/xml-parser-test.cjs (1): exercise the new upstream AWS XML parser after its removed fast-xml-parser dependency, preserving actual parser rejection/availability checks.

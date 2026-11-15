@@ -49,6 +49,14 @@ jobs:
           done
           npm --prefix appview run build
           npm --prefix mcp run build
+          baseline="$RUNNER_TEMP/ait-upgrade-baseline"
+          mkdir -p "$baseline"
+          git archive b4ea412c50caf3a21f5e270f65b20906dc76f0de pds | tar -x -C "$baseline"
+          npm --prefix "$baseline/pds" ci --no-audit
+          node pds/scripts/upgrade-compatibility-test.mjs --baseline "$baseline"
+          node mcp/scripts/stack-migration-test.mjs
+          node appview/scripts/identity-fetch-test.mjs
+          node mcp/scripts/list-tools-test.mjs
           node appview/scripts/operator-identity-test.mjs
           node appview/scripts/startup-readiness-test.mjs
           node bin/managed-ports-test.mjs
@@ -60,6 +68,8 @@ jobs:
           node mcp/scripts/claude-background-test.mjs
           node mcp/scripts/channel-sink-test.mjs
           node pds/scripts/mailer-security-test.mjs
+          node pds/scripts/xml-parser-test.cjs
+          node pds/scripts/dependency-security-test.mjs --candidate "$GITHUB_WORKSPACE" --json
           node bin/check-advisories-test.mjs
           node bin/security-workflow-test.mjs
           node bin/check-native-advisories-test.mjs

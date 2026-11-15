@@ -54,6 +54,7 @@ async function fixture(t,{records=[record('snapshot old mention')],hold=true,gap
       if(state.mode==='fail'){res.writeHead(503);res.end('{}');return}
       result={repos:state.repoMissing?[]:[{did:A,head:(await cidForRecord(records[0]??record('empty'))).toString(),rev:state.rev,active:state.active,...(!state.active?{status:'deactivated'}:{})}]}
     } else if(url.pathname.endsWith('listRecords')) {
+      if(state.reactivatedOnRecords){state.reactivatedOnRecords=false;res.writeHead(400);res.end('{"error":"RepoDeactivated"}');return}
       if(state.missingOnRecords){state.repoMissing=true;res.writeHead(400);res.end('{"error":"RepoNotFound"}');return}
 
       const selected=url.searchParams.get('collection')==='ait.feed.post'?state.records:[]
@@ -345,4 +346,16 @@ test('a repository removed during bootstrap does not stop remaining actors',asyn
   state.socket.send((await frame([record('sibling remains healthy')],'create',0,B)).bytes)
   await until(()=>db.prepare('SELECT text FROM posts WHERE uri=?').get(`at://${B}/ait.feed.post/r0`)?.text==='sibling remains healthy','sibling progresses')
   assert.equal((await state.health()).code,200);db.close()
+})
+
+test('reactivation during a record read retries the invalidated snapshot before running',async t=>{
+  const state=await fixture(t);state.reactivatedOnRecords=true
+  state.release()
+  await until(()=>state.statusReads>=1,'reactivation checked against current account')
+  assert.equal((await state.health()).status,'starting')
+  await until(async()=>(await state.health()).code===200,'reactivated snapshot recovers')
+  assert.ok(state.requests>=2,'invalidated read must retry bootstrap')
+  const db=openDb(state.dbPath)
+  assert.equal(db.prepare('SELECT text FROM posts WHERE uri=?').get(`at://${A}/ait.feed.post/r0`)?.text,'snapshot old mention')
+  db.close()
 })

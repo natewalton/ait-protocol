@@ -197,10 +197,11 @@ async function phase(name, root, home, data) {
       const written = await rpc('com.atproto.repo.createRecord', { repo: did, collection: 'app.bsky.feed.post', rkey: '3jzfcijpj2z2a', record }, session.accessJwt);
       await rpc('com.atproto.server.requestEmailConfirmation', null, session.accessJwt);
       const emailToken = await pds.ctx.accountManager.db.db.selectFrom('email_token').selectAll().where('did', '=', did).where('purpose', '=', 'confirm_email').executeTakeFirstOrThrow();
-      state = { ...session, record, written, blob, emailToken: emailToken.token, root: await rpc(`com.atproto.sync.getLatestCommit?did=${did}`) };
+      state = { ...session, signingKeyDid: key.did(), record, written, blob, emailToken: emailToken.token, root: await rpc(`com.atproto.sync.getLatestCommit?did=${did}`) };
       await writeFile(path.join(home, 'state.json'), JSON.stringify(state));
     } else {
       state = JSON.parse(await readFile(path.join(home, 'state.json')));
+      assert.equal((await pds.ctx.actorStore.keypair(did)).did(), state.signingKeyDid, 'actor signing key changed');
       const upgraded = name !== 'rollback-old';
       assert.equal(require('@atproto/pds/package.json').version, upgraded ? '0.5.59' : '0.4.226');
       assert.equal((await rpc('com.atproto.server.getSession', undefined, state.accessJwt)).did, did, 'old access token lost identity');

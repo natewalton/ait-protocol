@@ -234,6 +234,18 @@ echo '  appview running'
 echo '  codex-appserver running'
 SH
 chmod +x "$TEST_DIR/bin/status.sh"
+# The copied supervisor probes the fixed AppView URL even though lsof maps
+# discovery to our ephemeral listeners. Never consult an installed AppView.
+cat > "$TEST_DIR/shim/curl" <<'SH'
+#!/bin/bash
+if [ "$*" != $'-sS --max-time 3 -w \n%{http_code} http://localhost:2585/xrpc/_health' ]; then
+  echo 'unexpected fixture HTTP request' >&2
+  exit 1
+fi
+touch "$AIT_LOG_DIR/health-probed"
+printf '{"status":"ok","indexing":{"state":"running"}}\n200'
+SH
+chmod +x "$TEST_DIR/shim/curl"
 node_bin="$(command -v node)"
 http_pids=""
 for service in plc pds appview; do
@@ -262,6 +274,7 @@ for _ in {1..100}; do [ -s "$AIT_TEST_SERVER_PID" ] && break; sleep 0.05; done
 server_pid="$(cat "$AIT_TEST_SERVER_PID")"
 child_pid="$(cat "$AIT_TEST_CHILD_PID")"
 if "$TEST_DIR/bin/start-all.sh" > "$TEST_DIR/start-conflict.log" 2>&1; then exit 1; fi
+[ -f "$AIT_LOG_DIR/health-probed" ]
 grep -q 'AIT status:' "$TEST_DIR/start-conflict.log"
 grep -q 'DID NOT START: codex-appserver' "$TEST_DIR/start-conflict.log"
 kill -0 "$server_pid"

@@ -35,8 +35,9 @@ owned configuration. It never reaches installed services.
 
 Main's AppView bootstraps current local AIT records before reporting readiness,
 then validates queued subscription events in order. Commits already covered by
-the snapshot advance the cursor without overwriting its records; newer events
-apply normally. It upserts without sweeping
+the snapshot cannot overwrite its records. Explicit covered deletes still remove
+rows absent from the snapshot; old deletes cannot remove recreated records. Newer
+events apply normally. It upserts without sweeping
 retained rows. Historical bootstrap writes retain notification rows but suppress
 immediate pushes; a mention overlapping bootstrap may wait for the next existing
 push-registration replay. Health is starting until coverage is proved, and
@@ -45,3 +46,8 @@ PDS I/O failures return to Starting and recover through the existing reconnect
 path. Quiet working streams
 remain healthy. `appview/scripts/startup-readiness-test.mjs` exercises compiled
 main with owned loopback PDS fixtures. This differs from peer's verified feed.
+
+Local bootstrap JSON is bounded before decoding: metadata 512 KiB, one-record
+pages 8 MiB, depth 64 and 65,536 structural nodes. The existing CAR per-record node
+bound remains 4,096; the JSON-response envelope is a separate ingress. Security
+fixtures exercise late-invalid actual records as well as dense/deep/large JSON.

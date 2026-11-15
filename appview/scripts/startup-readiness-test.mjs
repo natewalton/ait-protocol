@@ -54,11 +54,13 @@ async function fixture(t,{records=[record('snapshot old mention')],hold=true,gap
       if(state.mode==='fail'){res.writeHead(503);res.end('{}');return}
       result={repos:state.repoMissing?[]:[{did:A,head:(await cidForRecord(records[0]??record('empty'))).toString(),rev:state.rev,active:state.active,...(!state.active?{status:'deactivated'}:{})}]}
     } else if(url.pathname.endsWith('listRecords')) {
+      if(state.missingOnRecords){state.repoMissing=true;res.writeHead(400);res.end('{"error":"RepoNotFound"}');return}
+
       const selected=url.searchParams.get('collection')==='ait.feed.post'?state.records:[]
       const offset=Number(url.searchParams.get('cursor')??0),limit=Number(url.searchParams.get('limit'))
       const chunk=selected.slice(offset,offset+limit)
       result={records:await Promise.all(chunk.map(async(value,i)=>({uri:`at://${A}/ait.feed.post/r${offset+i}`,cid:(await cidForRecord(value)).toString(),value}))),...(offset+limit<selected.length?{cursor:String(offset+limit)}:{})}
-    } else if(url.pathname.endsWith('getRepoStatus')) {state.statusReads=(state.statusReads??0)+1;result={did:A,active:state.active,...(state.active?{rev:state.afterRev}:{status:'deactivated'})}}
+    } else if(url.pathname.endsWith('getRepoStatus')) {state.statusReads=(state.statusReads??0)+1;const active=state.afterActive??state.active;result={did:A,active,...(active?{rev:state.afterRev}:{status:'deactivated'})}}
     else {res.writeHead(404);res.end('{}');return}
     const body=JSON.stringify(result);state.bytes+=Buffer.byteLength(body)
     res.setHeader('content-type','application/json');res.end(body)
@@ -311,5 +313,34 @@ test('authoritatively absent accounts become inactive without stopping other act
   assert.ok(db.prepare('SELECT 1 FROM posts WHERE did=?').get(A),'account absence must retain history')
   state.socket.send((await frame([record('other actor continues')],'create',0,B)).bytes)
   await until(()=>db.prepare('SELECT text FROM posts WHERE uri=?').get(`at://${B}/ait.feed.post/r0`)?.text==='other actor continues','other actor indexed')
+  assert.equal((await state.health()).code,200);db.close()
+})
+
+test('a covered native delete removes a retained row absent from the snapshot',async t=>{
+  const deletion=await frame([record('deleted while stopped')],'delete',5)
+  const state=await fixture(t)
+  const db=openDb(state.dbPath)
+  db.prepare('INSERT INTO posts(uri,cid,did,text,createdAt,indexedAt) VALUES(?,?,?,?,?,?)').run(`at://${A}/ait.feed.post/r5`,(await cidForRecord(record('deleted while stopped'))).toString(),A,'deleted while stopped',time,time)
+  state.socket.send(deletion.bytes);state.release()
+  await until(()=>!db.prepare('SELECT 1 FROM posts WHERE uri=?').get(`at://${A}/ait.feed.post/r5`),'covered explicit deletion applied')
+  assert.ok(db.prepare('SELECT 1 FROM posts WHERE did=?').get(B),'unmentioned retained row must not be swept')
+  assert.equal((await state.health()).code,200);db.close()
+})
+test('final inactive status is projected before bootstrap can report running',async t=>{
+  const state=await fixture(t);state.afterActive=false;state.release()
+  await until(async()=>(await state.health()).code===200,'inactive final status ready')
+  const db=openDb(state.dbPath)
+  assert.equal(db.prepare('SELECT active FROM actors WHERE did=?').get(A).active,0)
+  assert.ok(db.prepare('SELECT 1 FROM posts WHERE did=?').get(A),'inactive transition retains records');db.close()
+})
+test('a repository removed during bootstrap does not stop remaining actors',async t=>{
+  const state=await fixture(t);state.missingOnRecords=true
+  const db=openDb(state.dbPath)
+  db.prepare('INSERT INTO posts(uri,cid,did,text,createdAt,indexedAt) VALUES(?,?,?,?,?,?)').run(`at://${A}/ait.feed.post/retained`,(await cidForRecord(record('retained'))).toString(),A,'retained',time,time)
+  state.release();await until(async()=>(await state.health()).code===200,'deleted during bootstrap ready')
+  assert.equal(db.prepare('SELECT active FROM actors WHERE did=?').get(A).active,0)
+  assert.ok(db.prepare('SELECT 1 FROM posts WHERE did=?').get(A))
+  state.socket.send((await frame([record('sibling remains healthy')],'create',0,B)).bytes)
+  await until(()=>db.prepare('SELECT text FROM posts WHERE uri=?').get(`at://${B}/ait.feed.post/r0`)?.text==='sibling remains healthy','sibling progresses')
   assert.equal((await state.health()).code,200);db.close()
 })

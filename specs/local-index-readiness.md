@@ -1,6 +1,6 @@
 # Report when local indexing has caught up
 
-Status: design GREEN; stale replay and transient-I/O review corrections under validation.
+Status: design GREEN; final review corrections locally validated, independent recheck pending.
 Date: 2026-11-14
 
 ## Why
@@ -32,21 +32,24 @@ and let the existing bounded WebSocket stream apply backpressure during bootstra
 then process events serially in sequence order. No unbounded event queue is added.
 Newer updates/deletes queued during bootstrap apply afterward and win. For each
 active DID, keep ONE reconciliation entry with its snapshot revision and any
-later target. Compare listRepos revision with getRepoStatus after the snapshot:
+later target and the snapshot URI membership set. Compare listRepos revision with getRepoStatus after the snapshot:
 an unchanged revision proves coverage; a changed revision remains in one target
 map until a complete commit at that revision or newer is projected.
 
 Every queued commit is fully bounded/validated before filtering. Its envelope
 CID/DID/rev must match the parsed CAR root, using existing sync/common primitives
 without adding signature requirements to main. Covered commits at or below the
-snapshot revision advance the cursor but perform no writes. This prevents stale
-updates and old deletes overwriting recreated current records. Covered deletes
-do not sweep retained rows absent from the snapshot; newer live deletes still
-apply. This is explicit preservation, not a new cache-cleanup policy.
+snapshot revision suppress creates/updates. Covered deletes apply only when their
+URI is absent from that snapshot: an explicit native delete still removes its
+retained stale row, but cannot remove a recreated snapshot record. Unmentioned
+absent rows are never swept. Newer live deletes apply normally.
 
 Account events have no commit revision. They read the current local PDS
 getRepoStatus before updating active/status; an exact authoritative RepoNotFound
 makes that account inactive/deleted without deleting records or stopping siblings.
+The final after-snapshot status is projected before ready. Canonical deactivation
+or deletion during a record read is reconciled through the same current-account
+read rather than stopping every actor.
 Identity events retain main's cache invalidation/current PLC resolution; their old
 handle strings are never assigned to projection identity.
 
@@ -71,9 +74,12 @@ Read only the configured PDS origin and standard listRepos/listRecords/getRepoSt
 paths, rejecting redirects. Bound bytes and JSON depth/nodes before decoding;
 validate standard XRPC outputs, record schemas, scoped URIs/CIDs and advancing
 pagination. Reuse current input depth/node budgets; no new dependencies/pins. Metadata pages
-are bounded to512KiB. Record reads use one record per page and8MiB JSON, chosen
-before stress runs to cover the existing1MB CBOR record envelope plus JSON escaping
-without materializing a100MiB page. Larger replies fail clearly before decoding.
+are bounded to 512 KiB. Record reads use one record per page and 8 MiB JSON, chosen
+before stress runs to cover the existing 1 MB CBOR record envelope plus JSON escaping
+without materializing a 100 MiB page. Larger replies fail clearly before decoding.
+JSON responses use 65,536 structural nodes/depth 64; this differs from the existing
+CAR per-record 4,096-node bound. The actual JSON-record late-invalid-facet case
+is included in the security consumer fixture; padding-only probes are insufficient.
 Bootstrap has a cost on every initial start; measure bytes/time for a realistic
 owned store before accepting the change.
 
@@ -114,9 +120,9 @@ quiet-ready stays healthy. Verify snapshot-overlapping update/delete ordering,
 changed-revision barrier, pages, metadata abort/oversize/depth and owned cleanup.
 Retained stale rows stay unchanged. Old mention rows produce no bootstrap pushes;
 a new overlapping mention remains durable and is delivered through registration
-replay. Measured owned fixture:6000 posts,4544922 response bytes,2371ms bootstrap plus
+replay. Measured owned fixture: 6,000 posts, 4,544,922 response bytes, 2,371 ms bootstrap plus
 retained replay on this Mac. This is a loopback synthetic store, not a live timing
-guarantee. JSON ordinary metadata512KiB and single-record pages8MiB; existing
+guarantee. JSON ordinary metadata 512 KiB and single-record pages 8 MiB; existing
 CBOR record/depth/node bounds remain unchanged.
 
 Run bin/ait-test.sh: both adopted/new service starts wait on the same body-based

@@ -59,6 +59,16 @@ export function createLocalFeed({ service, pdsUrl, idResolver, handleEvent, hand
       controller.signal.removeEventListener('abort', abort)
     }
   }
+  async function currentAccount(did) {
+    try {
+      const current = await json('com.atproto.sync.getRepoStatus', { did })
+      assert.equal(current.did, did, 'local account status DID mismatch')
+      return current
+    } catch (error) {
+      if (error.status !== 400 || error.error !== 'RepoNotFound') throw error
+      return { did, active: false, status: 'deleted' }
+    }
+  }
   async function* pages(method, params, field) {
     const seen = new Set(); let pageCursor
     do {
@@ -76,21 +86,34 @@ export function createLocalFeed({ service, pdsUrl, idResolver, handleEvent, hand
       const account = parseAccount({ did: repo.did, active: repo.active !== false, status: repo.status, seq: cursor, time: new Date().toISOString() })
       if (account) await handleSnapshotEvent(account)
       if (repo.active === false) continue
-      revisions.set(repo.did, { snapshot: repo.rev, target: repo.rev })
-      for (const collection of collections) {
-        for await (const item of pages('com.atproto.repo.listRecords', { repo: repo.did, collection, limit: 1 }, 'records')) {
-          const uri = new AtUri(item.uri)
-          assert(uri.host === repo.did && uri.collection === collection, 'local bootstrap record scope mismatch')
-          const record = jsonToLex(item.value)
-          lexicons.assertValidRecord(collection, record)
-          const cid = jsonToLex({ $link: item.cid })
-          // Projection fields only; no invented signed commit/revision metadata.
-          await handleSnapshotEvent({ event: 'create', did: repo.did, uri, collection, rkey: uri.rkey, cid, record })
+      revisions.set(repo.did, { snapshot: repo.rev, target: repo.rev, uris: new Set() })
+      let after
+      try {
+        for (const collection of collections) {
+          for await (const item of pages('com.atproto.repo.listRecords', { repo: repo.did, collection, limit: 1 }, 'records')) {
+            const uri = new AtUri(item.uri)
+            assert(uri.host === repo.did && uri.collection === collection, 'local bootstrap record scope mismatch')
+            const record = jsonToLex(item.value)
+            lexicons.assertValidRecord(collection, record)
+            const cid = jsonToLex({ $link: item.cid })
+            // Projection fields only; no invented signed commit/revision metadata.
+            await handleSnapshotEvent({ event: 'create', did: repo.did, uri, collection, rkey: uri.rkey, cid, record })
+            revisions.get(repo.did).uris.add(item.uri)
+          }
         }
+      } catch (error) {
+        if (error.status !== 400 || !['RepoNotFound', 'RepoDeactivated', 'RepoTakendown'].includes(error.error)) throw error
+        after = await currentAccount(repo.did)
+        // A concurrent deactivate/reactivate invalidated this read. Retry the
+        // existing attempt rather than treating a valid state change as corruption.
+        if (after.active) throw Object.assign(error, { code: 'ESTALE' })
       }
-      const after = await json('com.atproto.sync.getRepoStatus', { did: repo.did })
-      assert.equal(after.did, repo.did, 'local bootstrap status DID mismatch')
-      if (!after.active || after.rev === repo.rev) revisions.get(repo.did).target = null
+      after ??= await currentAccount(repo.did)
+      const current = parseAccount({ ...after, seq: cursor, time: new Date().toISOString() })
+      assert(current, 'unsupported current local account status')
+      await handleSnapshotEvent(current)
+      if (!after.active) revisions.delete(repo.did)
+      else if (after.rev === repo.rev) revisions.get(repo.did).target = null
       else {
         assert(after.rev && after.rev >= repo.rev, 'local bootstrap revision went backwards')
         revisions.get(repo.did).target = after.rev
@@ -130,14 +153,7 @@ export function createLocalFeed({ service, pdsUrl, idResolver, handleEvent, hand
     else if (value.$type === METHOD + '#account') {
       // Account events have no commit revision. Read current local authority
       // rather than applying an old active flag after the bootstrap.
-      let current
-      try {
-        current = await json('com.atproto.sync.getRepoStatus', { did: value.did })
-        assert.equal(current.did, value.did, 'local account status DID mismatch')
-      } catch (error) {
-        if (error.status !== 400 || error.error !== 'RepoNotFound') throw error
-        current = { active: false, status: 'deleted' }
-      }
+      const current = await currentAccount(value.did)
       const account = parseAccount({ ...value, active: current.active, status: current.status })
       assert(account, 'unsupported current local account status')
       if (current.active && !revisions.has(value.did)) await bootstrap()
@@ -151,6 +167,11 @@ export function createLocalFeed({ service, pdsUrl, idResolver, handleEvent, hand
     // The snapshot already contains this revision or newer record values.
     // Validate historical input, but never replay its writes over that snapshot.
     if (value.$type === METHOD + '#commit' && revision && value.rev <= revision.snapshot) {
+      // Preserve native delete semantics for stale rows absent from the
+      // snapshot, while an older delete must not remove a recreated record.
+      for (const event of events) if (event.event === 'delete' && !revision.uris.has(event.uri.toString())) {
+        await handleEvent(event)
+      }
       cursor = Math.max(cursor, value.seq ?? cursor)
       return
     }
@@ -160,7 +181,7 @@ export function createLocalFeed({ service, pdsUrl, idResolver, handleEvent, hand
     }
     cursor = Math.max(cursor, value.seq ?? cursor)
     if (value.$type === METHOD + '#commit' && revision?.target && value.rev >= revision.target) revision.target = null
-    if (value.$type === METHOD + '#account' && events[0]?.active === false && revisions.has(value.did)) revisions.get(value.did).target = null
+    if (value.$type === METHOD + '#account' && events[0]?.active === false) revisions.delete(value.did)
     ready()
   }
   async function consume() {
@@ -207,10 +228,10 @@ export function createLocalFeed({ service, pdsUrl, idResolver, handleEvent, hand
     }
   }
   function retryable(error) {
-    const networkCodes = ['ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED', 'EPIPE', 'ETIMEDOUT', 'ECANCELED', 'UND_ERR_SOCKET']
+    const attemptCodes = ['ESTALE', 'ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED', 'EPIPE', 'ETIMEDOUT', 'ECANCELED', 'UND_ERR_SOCKET']
     const cause = error.cause ?? error
-    const network = networkCodes.includes(cause.code) ||
-      (cause instanceof AggregateError && cause.errors.length > 0 && cause.errors.every(item => networkCodes.includes(item.code)))
+    const network = attemptCodes.includes(cause.code) ||
+      (cause instanceof AggregateError && cause.errors.length > 0 && cause.errors.every(item => attemptCodes.includes(item.code)))
     return error.error === 'ConsumerTooSlow' || error.name === 'TimeoutError' || network || error.status >= 500
   }
   function report(error) {

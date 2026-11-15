@@ -740,6 +740,17 @@ async function localFeedTest() {
         await assertRetained(`stable-bootstrap-retained-${method.split('.').at(-1)}-${kind}`,baseline,memory)
       }
     }
+    const lateInvalid = { ...valid('late-invalid JSON record'), facets: [
+      ...Array(4000).fill({ index: { byteStart: 0, byteEnd: 1 }, features: [{ $type: 'app.bsky.richtext.facet#link', uri: 'https://example.test' }] }), {},
+    ] }
+    metadataAttack = { method: 'com.atproto.repo.listRecords', body: JSON.stringify({ records: [{
+      uri: `at://${did}/ait.feed.post/late-invalid-json`, cid: (await cidForRecord(lateInvalid)).toString(), value: lateInvalid,
+    }] }) }
+    const beforeLate = diagnostics.length
+    connection.send(new MessageFrame({name:'OutdatedCursor',message:'owned late-invalid record probe'},{type:'#info'}).toBytes())
+    await measured('stable-bootstrap-late-invalid-record',()=>until(()=>diagnostics.slice(beforeLate).includes('Record/facets/4000')))
+    check((await listing()).length === BUDGETS.representativeRecords, 'late-invalid JSON record was admitted')
+    await assertRetained('stable-bootstrap-retained-late-invalid-record',baseline,memory)
     metadataAttack = undefined
     const beforeOversize = diagnostics.length
     connection.send(Buffer.alloc(BUDGETS.websocketBytes + 1), { compress: true })

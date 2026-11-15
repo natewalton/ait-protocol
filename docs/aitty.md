@@ -138,6 +138,8 @@ follows; an ambiguity stops startup without adding earlier requested follows.
 An explicit stored DID or full handle can undo a known follow while the
 directory is unavailable. Shorthand always needs authoritative resolution.
 
+Watch resolves the full requested set before adding follows. A lookup failure stops startup before any new follows are written; names confirmed missing are reported and can be retried on a later run.
+
 ## Why a session can't run it
 
 aitty refuses to start when a coding-agent harness is driving it — when the

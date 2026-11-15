@@ -90,9 +90,12 @@ and are not channel evidence. A matching native job uses its env UUID; an active
 job needs respawnFlags naming server:ait-protocol for requested push to remain
 push. The measured stopped state preserves a new foreground launch's declared
 mode; all other states, including unknown values, use the job's flags.
-Only a readable job whose sessionId equals the env UUID selects this path. An
-unreadable or mismatched job is not native-job evidence: ordinary resolution and
-declared mode remain unchanged. A bad identity binding stays a tool error rather
+Only a readable job whose sessionId equals the env UUID selects this path. An absent or readable mismatched job keeps ordinary resolution and declared mode.
+A present unreadable or invalid job selects the env runtime UUID, poll mode, and
+blocks a first join until readable evidence resolves the account. Existing saved
+identities and durable bindings remain usable. Poll capabilities stay fixed for
+that MCP lifetime; a later readable record can resolve identity on the next tool
+call but does not retroactively activate a channel. A bad identity binding stays a tool error rather
 than killing MCP.
 Reuse existing poll mode when an active native job drops the channel flag. A continued worker in that mode keeps
 the identity but does not claim push delivery, register/renew a push callback,
@@ -262,9 +265,9 @@ Final review corrections (2026-11-11):
 - Joined-account first-cwd matching was removed; a 70KB first message and a
   worktree move both resolve by the exact native UUID edge. Recent non-AIT
   candidates use the same exact edge and mtime scope, without cwd filtering.
-- Native-job selection requires a readable matching env-UUID job. Neither an
-  unreadable job nor a job for the argv-resume UUID can change ordinary identity
-  or declared push. Regression covers stale env, malformed/mismatched jobs,
+- Readable matching native jobs use the env UUID; a present unreadable job remains unknown. A readable job for another UUID cannot change ordinary identity or declared push.
+  Present unreadable native context selects poll and blocks unresolved first join.
+  Regression covers stale env, malformed/mismatched jobs,
   active native jobs, stopped jobs, and unknown worker state.
 - First join captures one resolved UUID for the identity read and later write
   across createAccount. A source that joins concurrently cannot redirect that
@@ -292,3 +295,44 @@ The build now includes peer008900c. Its upstream delta is VERSION, the compiled
 CLI lifecycle fixture, and security inventory documentation only. MCP runtime,
 consumer scripts and README are byte-identical to the independently reviewed
 build; the focused consumer, push, channel and picker checks are rerun here.
+
+
+### Unknown native metadata correction (2026-11-14)
+
+Status: implemented; focused consumer/channel/picker checks pass; final systems and independent review pending.
+The released job reader collapses parse/read failure and absence to null
+(claudeSession.ts127-138); channel eligibility accepts null (46), while server.ts21
+fixes mode at import. An isolated partial-JSON probe selects push before a valid
+working/no-channel record selects poll. No live loss or native partial-write
+frequency is established. Fix it: an unreadable native record must not advertise
+a channel or permit implicit account recovery through a new join.
+
+Three touched files: mcp/src/claudeSession.ts (distinguish native context),
+mcp/scripts/claude-background-test.mjs (real MCP capability/join/repair journey),
+and this spec (correct the prior fallback rule). No new monitor or timer.
+Test partial JSON, invalid shape and read failure; verify no channel capability,
+no push registration/account creation, tool-visible pending, recovery to original
+DID after repair, preserved binding, and ordinary absence/mismatch compatibility.
+Run build plus background/channel/picker fixtures in neutral session environment;
+revert classification in a scratch copy to prove the new consumer assertion fails.
+Out of scope: dependencies, release version, native activation, installed updates,
+and identity merges. Rejected: retry timer or dynamic capability upgrade; existing
+identity calls retry and MCP capabilities are negotiated once. Existing-state
+repair is distinct from changing the immutable startup capability decision.
+
+Validation for this correction: MCP build, neutral-environment background consumer,
+channel sink and public resume picker PASS. A scratch git archive with the released
+classifier and corrected consumer fails specifically at unknown native context
+channel negotiation; no authoring tree was modified for the negative control.
+
+Main integration extraction (2026-11-14): sixteen paths: the seven runtime files
+(claudeSession, storage, session, server, push, sessionPicker, tools/join), four
+consumer/native scripts (background, native background, channel sink, picker),
+two spec files, README background-use paragraph and both existing macOS workflow
+consumer steps. Based on main6e5b555; no peer runtime, guide, version, dependencies
+or security policy is copied. Source-relative patches preserve main's existing
+actor naming and platform behavior. The three-path unknown-context follow-up is
+included. The coordinator owns integration with the separately reviewed security
+and operator/startup changes.
+
+Main adapter: continued-session rows use main's existing handle-only ResumableSession shape; the peer-only DID presence field is not promoted.

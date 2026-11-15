@@ -43,6 +43,7 @@ export function claudeChannelsRequested(): boolean {
   // A normal foreground launch retains the declared mode. Native jobs expose
   // the flags they actually inherit, independent of foreground title changes.
   const own = uuid(process.env.CLAUDE_CODE_SESSION_ID), state = own ? job(own) : null
+  if (state === 'unreadable') return false
   if (!state || state.state === 'stopped') return true
   const args = state.respawnFlags ?? []
   for (let i = 0; i < args.length; i++) {
@@ -124,17 +125,18 @@ function entries(dir: string): fs.Dirent[] {
   try { return fs.readdirSync(dir, { withFileTypes: true }) }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
 }
-function job(id: string): { sessionId?: string; state?: string; forkSessionId?: string; forkParentSessionId?: string; interactiveLineage?: boolean; cwd?: string; respawnFlags?: string[]; createdAt?: string } | null {
+function job(id: string): { sessionId?: string; state?: string; forkSessionId?: string; forkParentSessionId?: string; interactiveLineage?: boolean; cwd?: string; respawnFlags?: string[]; createdAt?: string } | 'unreadable' | null {
   const file = path.join(config(), 'jobs', id.slice(0, 8), 'state.json')
   try {
     const value = JSON.parse(fs.readFileSync(file, 'utf8'))
-    if (!value || typeof value !== 'object') return null
-    if (value.respawnFlags !== undefined && (!Array.isArray(value.respawnFlags) || !value.respawnFlags.every((flag: unknown) => typeof flag === 'string'))) return null
-    if (value.cwd !== undefined && typeof value.cwd !== 'string') return null
+    if (!value || typeof value !== 'object') return 'unreadable'
+    if (value.respawnFlags !== undefined && (!Array.isArray(value.respawnFlags) || !value.respawnFlags.every((flag: unknown) => typeof flag === 'string'))) return 'unreadable'
+    if (value.cwd !== undefined && typeof value.cwd !== 'string') return 'unreadable'
+    if (!uuid(value.sessionId)) return 'unreadable'
     return uuid(value.sessionId) === id ? { ...value, sessionId: id } : null
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-    return null // Incomplete or unreadable native state grants no identity or push.
+    return 'unreadable' // Absence is ordinary; unreadable native context is not foreground evidence.
   }
 }
 function candidates(): Candidate[] {
@@ -169,6 +171,7 @@ export function resolveClaudeIdentity(id: string): string {
   const own = uuid(process.env.CLAUDE_CODE_SESSION_ID)
   const state = own === id ? job(own) : null
   if (!state) return id
+  if (state === 'unreadable') throw new ClaudeHandoverPending()
   // Independent /fork is explicitly identified by Claude's own job metadata.
   if (uuid(state?.forkSessionId) === id && uuid(state?.forkParentSessionId)) return id
   if (!state.interactiveLineage) return id

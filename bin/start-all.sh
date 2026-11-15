@@ -73,13 +73,13 @@ wait_for_appview() {
   STARTING_PIDFILE="$pidfile"
   STARTING_ADOPTED="$adopted"
   while :; do
-    owner="$(running_pid appview)" || return 1
+    owner="$(running_pid appview)" || { FAILED="$FAILED appview"; break; }
     [ -z "$owner" ] || pid="$owner"
     STARTING_PID="$pid"
     health="$(appview_health)"
     if [ "$health" = running ]; then
       # A health response is not ownership evidence. Recheck the listener.
-      owner="$(running_pid appview)" || return 1
+      owner="$(running_pid appview)" || { FAILED="$FAILED appview"; break; }
       if [ -n "$owner" ]; then
         echo "$owner" > "$pidfile"
         echo "appview ready (pid $owner; local indexing running)"
@@ -96,9 +96,12 @@ wait_for_appview() {
       FAILED="$FAILED appview"
       break
     fi
-    if ! curl -fsS --max-time 3 http://localhost:2582/_health >/dev/null 2>&1 ||
-       ! curl -fsS --max-time 3 http://localhost:2583/xrpc/_health >/dev/null 2>&1; then
-      echo "appview cannot become ready: mandatory PLC or PDS is unhealthy; inspect ait status" >&2
+    # A missed HTTP deadline is not a process-death event. The AppView owns
+    # retrying its bounded PDS reads; fail startup only when a mandatory owner
+    # is actually absent or foreign.
+    if ! owner="$(running_pid plc)" || [ -z "$owner" ] ||
+       ! owner="$(running_pid pds)" || [ -z "$owner" ]; then
+      echo "appview cannot become ready: mandatory PLC or PDS is not running; inspect ait status" >&2
       FAILED="$FAILED appview"
       break
     fi
@@ -110,6 +113,7 @@ wait_for_appview() {
   STARTING_PIDFILE=""
   STARTING_ADOPTED=""
 }
+
 
 wait_for_codex() {
   local pid=$1 pidfile=$2 adopted=$3 owner probe_status started_at=$SECONDS

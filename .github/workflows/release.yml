@@ -101,18 +101,19 @@ jobs:
           npm --prefix appview run build
           node appview/scripts/duplicate-follow-test.mjs
           npm --prefix mcp run build
+          node appview/scripts/operator-identity-test.mjs
+          node appview/scripts/startup-readiness-test.mjs
+          node bin/managed-ports-test.mjs
           node mcp/scripts/push-mode-test.mjs
+          node mcp/scripts/handles-test.mjs
           node mcp/scripts/claude-background-test.mjs
           node mcp/scripts/channel-sink-test.mjs
           node mcp/scripts/codex-writer-ownership-test.mjs
           node mcp/scripts/session-picker-test.mjs
           if [ "$GITHUB_REF" = refs/heads/build/private-peer-integration ]; then
-            (cd appview && node scripts/operator-identity-test.mjs)
-            (cd appview && node scripts/startup-readiness-test.mjs)
             (cd appview && node --import tsx scripts/peer-projection-test.mjs)
             (cd appview && node --import tsx scripts/peer-feed-test.mjs)
             (cd appview && node --import tsx scripts/peer-lifecycle-test.mjs)
-            (cd mcp && node scripts/handles-test.mjs)
             (cd mcp && node --import tsx scripts/peer-mentions-test.mjs)
             brew list --versions postgresql@17 >/dev/null || brew install postgresql@17
             node appview/scripts/peer-link-test.mjs

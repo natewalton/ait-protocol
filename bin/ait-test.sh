@@ -286,6 +286,7 @@ make_fixture() {
   cp "$REPO/bin/codex-session.sh" "$dir/bin/codex-session.sh"
   cp "$REPO/bin/check-single-lexicon.sh" "$dir/bin/check-single-lexicon.sh"
   chmod +x "$dir/ait" "$dir/bin/"*.sh
+  mkdir -p "$dir/appview/node_modules/dotenv"
   cat > "$dir/appview/node_modules/dotenv/index.js" <<'EOF'
 exports.parse = text => Object.fromEntries(String(text).split(/\r?\n/).flatMap(line => {
   const match = line.match(/^\s*(?:export\s+)?([A-Z_]+)\s*=\s*["']?([^"'#\r\n]*)/)
@@ -880,6 +881,7 @@ pass "interrupt stops an unbound wrapper and leaves no pidfile"
 cp "$REPO/bin/status.sh" "$start_fixture/bin/status.sh"
 cat > "$start_fixture/shim/curl" <<'EOF'
 #!/bin/bash
+if [ -n "${AIT_CORE_HTTP_SLOW_MARKER:-}" ] && [ -f "$AIT_CORE_HTTP_SLOW_MARKER" ] && [[ "$*" != *'%{http_code}'* ]]; then exit 28; fi
 if [[ "$*" = *'%{http_code}'* ]]; then
   case "$(cat "$AIT_APPVIEW_PHASE_FILE")" in
     starting) printf '%s\n503' '{"status":"starting","indexing":{"state":"starting"}}' ;;
@@ -893,6 +895,8 @@ fi
 EOF
 chmod +x "$start_fixture/shim/curl"
 export AIT_APPVIEW_PHASE_FILE="$TMP_ROOT/appview-phase"
+export AIT_CORE_HTTP_SLOW_MARKER="$TMP_ROOT/core-http-slow"
+: > "$AIT_CORE_HTTP_SLOW_MARKER"
 printf starting > "$AIT_APPVIEW_PHASE_FILE"
 export AIT_START_MODE=delayed
 ready_output="$TMP_ROOT/start-indexing.out"
@@ -905,6 +909,7 @@ for _ in $(seq 1 150); do
 done
 assert_contains "$(cat "$ready_output")" 'waiting for appview local indexing (starting)'
 kill -0 "$start_pid" 2>/dev/null || fail "bound AppView skipped initial indexing"
+rm "$AIT_CORE_HTTP_SLOW_MARKER"
 printf running > "$AIT_APPVIEW_PHASE_FILE"
 wait "$start_pid"
 assert_contains "$(cat "$ready_output")" 'appview ready'
@@ -944,7 +949,7 @@ for wrapper in plc pds appview; do
   wait "$pid" 2>/dev/null || true
   rm -f "$AIT_START_STATE/$wrapper" "$start_logs/ait-$wrapper.pid"
 done
-unset AIT_APPVIEW_PHASE_FILE
+unset AIT_APPVIEW_PHASE_FILE AIT_CORE_HTTP_SLOW_MARKER
 pass "new and adopted AppViews wait for indexing; failed and unreachable health remain distinct"
 
 assert_contains "$("$REPO/ait" help start)" 'Nondefault ports fail before launch'
@@ -968,6 +973,7 @@ assert_contains "$port_output" 'APPVIEW_PORT=2585'
 APPVIEW_PORT=2585 /bin/bash -c '. "$1/bin/lib-service-pids.sh"; check_managed_ports' fixture "$start_fixture"
 rm "$start_fixture/appview/.env"
 pass "effective managed ports reject before launch; inherited AppView setting retains dotenv precedence"
+
 
 http_root="$TMP_ROOT/http"
 http_port_file="$TMP_ROOT/http-port"

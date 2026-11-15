@@ -84,11 +84,13 @@ async function fixture(t,{records=[record('snapshot old mention')],hold=true,gap
     for(const res of state.held){const body=JSON.stringify({repos:[{did:A,head:initial.head,rev:state.rev,active:state.active,...(!state.active?{status:'deactivated'}:{})}]});state.bytes+=body.length;res.end(body)}state.held.clear()
   }
   state.start=async()=>{
+    const connectionsBefore=state.connections
     state.output='';state.started=performance.now()
     state.child=spawn(process.execPath,[fileURLToPath(new URL('../dist/server.js',import.meta.url))],{cwd:path.join(root,'appview'),env:{...process.env,HOME:path.join(root,'home'),DOTENV_CONFIG_PATH:path.join(root,'absent.env'),APPVIEW_OPERATOR:'',APPVIEW_PORT:String(state.port),APPVIEW_DID:B,APPVIEW_DB_PATH:state.dbPath,APPVIEW_PDS_URL:state.upstream,APPVIEW_PDS_WS_URL:state.upstream.replace('http','ws'),APPVIEW_PLC_URL:state.upstream},stdio:['ignore','pipe','pipe']})
     state.exited=once(state.child,'exit')
     for(const stream of [state.child.stdout,state.child.stderr])stream.on('data',chunk=>state.output+=chunk)
     await until(()=>state.output.includes('appview listening'),'compiled server listen')
+    await until(()=>state.connections>connectionsBefore,'owned PDS subscription connected')
   }
   state.health=async()=>{
     const response=await fetch(`http://127.0.0.1:${state.port}/xrpc/_health`,{signal:AbortSignal.timeout(2000)})

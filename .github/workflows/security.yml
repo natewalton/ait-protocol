@@ -50,7 +50,11 @@ jobs:
           npm --prefix appview run build
           npm --prefix mcp run build
           node appview/scripts/operator-identity-test.mjs
+          node appview/scripts/startup-readiness-test.mjs
           node bin/managed-ports-test.mjs
+          if [ "${GITHUB_BASE_REF:-}" = build/private-peer-integration ]; then
+            (cd appview && node --import tsx scripts/peer-feed-test.mjs)
+          fi
           node mcp/scripts/push-mode-test.mjs
           node mcp/scripts/handles-test.mjs
           node mcp/scripts/claude-background-test.mjs

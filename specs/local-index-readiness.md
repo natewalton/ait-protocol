@@ -98,7 +98,8 @@ appview/scripts/startup-readiness-test.mjs (compiled-consumer fixture),
 bin/lib-service-pids.sh (health interpretation), bin/start-all.sh (readiness wait),
 bin/status.sh (state display), bin/ait-test.sh (CLI fixtures),
 bin/security-input-test.mjs (local listRepos fixture and expected degraded health),
-docs/developing-alongside-installed-ait.md (operator/testing boundary), this spec.
+docs/developing-alongside-installed-ait.md (operator/testing boundary), this spec,
+.github/workflows/security.yml and .github/workflows/release.yml (actual consumer regression commands).
 Integration owns .github/workflows/security.yml and .github/workflows/release.yml
 to run the actual variant readiness fixture in their existing jobs. No schema,
 transport, dependency, version or installed-tree changes.
@@ -160,3 +161,5 @@ Spec check: today start may claim health during replay/errors; the smallest usab
 fix bootstraps current records with the existing indexer and preserves event order; users see
 starting/degraded or a caught-up core in start/status. Questions4-13: empty for
 this reporting slice. It repairs ordinary replay gaps through current records, preserving retained rows.
+
+Integration validation amendment: both workflows run the actual startup-readiness fixture. The PR check additionally runs the peer-feed ordering fixture for the peer target; the release workflow retains its existing peer-feed check. The fixture waits for its owned WebSocket connection before exposing the test handle, preventing listener/connection scheduling flakes. Runtime limits and reviewed product code are unchanged.

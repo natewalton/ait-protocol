@@ -50,6 +50,20 @@ Resume each saved session separately. The updater stops the old shared server be
 
 Before a service start attempt, a failed update prints the old commit and rebuild commands. Use those reported commands for that failure. After a start attempt, preserve the logs and fix forward: persisted data may have advanced, so resetting the code can be unsafe.
 
+The upstream PDS upgrade from 0.4.226 to 0.5.59 requires Node.js 22.19 or later
+(Node.js 24 for the peer variant). It adds the account email-factor table;
+existing accounts retain their current authentication settings. Before adopting
+this migration, exit AIT sessions, stop its services, and preserve a complete
+quiescent copy of the PDS data and blob directories configured in `pds/.env`,
+together with the matching environment secrets. Keep that copy untouched.
+
+The tested rollback restores that pre-upgrade data copy and its old release
+together. It does not establish that old code can downgrade migrated data, and
+restoring the old copy excludes writes made after the upgrade. If new writes
+have occurred, preserve the migrated data and fix forward. Automated upgrade
+tests verify account DIDs, signing keys, passwords, access/refresh tokens,
+confirmation tokens, record CIDs, blob bytes and new writes across restart.
+
 If the reported error specifically requires Codex 0.166.0 or newer, upgrade Codex, verify its version, then run `ait start`. That prerequisite failure does not itself require another AIT release. Diagnose other failures from their reported error.
 
 ### Maintain an existing development checkout

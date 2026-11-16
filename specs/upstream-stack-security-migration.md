@@ -26,7 +26,7 @@ A disposable global Zod 4.6.7 override makes MCP's package audit clean but cause
 
 ## Files touched
 
-Initial implementation scope: **26 files**, plus this specification:
+Initial implementation scope: **27 files**, plus this specification:
 
 - appview/package.json and appview/package-lock.json (2): coherent upstream client/indexer stack.
 - mcp/package.json and mcp/package-lock.json (2): upstream client stack.
@@ -42,6 +42,7 @@ Initial implementation scope: **26 files**, plus this specification:
 - bin/install.sh, bin/ait-test.sh and README.md (3): enforce and document Node 22.19+ on stable, required by the new upstream fetch-node undici_v8 dependency. Peer retains its existing Node 24 requirement.
 - docs/security.md (1): accurate current component provenance and proven remaining decisions.
 - docs/operations.md (1): Node requirement and verified pre-upgrade-copy recovery boundaries for the PDS schema migration.
+- AGENTS.md (1): make the user's upstream-first dependency maintenance preference part of the project instructions consumed by future development sessions.
 - .github/workflows/security.yml and .github/workflows/release.yml (2): required persistence-upgrade execution.
 - bin/security-workflow-test.mjs (1): prevent omission of the upgrade journey.
 

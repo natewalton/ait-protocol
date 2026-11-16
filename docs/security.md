@@ -303,7 +303,7 @@ source commit, source-lock digest and exact crate path/version.
         },
         {
           "path": "node_modules/zod",
-          "dependencyFingerprint": "sha256:7e3ee29fb5c4738e4d7a6c7e2e2ca570617abb462db1da9d0dc2981dc8f23daa"
+          "dependencyFingerprint": "sha256:5c8c0be20b4c3f09f24e800e34d0fb29f3667bf2d696d615107634cf0810b798"
         }
       ],
       "evidence": [

@@ -492,7 +492,7 @@ try {
         avatarUrl = /avatar: (\S+)/.exec(profile)?.[1]
         if (avatarUrl && profile.includes(description)) {
           // Blob transport already has a source-bound approved native route.
-          // The advertised viewer-PDS URL is a separate existing routing gap;
+          // The advertised viewer-PDS URL gap is tracked in issue #66;
           // this migration must prove projection and the actual owner read.
           const machine = JSON.parse(fs.readFileSync(path.join(installationPaths(viewer.repo).directory, 'machine.json')))
           const peers = Object.values(machine.peers)

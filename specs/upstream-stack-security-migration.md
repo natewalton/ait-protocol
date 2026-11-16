@@ -26,7 +26,7 @@ A disposable global Zod 4.6.7 override makes MCP's package audit clean but cause
 
 ## Files touched
 
-Implementation scope: **28 files across both variants**, plus this specification. Main retains its local feed; peer retains the verified feed instead:
+Implementation scope: **29 files across both variants**, plus this specification. Main retains its local feed; peer retains the verified feed instead:
 
 - appview/package.json and appview/package-lock.json (2): coherent upstream client/indexer stack.
 - mcp/package.json and mcp/package-lock.json (2): upstream client stack.
@@ -42,6 +42,7 @@ Implementation scope: **28 files across both variants**, plus this specification
 - bin/install.sh, bin/ait-test.sh and README.md (3): enforce and document Node 22.19+ on stable, required by the new upstream fetch-node undici_v8 dependency. Peer retains its existing Node 24 requirement.
 - docs/security.md (1): accurate current component provenance and proven remaining decisions.
 - docs/operations.md (1): Node requirement and verified pre-upgrade-copy recovery boundaries for the PDS schema migration.
+- AGENTS.md (1): make the user's upstream-first dependency maintenance preference part of the project instructions consumed by future development sessions.
 - .github/workflows/security.yml and .github/workflows/release.yml (2): required persistence-upgrade execution.
 - bin/security-workflow-test.mjs (1): prevent omission of the upgrade journey.
 
@@ -51,7 +52,7 @@ Product source or additional tests required by concrete upstream incompatibiliti
 
 ## Out of scope
 
-Installing either laptop, restarting shared services, reading/copying live account databases, publishing packages/releases, changing current release channels, adding scheduled monitoring, and promoting peer trust/schema changes into main. No new runtime abstraction or limit increase is proposed. Existing advertised viewer-PDS avatar URLs for foreign DIDs are a separate routing defect: this slice proves profile/CID projection and the already approved native owner blob read, not that advertised URL delivery. No new blob gateway is introduced. A completed upstream migration that still has High findings is progress; #28 remains open until its stated outcome is met.
+Installing either laptop, restarting shared services, reading/copying live account databases, publishing packages/releases, changing current release channels, adding scheduled monitoring, and promoting peer trust/schema changes into main. No new runtime abstraction or limit increase is proposed. Existing advertised viewer-PDS avatar URLs for foreign DIDs are a separate routing defect: this slice proves profile/CID projection and the already approved native owner blob read, not that advertised URL delivery. The advertised URL defect is tracked separately in issue #66. No new blob gateway is introduced. A completed upstream migration that still has High findings is progress; #28 remains open until its stated outcome is met.
 
 ## Tests
 

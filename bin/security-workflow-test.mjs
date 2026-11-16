@@ -25,6 +25,18 @@ const publish = step(release, 'Publish inspected immutable release');
 const prepare = step(release, 'Prepare inspected draft');
 const relevance = step(security, 'Determine security relevance');
 const validate = step(release, 'Validate candidate and run gates');
+const securityValidate = step(security, 'Test candidate security boundaries');
+for (const block of [validate, securityValidate]) {
+  assert.match(block, /git archive b4ea412c50caf3a21f5e270f65b20906dc76f0de pds/);
+  assert.match(block, /npm --prefix "\$baseline\/pds" ci --no-audit/);
+  assert.match(block, /node pds\/scripts\/upgrade-compatibility-test\.mjs --baseline "\$baseline"/);
+  assert.match(block, /node mcp\/scripts\/stack-migration-test\.mjs/);
+  assert.match(block, /node appview\/scripts\/identity-fetch-test\.mjs/);
+  assert.match(block, /node mcp\/scripts\/list-tools-test\.mjs/);
+  assert.match(block, /node pds\/scripts\/dependency-security-test\.mjs --candidate "\$GITHUB_WORKSPACE" --json/);
+  assert.match(block, /node pds\/scripts\/xml-parser-test\.cjs/);
+  assert.ok(block.indexOf('node mcp/scripts/stack-migration-test.mjs') > block.indexOf('npm --prefix mcp run build'));
+}
 const releaseJob = release.slice(release.indexOf('\n  release:\n'));
 assert.match(release, /validate:\n    if: [^\n]*inputs\.operation == 'prepare'[^\n]*inputs\.operation == 'publish'/);
 assert.match(releaseJob, /needs: validate\n    if: needs\.validate\.result == 'success'/);

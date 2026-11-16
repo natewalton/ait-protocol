@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { schemas } from '@atproto/api'
-import { Lexicons } from '@atproto/lexicon'
+import { Lexicons, ipldToLex } from '@atproto/lexicon'
 import { cborToLexRecord, parseDataKey, readCarWithRoot, verifyProofs, verifyRepoCar } from '@atproto/repo'
 import { parseAccount, parseCommitAuthenticated, parseIdentity } from '@atproto/sync'
 import { AtUri } from '@atproto/syntax'
@@ -102,7 +102,7 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       present.add(uri.toString())
       const bytes = commit.newBlocks.get(entry.cid)
       assert(bytes, `Verified snapshot is missing ${uri}`)
-      const record = cborToLexRecord(bytes)
+      const record = ipldToLex(cborToLexRecord(bytes))
       lexicons.assertValidRecord(entry.collection, record)
       records.push({ ...base, ...entry, uri, event: 'create', record })
     }
@@ -179,7 +179,10 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       const expected = message.ops.filter(op => collections.has(parseDataKey(op.path).collection))
       assert.equal(events.length, expected.length, `Incomplete authenticated commit for ${did}`)
       for (const event of events) {
-        if (event.event === 'create' || event.event === 'update') lexicons.assertValidRecord(event.collection, event.record)
+        if (event.event === 'create' || event.event === 'update') {
+          event.record = ipldToLex(event.record)
+          lexicons.assertValidRecord(event.collection, event.record)
+        }
       }
       // The sync parser authenticates record claims, but copies rev/commit from
       // the envelope. Bind those fields to that same signed CAR root before

@@ -1,5 +1,6 @@
 import 'dotenv/config'
 import { IdResolver, MemoryCache } from '@atproto/identity'
+import { createIdentityFetch } from './identityFetch.js'
 import { ensureValidDid } from '@atproto/syntax'
 import { once } from 'node:events'
 import { schemas } from '@atproto/api'
@@ -75,13 +76,14 @@ export async function main(peerOptions: { assistanceRelay?: string; bindAddress?
     // PLC roundtrip. The same cache also accelerates JWT signature
     // verification through `resolveAtprotoKey` for free.
     const idCache = new MemoryCache()
+    const fetchIdentity = createIdentityFetch(PLC_URL)
     const localResolver = new IdResolver({ plcUrl: PLC_URL, didCache: idCache,
       fetch: async (input, init) => {
         const url = new URL(input instanceof Request ? input.url : input), origin = new URL(PLC_URL)
         if (url.origin !== origin.origin || !/^did:plc:[a-z2-7]{24}$/.test(decodeURIComponent(url.pathname.slice(1)))) {
           throw new Error('local identity request outside the configured PLC')
         }
-        return fetch(url, { ...init, redirect: 'error' })
+        return fetchIdentity(url, { ...init, redirect: 'error' })
       } })
     localResolver.handle.resolve = async () => undefined
     // run-appview.sh makes the installation's appview directory the cwd.

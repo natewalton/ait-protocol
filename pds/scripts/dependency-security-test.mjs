@@ -1,7 +1,7 @@
-// Candidate-bound proofs for the declared PDS consumers, not library-wide repairs.
+// Candidate-bound regressions for the actual upgraded PDS parser/key consumers.
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
+import { createHash, ECDH, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { once } from 'node:events';
 import { access, mkdtemp, mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -10,7 +10,6 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import http from 'node:http';
 import net from 'node:net';
-import { Readable } from 'node:stream';
 
 const script = fileURLToPath(import.meta.url);
 const candidateArg = process.argv.indexOf('--candidate');
@@ -19,13 +18,7 @@ const require = createRequire(path.join(candidate, 'pds/package.json'));
 const asf = Buffer.from('3026b2758e66cf11a6d9000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000', 'hex');
 const checks = ['file-type-stream', 'elliptic-public-key'];
 
-if (process.argv.includes('--buffer-control')) {
-  // This deliberately vulnerable API must never execute on the HTTP event loop.
-  const fromBuffer = require('file-type').fromBuffer;
-  process.stdout.write('buffer-control-started\n');
-  await fromBuffer(asf);
-  throw new Error('buffer positive control unexpectedly completed');
-} else if (process.argv.includes('--fixture-child')) {
+if (process.argv.includes('--fixture-child')) {
   await fixture(process.argv.at(-1));
 } else {
   const report = { schemaVersion: 1, candidateCommit: '', status: 'blocked', checks: checks.map(id => ({ id, status: 'blocked' })), errors: [] };
@@ -35,9 +28,8 @@ if (process.argv.includes('--buffer-control')) {
     assert.ok(Number(process.versions.node.split('.')[0]) >= 24, 'Run with Node 24+');
     home = await mkdtemp(path.join(tmpdir(), 'ait-dependency-test-'));
     const env = { PATH: process.env.PATH, HOME: home, TMPDIR: home, XDG_DATA_HOME: path.join(home, 'xdg'), LOG_ENABLED: 'false', NODE_ENV: 'test' };
-    const control = spawnSync(process.execPath, ['--max-old-space-size=256', script, '--candidate', candidate, '--buffer-control'], { env, encoding: 'utf8', timeout: 1000, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024 });
-    assert.match(control.stdout, /buffer-control-started\n/, 'positive control must reach the parser before its deadline');
-    assert.equal(control.error?.code, 'ETIMEDOUT', 'underlying buffer vulnerability positive control must reach its bounded deadline');
+    // Both the buffer advisory shapes and actual HTTP consumer run against the
+    // fixed upstream parser. They must complete; a timeout is never success.
     const child = spawnSync(process.execPath, ['--max-old-space-size=256', script, '--candidate', candidate, '--fixture-child', home], { env, encoding: 'utf8', timeout: 45000, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024 });
     assert.ifError(child.error);
     assert.equal(child.status, 0, `fixture failed: ${child.stderr} ${child.stdout}`);
@@ -77,58 +69,53 @@ async function fixture(home) {
   };
   const pdsRoot = path.dirname(require.resolve('@atproto/pds/package.json'));
   const awsRoot = path.dirname(path.dirname(require.resolve('@atproto/aws')));
-  assert.equal(require('@atproto/pds/package.json').version, '0.4.226');
-  assert.equal(require('file-type/package.json').version, '16.5.4');
-  assert.equal(require('elliptic/package.json').version, '6.6.1');
-  // Fail closed on a new caller: this is deliberately scoped to inspected source.
-  const parserCallers = [], encoderCallers = [];
+  assert.equal(require('@atproto/pds/package.json').version, '0.5.59');
+  const lock = JSON.parse(await readFile(path.join(candidate, 'pds/package-lock.json')));
+  assert.ok(!Object.keys(lock.packages).some(name => /node_modules\/(elliptic|key-encoder)$/.test(name)), 'upgraded graph restored the old key encoder');
+  assert.equal(lock.packages['node_modules/file-type'].version, '22.3.0');
+  const parserCallers = [];
   for (const root of [pdsRoot, awsRoot]) {
     for (const file of await javascriptFiles(path.join(root, 'dist'))) {
       const source = await readFile(file, 'utf8');
-      const name = path.relative(root, file);
-      if (/from ['"]file-type['"]/.test(source)) parserCallers.push(name);
-      if (/from ['"]key-encoder['"]/.test(source)) {
-        encoderCallers.push(path.basename(root) + '/' + name);
-        assert.equal((source.match(/\.encodePublic\(/g) || []).length, 1);
-        assert.ok(!/\.encodePrivate\(/.test(source));
-      }
+      if (/from ['"]file-type['"]/.test(source)) parserCallers.push(path.relative(root, file));
+      assert.ok(!/from ['"]key-encoder['"]|from ['"]elliptic['"]/.test(source), 'legacy public-key caller restored');
     }
   }
   assert.deepEqual(parserCallers, ['dist/actor-store/blob/transactor.js']);
-  assert.deepEqual(encoderCallers.sort(), ['aws/dist/kms.js', 'pds/dist/auth-verifier.js']);
-  const transactor = await readFile(path.join(pdsRoot, parserCallers[0]), 'utf8');
-  assert.match(transactor, /fromStream: fileTypeFromStream/);
-  assert.ok(!/fromBuffer|fromTokenizer/.test(transactor));
-  await assert.rejects(require('file-type').fromStream(Readable.from([asf])), RangeError);
-
-  // Disable the vulnerable primitive BEFORE loading the real key-encoder callers.
-  for (const root of [pdsRoot, awsRoot]) {
-    const consumerRequire = createRequire(path.join(root, 'dist/index.js'));
-    const encoderRequire = createRequire(consumerRequire.resolve('key-encoder'));
-    assert.equal(encoderRequire.resolve('elliptic'), require.resolve('elliptic'), 'signing guard must cover the actual encoder dependency');
+  const transactorPath = path.join(pdsRoot, parserCallers[0]);
+  const transactor = await readFile(transactorPath, 'utf8');
+  assert.match(transactor, /new FileTypeParser\(options\)/);
+  assert.match(transactor, /parser\.fromTokenizer\(tokenizer\)/);
+  assert.equal(createRequire(transactorPath).resolve('file-type'), require.resolve('file-type'));
+  const { fileTypeFromBuffer } = await import(pathToFileURL(require.resolve('file-type')));
+  const samples = [];
+  for (const size of [0n, 1n, 23n, 24n, 0xffffffffffffffffn, null]) {
+    const bytes = Buffer.from(asf); if (size !== null) bytes.writeBigUInt64LE(size, 46);
+    const body = size === null ? bytes.subarray(0, 43) : bytes;
+    const type = await fileTypeFromBuffer(body);
+    assert.deepEqual(type, size === 0n || size === 1n || size === 23n ? undefined : { ext: 'asf', mime: 'application/vnd.ms-asf' });
+    // The PDS tokenizes a stream of unknown length; these truncated inputs
+    // deliberately fall back to opaque bytes rather than the buffer classifier.
+    samples.push([body, 'application/octet-stream']);
   }
-  assert.equal(createRequire(path.join(pdsRoot, parserCallers[0])).resolve('file-type'), require.resolve('file-type'));
-  const elliptic = require('elliptic'); let signingCalls = 0;
-  const blocked = () => { signingCalls++; throw new Error('fixture elliptic signing disabled'); };
-  elliptic.ec.prototype.sign = blocked;
-  Object.getPrototypeOf(new elliptic.ec('secp256k1').keyFromPrivate('01')).sign = blocked;
-  assert.throws(() => new elliptic.ec('secp256k1').sign(Buffer.alloc(32), '01'), /signing disabled/);
-  assert.throws(() => new elliptic.ec('secp256k1').keyFromPrivate('01').sign(Buffer.alloc(32)), /signing disabled/);
-  signingCalls = 0;
+
   const { createPublicKeyObject, AuthVerifier } = await import(pathToFileURL(path.join(pdsRoot, 'dist/auth-verifier.js')));
   const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'secp256k1' });
   const jwk = publicKey.export({ format: 'jwk' });
   const raw = Buffer.concat([Buffer.from([4]), Buffer.from(jwk.x, 'base64url'), Buffer.from(jwk.y, 'base64url')]);
-  const formatted = createPublicKeyObject(raw.toString('hex'));
   const der = publicKey.export({ format: 'der', type: 'spki' });
+  const formatted = createPublicKeyObject(raw.toString('hex'));
   assert.deepEqual(formatted.export({ format: 'der', type: 'spki' }), der);
+  assert.deepEqual(createPublicKeyObject(ECDH.convertKey(raw, 'secp256k1', undefined, undefined, 'compressed').toString('hex')).export({ format: 'der', type: 'spki' }), der);
+  assert.throws(() => createPublicKeyObject('00'.repeat(33)));
   const payload = { sub: 'did:plc:aaaaaaaaaaaaaaaaaaaaaaaa', aud: 'did:web:pds.localhost', scope: 'com.atproto.access', exp: Math.floor(Date.now() / 1000) + 60 };
-  const unsigned = [ { alg: 'ES256K', typ: 'JWT' }, payload ].map(value => Buffer.from(JSON.stringify(value)).toString('base64url')).join('.');
+  const unsigned = [{ alg: 'ES256K', typ: 'JWT' }, payload].map(value => Buffer.from(JSON.stringify(value)).toString('base64url')).join('.');
   const token = unsigned + '.' + sign('sha256', Buffer.from(unsigned), { key: privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
-  const verified = await AuthVerifier.prototype.verifyBearerJwt.call({ _jwtKey: formatted }, { headers: { authorization: `Bearer ${token}` } }, { scopes: ['com.atproto.access'], algorithms: ['ES256K'], audience: payload.aud });
+  const options = { scopes: ['com.atproto.access'], algorithms: ['ES256K'], audience: payload.aud };
+  const verified = await AuthVerifier.prototype.verifyBearerJwt.call({ _jwtKey: formatted }, { headers: { authorization: `Bearer ${token}` } }, options);
   assert.equal(verified.sub, payload.sub);
   const forged = token.slice(0, token.lastIndexOf('.') + 1) + Buffer.alloc(64).toString('base64url');
-  await assert.rejects(AuthVerifier.prototype.verifyBearerJwt.call({ _jwtKey: formatted }, { headers: { authorization: `Bearer ${forged}` } }, { scopes: ['com.atproto.access'], algorithms: ['ES256K'], audience: payload.aud }), /Token could not be verified/);
+  await assert.rejects(AuthVerifier.prototype.verifyBearerJwt.call({ _jwtKey: formatted }, { headers: { authorization: `Bearer ${forged}` } }, options), /Token could not be verified/);
   const aws = require('@aws-sdk/client-kms');
   const originalGet = aws.KMS.prototype.getPublicKey;
   let kmsCalls = 0;
@@ -138,7 +125,6 @@ async function fixture(home) {
     const key = await KmsKeypair.load({ keyId: 'fixture-key', region: 'us-east-1', credentials: { accessKeyId: 'fixture', secretAccessKey: 'fixture' } });
     assert.deepEqual(Buffer.from(key.publicKey), raw); assert.equal(kmsCalls, 1);
   } finally { aws.KMS.prototype.getPublicKey = originalGet; }
-  assert.equal(signingCalls, 0, 'public-key consumers invoked disabled signing');
 
   const { PDS, envToCfg, envToSecrets } = require('@atproto/pds');
   const { Secp256k1Keypair } = require('@atproto/crypto');
@@ -162,25 +148,18 @@ async function fixture(home) {
       const response = await fetch(origin + '/xrpc/com.atproto.repo.uploadBlob', { method: 'POST', headers: { 'content-type': 'application/octet-stream', authorization: auth }, body, signal: AbortSignal.timeout(3000) });
       return { status: response.status, json: await response.json() };
     };
-    for (const size of [0n, 1n, 23n, 24n, 0xffffffffffffffffn, null]) {
-      const body = Buffer.from(asf); if (size !== null) body.writeBigUInt64LE(size, 46);
-      const before = await rows(); const response = await upload(size === null ? body.subarray(0, 43) : body);
-      assert.equal(response.status, 500); assert.equal(response.json.error, 'InternalServerError');
-      assert.deepEqual(await rows(), before, 'malformed input admitted blob metadata');
-      const available = await fetch(origin + '/xrpc/com.atproto.server.getSession', { headers: { authorization: auth }, signal: AbortSignal.timeout(3000) });
-      assert.equal(available.status, 200); assert.equal((await available.json()).did, did);
-    }
     const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000b49444154789c636000020000050001a5f645400000000049454e44ae426082', 'hex');
-    for (const [body, mime] of [[png, 'image/png'], [Buffer.from('unrecognized fixture content'), 'application/octet-stream']]) {
+    for (const [body, mime] of [...samples, [png, 'image/png'], [Buffer.from('unrecognized fixture content'), 'application/octet-stream']]) {
+      // Upstream now handles the old ASF shapes finitely as opaque/ASF uploads;
+      // arbitrary blob bytes are permitted. Record validation is a separate gate.
       const response = await upload(body); assert.equal(response.status, 200);
       assert.equal(response.json.blob.mimeType, mime); assert.equal(response.json.blob.size, body.length);
       const cid = cidForRawHash(createHash('sha256').update(body).digest()).toString();
       assert.equal(response.json.blob.ref.$link, cid);
       const row = (await rows()).find(row => row.cid === cid); assert.ok(row); assert.equal(row.mimeType, mime);
-      // Untethered uploads are temporary until a record references them. Read the
-      // actual candidate blobstore's temp object, rather than inventing admission.
-      const bytes = await readFile(pds.ctx.blobstore(did).getTmpPath(row.tempKey));
-      assert.deepEqual(bytes, body);
+      assert.deepEqual(await readFile(pds.ctx.blobstore(did).getTmpPath(row.tempKey)), body);
+      const available = await fetch(origin + '/xrpc/com.atproto.server.getSession', { headers: { authorization: auth }, signal: AbortSignal.timeout(3000) });
+      assert.equal(available.status, 200); assert.equal((await available.json()).did, did);
     }
   } finally {
     await new Promise(resolve => server.close(resolve));

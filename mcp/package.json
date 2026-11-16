@@ -11,12 +11,12 @@
     "postinstall": "../bin/check-single-lexicon.sh || true"
   },
   "dependencies": {
-    "@atproto/api": "^0.20.0",
-    "@atproto/syntax": "^0.6.0",
+    "@atproto/api": "0.32.0",
+    "@atproto/syntax": "0.7.7",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^16.4.0",
     "ws": "^8.21.0",
-    "zod-to-json-schema": "^3.24.0"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -26,6 +26,7 @@
   },
   "overrides": {
     "hono": "^4.12.26",
-    "esbuild": "^0.28.1"
+    "esbuild": "^0.28.1",
+    "zod": "$zod"
   }
 }

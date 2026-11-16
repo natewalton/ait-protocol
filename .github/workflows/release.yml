@@ -101,6 +101,18 @@ jobs:
           npm --prefix appview run build
           node appview/scripts/duplicate-follow-test.mjs
           npm --prefix mcp run build
+          baseline="$RUNNER_TEMP/ait-upgrade-baseline"
+          mkdir -p "$baseline"
+          git archive b4ea412c50caf3a21f5e270f65b20906dc76f0de pds | tar -x -C "$baseline"
+          npm --prefix "$baseline/pds" ci --no-audit
+          node pds/scripts/upgrade-compatibility-test.mjs --baseline "$baseline"
+          if [ -f appview/src/localFeed.mjs ]; then
+            node mcp/scripts/stack-migration-test.mjs
+          else
+            echo 'Verified peer stack uses the actual two-PDS link journey below.'
+          fi
+          node appview/scripts/identity-fetch-test.mjs
+          node mcp/scripts/list-tools-test.mjs
           node appview/scripts/operator-identity-test.mjs
           node appview/scripts/startup-readiness-test.mjs
           node bin/managed-ports-test.mjs
@@ -127,6 +139,7 @@ jobs:
           bin/codex-native-contract-test.sh
           bin/check-single-lexicon.sh
           node pds/scripts/mailer-security-test.mjs
+          node pds/scripts/dependency-security-test.mjs --candidate "$GITHUB_WORKSPACE" --json
           node bin/check-advisories-test.mjs
           node bin/security-workflow-test.mjs
           node bin/check-native-advisories-test.mjs

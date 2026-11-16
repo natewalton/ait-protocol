@@ -9,7 +9,6 @@ import {
   type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js'
 import { z, type ZodRawShape } from 'zod'
-import { zodToJsonSchema } from 'zod-to-json-schema'
 import { startPushListener, stopPushListener, channelSink } from './push.js'
 
 // Three operational modes. Default poll requires no setup. Push
@@ -207,7 +206,7 @@ async function main() {
     tools: Object.entries(TOOLS).map(([name, def]) => ({
       name,
       description: def.description,
-      inputSchema: zodToJsonSchema(z.object(def.inputSchema)) as Record<
+      inputSchema: z.toJSONSchema(z.object(def.inputSchema), { target: 'draft-07' }) as Record<
         string,
         unknown
       >,

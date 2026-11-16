@@ -23,6 +23,9 @@ import { localCommand } from '../dist/peerCli.mjs'
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const pdsRequire = createRequire(path.join(repo, 'pds/package.json'))
 const plcRequire = createRequire(path.join(repo, 'plc/package.json'))
+const mcpRequire = createRequire(path.join(repo, 'mcp/package.json'))
+const { Client } = await import(pathToFileURL(mcpRequire.resolve('@modelcontextprotocol/sdk/client/index.js')))
+const { StdioClientTransport } = await import(pathToFileURL(mcpRequire.resolve('@modelcontextprotocol/sdk/client/stdio.js')))
 const { PDS, envToCfg, envToSecrets } = await import(pathToFileURL(pdsRequire.resolve('@atproto/pds')))
 const { Database, PlcServer } = plcRequire('@did-plc/server')
 const { registerAitLexicons, localPdsFetch } = await import(pathToFileURL(path.join(repo, 'mcp/dist/atproto/aitClient.js')))
@@ -170,16 +173,22 @@ function notification(s, uri, ms = 20000) {
   }), `${s.name} notification ${uri}`, ms)
 }
 async function tool(s, name, args) {
-  const script = `const{setIdentity}=await import(${JSON.stringify(pathToFileURL(path.join(repo, 'mcp/dist/session.js')).href)});setIdentity(JSON.parse(process.env.FIXTURE_ID));const m=await import(${JSON.stringify(pathToFileURL(path.join(repo, `mcp/dist/tools/${name}.js`)).href)});const r=await m[${JSON.stringify(`${name}Handler`)}](JSON.parse(process.env.FIXTURE_ARGS));console.log(JSON.stringify(r));`
+  const script = `const{setIdentity}=await import(${JSON.stringify(pathToFileURL(path.join(repo, 'mcp/dist/session.js')).href)});setIdentity(JSON.parse(process.env.FIXTURE_ID));await import(${JSON.stringify(pathToFileURL(path.join(repo, 'mcp/dist/server.js')).href)});`
   const env = { PATH: process.env.PATH, HOME: path.join(s.repo, 'home'), XDG_DATA_HOME: path.join(s.repo, 'home/data'),
-    AIT_SESSION_ID: s.session, PDS_URL: s.url, APPVIEW_URL: s.appviewUrl, APPVIEW_DID: s.values.bskyAppViewDid,
-    FIXTURE_ID: JSON.stringify({ ...s.account, password: s.password }), FIXTURE_ARGS: JSON.stringify(args) }
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--input-type=module', '-e', script], { env, cwd: s.repo, stdio: ['ignore', 'pipe', 'pipe'] })
-    let stdout = '', stderr = ''; child.stdout.on('data', c => { stdout += c }); child.stderr.on('data', c => { stderr += c })
-    child.once('exit', code => code === 0 ? resolve(JSON.parse(stdout.trim().split('\n').at(-1))) : reject(Error(`MCP ${name}: ${code}: ${stderr}`)))
-  })
+    AIT_SESSION_ID: s.session, AIT_NOTIFICATION_MODE: 'poll', LOG_ENABLED: 'false', PDS_URL: s.url, APPVIEW_URL: s.appviewUrl, APPVIEW_DID: s.values.bskyAppViewDid,
+    FIXTURE_ID: JSON.stringify({ ...s.account, password: s.password }) }
+  const transport = new StdioClientTransport({ command: process.execPath, args: ['--input-type=module', '-e', script], env, cwd: s.repo, stderr: 'pipe' })
+  const client = new Client({ name: `peer-fixture-${s.name}`, version: '0.0.0' })
+  let stderr = ''
+  transport.stderr?.on('data', chunk => { stderr += chunk })
+  try {
+    await within(client.connect(transport), `${s.name} MCP initialization`)
+    const result = await within(client.callTool({ name, arguments: args }), `${s.name} MCP ${name}`)
+    assert(!result.isError, `MCP ${name}: ${JSON.stringify(result)} ${stderr}`)
+    return result
+  } finally { await client.close() }
 }
+
 async function publicLink(s, invitation = '', options = {}) {
   const interrupt = options.interrupt ? 'expect -exact {Connecting directly…}\nsend -- "\\003"\n' : ''
   const code = `set timeout 40\nspawn env -i PATH=$env(PATH) HOME=$env(FIXTURE_HOME) /bin/bash $env(FIXTURE_AIT) link $env(FIXTURE_INVITE)\n${invitation ? 'expect {\n  -exact {Link this computer? [y/N] } {send -- "yes\\r"}\n  eof {exit 91}\n  timeout {exit 90}\n}\n' : ''}${interrupt}expect eof\nset result [wait]\nexit [lindex $result 3]\n`
@@ -217,16 +226,15 @@ async function unapprovedRead(invitation) {
 
 // An approved but adversarial peer controls its HTTP bytes, not the gateway's
 // destination or forwarded credentials. Use real native auth and verified TLS.
-async function peerRequest(from, to, invitation, request, complete = false) {
+async function peerRequest(from, to, ticket, request, complete = false) {
   const saved = JSON.parse(fs.readFileSync(path.join(installationPaths(from.repo).directory, 'machine.json')))
-  const ticket = JSON.parse(Buffer.from(invitation.slice(9), 'base64url'))
   const builder = Endpoint.builder(); presetMinimal(builder)
   builder.secretKey([...Buffer.from(saved.secret, 'hex')]); builder.bindAddr('0.0.0.0:0')
   builder.relayMode(RelayMode.disabled()); builder.alpns([[...Buffer.from('ait-atproto/1')]])
   const endpoint = await builder.bind()
   let connection, secure
   try {
-    connection = await endpoint.connect(EndpointTicket.fromString(ticket.ticket).endpointAddr(), [...Buffer.from('ait-atproto/1')])
+    connection = await endpoint.connect(EndpointTicket.fromString(ticket).endpointAddr(), [...Buffer.from('ait-atproto/1')])
     const stream = await connection.openBi()
     const transport = new Duplex({
       read() { stream.recv.read(65536).then(bytes => this.push(bytes.length ? Buffer.from(bytes) : null), error => this.destroy(error)) },
@@ -237,10 +245,14 @@ async function peerRequest(from, to, invitation, request, complete = false) {
     secure = tls.connect({ socket: transport, servername: values.PDS_HOSTNAME,
       ca: fs.readFileSync(path.join(installationPaths(to.repo).directory, 'ca.pem')) })
     await within(once(secure, 'secureConnect'), 'adversarial peer TLS')
-    let response = ''
+    const chunks = []
     const result = new Promise((resolve, reject) => {
-      secure.on('data', part => { response += part; if (!complete && response.includes('\r\n\r\n')) resolve(response) })
-      secure.once('end', () => resolve(response)); secure.once('error', reject)
+      secure.on('data', part => {
+        chunks.push(part)
+        if (!complete && Buffer.concat(chunks).includes('\r\n\r\n')) resolve(Buffer.concat(chunks).toString())
+      })
+      secure.once('end', () => resolve(complete ? Buffer.concat(chunks) : Buffer.concat(chunks).toString()))
+      secure.once('error', reject)
     })
     secure.write(request)
     return await within(result, 'adversarial peer request')
@@ -388,6 +400,10 @@ try {
     const refreshed = await s.agent.com.atproto.server.refreshSession(undefined, { headers: { authorization: `Bearer ${s.account.refreshJwt}` } })
     assert.equal(refreshed.data.did, s.account.did); assert.match(refreshed.data.handle, /\.aitproto\.com$/)
     assert.equal(hash(Buffer.from((await s.agent.com.atproto.sync.getRepo({ did: s.account.did })).data)), s.carHash)
+    s.avatarBytes = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000b49444154789c636000020000050001a5f645400000000049454e44ae426082', 'hex')
+    s.avatarPath = path.join(s.repo, 'home/avatar.png')
+    fs.writeFileSync(s.avatarPath, s.avatarBytes)
+    await tool(s, 'editProfile', { displayName: `${s.name} Upstream`, description: 'Snapshot profile preserves typed avatar', avatar: s.avatarPath })
     await startAppview(s)
   }
   await defaultAssistance(a)
@@ -424,6 +440,7 @@ try {
     }
   }
   const invitation = await publicLink(a)
+  const invitationTicket = JSON.parse(Buffer.from(invitation.slice(9), 'base64url')).ticket
   if (relay && !process.argv.includes('--repeat-core')) {
     const start = performance.now()
     await publicLink(b, invitation, { status: 1 })
@@ -467,6 +484,49 @@ try {
   }
   report('same-name watcher peers keep local operator authority; public retirement/search/history agree and self-only auth holds')
 
+  const readAvatar = async (viewer, owner, expectedBytes, description) => {
+    let profile, avatarUrl
+    await within((async () => {
+      while (true) {
+        profile = (await tool(viewer, 'getProfile', { actor: owner.account.did })).content[0].text
+        avatarUrl = /avatar: (\S+)/.exec(profile)?.[1]
+        if (avatarUrl && profile.includes(description)) {
+          // Blob transport already has a source-bound approved native route.
+          // The advertised viewer-PDS URL gap is tracked in issue #66;
+          // this migration must prove projection and the actual owner read.
+          const machine = JSON.parse(fs.readFileSync(path.join(installationPaths(viewer.repo).directory, 'machine.json')))
+          const peers = Object.values(machine.peers)
+          assert.equal(peers.length, 1)
+          const ownerHost = parse(fs.readFileSync(path.join(owner.repo, 'pds/.env'))).PDS_HOSTNAME
+          const url = new URL(avatarUrl)
+          assert.equal(url.searchParams.get('did'), owner.account.did)
+          const record = (await owner.agent.com.atproto.repo.getRecord({ repo: owner.account.did, collection: 'ait.actor.profile', rkey: 'self' })).data
+          assert.equal(url.searchParams.get('cid'), record.value.avatar.ref.toString())
+          const response = await peerRequest(viewer, owner, peers[0].ticket,
+            `GET ${url.pathname}${url.search} HTTP/1.1\r\nHost: ${ownerHost}\r\nConnection: close\r\n\r\n`, true)
+          const headerEnd = response.indexOf('\r\n\r\n')
+          assert(headerEnd > 0)
+          assert.match(response.subarray(0, headerEnd).toString(), /^HTTP\/1\.1 200/)
+          assert.deepEqual(response.subarray(headerEnd + 4), expectedBytes)
+          url.searchParams.set('did', viewer.account.did)
+          const refused = await peerRequest(viewer, owner, peers[0].ticket,
+            `GET ${url.pathname}${url.search} HTTP/1.1\r\nHost: ${ownerHost}\r\nConnection: close\r\n\r\n`)
+          assert.match(refused, /^HTTP\/1\.1 403/, 'source front cannot serve another machine account')
+          return
+        }
+        const health = await (await fetch(`${viewer.appviewUrl}/xrpc/_health`)).json()
+        assert.notEqual(health.indexing?.state, 'failed', JSON.stringify(health))
+        await new Promise(resolve => setTimeout(resolve, 20))
+      }
+    })(), `${viewer.name} reads ${owner.name} avatar bytes`)
+    assert.match(profile, new RegExp(`${owner.name} Upstream`))
+    return avatarUrl
+  }
+  await readAvatar(a, b, b.avatarBytes, 'Snapshot profile preserves typed avatar')
+  await readAvatar(b, a, a.avatarBytes, 'Snapshot profile preserves typed avatar')
+  report('MCP profile/avatar snapshots preserve fields and CID; approved native owner reads exact bytes and rejects foreign DIDs')
+
+
   let trapRequests = 0
   if (!relay) { // Adversarial endpoints use the unchanged direct-only fixture run.
   const trap = http.createServer((req, res) => { trapRequests++; res.end('unreachable') })
@@ -475,23 +535,23 @@ try {
   try {
     for (const target of ['//', `https://example.com/xrpc/com.atproto.sync.listRepos`,
       `http://127.0.0.1:${trap.address().port}/xrpc/com.atproto.sync.listRepos`]) {
-      const response = await peerRequest(b, a, invitation, `GET ${target} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`)
+      const response = await peerRequest(b, a, invitationTicket, `GET ${target} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`)
       assert.match(response, /^HTTP\/1\.1 400/, `unsafe request target ${target}`)
     }
     assert.equal(trapRequests, 0, 'peer-chosen origin must never receive a request')
-    const ownProfile = await peerRequest(b, a, invitation,
-      `GET /xrpc/ait.actor.getProfile?actor=${encodeURIComponent(a.account.did)}&includePresence=true HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`, true)
+    const ownProfile = (await peerRequest(b, a, invitationTicket,
+      `GET /xrpc/ait.actor.getProfile?actor=${encodeURIComponent(a.account.did)}&includePresence=true HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`, true)).toString()
     assert.match(ownProfile, /^HTTP\/1\.1 200/)
     assert.match(ownProfile, /"live":true/)
     const reads = a.plcDocReads
     for (const actor of [b.account.did, 'alice', 'did:plc:' + 'z'.repeat(24)]) {
-      const refused = await peerRequest(b, a, invitation,
+      const refused = await peerRequest(b, a, invitationTicket,
         `GET /xrpc/ait.actor.getProfile?actor=${encodeURIComponent(actor)}&includePresence=true HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`)
       assert.match(refused, /^HTTP\/1\.1 403/)
     }
     assert.equal(a.plcDocReads, reads, 'non-hosted actors refuse before identity/profile work')
 
-    const response = await peerRequest(b, a, invitation,
+    const response = await peerRequest(b, a, invitationTicket,
       `GET /xrpc/com.atproto.sync.subscribeRepos?cursor=0 HTTP/1.1\r\nHost: ${host}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ${randomBytes(16).toString('base64')}\r\nAuthorization: Bearer peer-secret\r\nCookie: peer-cookie\r\nX-Forwarded-For: 10.0.0.1\r\n\r\n`)
     assert.match(response, /^HTTP\/1\.1 101/)
     const forwarded = a.upgradeHeaders.at(-1)
@@ -566,6 +626,19 @@ esac
   assert.equal(record.uri, postUri); assert.equal(record.value.facets[0].features[0].did, b.account.did)
   await assert.rejects(b.agent.com.atproto.repo.getRecord({ repo: a.account.did, collection: 'ait.feed.post', rkey: postUri.split('/').at(-1), cid: b.oldPost.cid }))
   report('existing MCP discovery/follow/post/reply/thread and local-PDS reply lookup agree on original DIDs/CIDs; callbacks delivered')
+  const updatedAvatar = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+c7usAAAAASUVORK5CYII=', 'base64')
+  const updatedAvatarPath = path.join(a.repo, 'home/avatar-updated.png')
+  fs.writeFileSync(updatedAvatarPath, updatedAvatar)
+  await tool(a, 'editProfile', { avatar: updatedAvatarPath, description: 'Streamed avatar through an approved peer Ω' })
+  const streamedAvatarUrl = await readAvatar(b, a, updatedAvatar, 'Streamed avatar through an approved peer Ω')
+  const beforeProfile = (await a.agent.com.atproto.repo.getRecord({ repo: a.account.did, collection: 'ait.actor.profile', rkey: 'self' })).data
+  await tool(a, 'editProfile', { description: 'Profile merge preserves the streamed avatar' })
+  assert.equal(await readAvatar(b, a, updatedAvatar, 'Profile merge preserves the streamed avatar'), streamedAvatarUrl)
+  const afterProfile = (await a.agent.com.atproto.repo.getRecord({ repo: a.account.did, collection: 'ait.actor.profile', rkey: 'self' })).data
+  assert.equal(afterProfile.value.displayName, beforeProfile.value.displayName)
+  assert.deepEqual(afterProfile.value.avatar, beforeProfile.value.avatar)
+  report('MCP avatar stream updates and description-only merges retain BlobRef, display name and approved-native byte readback')
+
   let before = a.push.length
   const key = (await localCommand(a.control, 'status')).peers[0].id
   assert.equal((await localCommand(a.control, 'unlink', { id: key })).state, 'Unlinked')

@@ -33,7 +33,7 @@ async function runFixture(home) {
   process.umask(0o077);
   const require = createRequire(import.meta.url);
   assert.equal(require('nodemailer/package.json').version, '10.5.0');
-  assert.equal(require('@atproto/pds/package.json').version, '0.4.226');
+  assert.equal(require('@atproto/pds/package.json').version, '0.5.59');
 
   // No installed .env is read. Restrict even accidental dependency connections
   // to this fixture's explicitly registered ephemeral listeners.
@@ -228,7 +228,7 @@ async function runFixture(home) {
     }
     checked('crafted flat address lists and free-text fallback finish within fixed budget');
     assert.equal(urlRequests, 0);
-    console.log(JSON.stringify({ result: 'PASS', pds: '0.4.226', nodemailer: '10.5.0', checks, parserTimingsMs,
+    console.log(JSON.stringify({ result: 'PASS', pds: '0.5.59', nodemailer: '10.5.0', checks, parserTimingsMs,
       coverage: 'seeded account HTTP mail/token/auth journeys, actual plugin, JSON and SMTP; no PLC registration or external delivery' }));
   } finally {
     for (const socket of smtpSockets) socket.destroy();

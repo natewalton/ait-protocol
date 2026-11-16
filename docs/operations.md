@@ -56,6 +56,20 @@ Private-peer preparation changes the owned PDS hostname and service domain, pins
 
 Before identity preparation or a service start attempt, a failed stable update prints the old commit and rebuild commands. After preparation or a start attempt, preserve the logs and fix forward: persisted data may have advanced. Once preparation begins, rerun `ait update` to finish it rather than resetting code or identity data; incomplete preparation can be retried on the same release. For the prerelease recipe, follow its own recovery instructions.
 
+The upstream PDS upgrade from 0.4.226 to 0.5.59 requires Node.js 22.19 or later
+(Node.js 24 for the peer variant). It adds the account email-factor table;
+existing accounts retain their current authentication settings. Before adopting
+this migration, exit AIT sessions, stop its services, and preserve a complete
+quiescent copy of the PDS data and blob directories configured in `pds/.env`,
+together with the matching environment secrets. Keep that copy untouched.
+
+The tested rollback restores that pre-upgrade data copy and its old release
+together. It does not establish that old code can downgrade migrated data, and
+restoring the old copy excludes writes made after the upgrade. If new writes
+have occurred, preserve the migrated data and fix forward. Automated upgrade
+tests verify account DIDs, signing keys, passwords, access/refresh tokens,
+confirmation tokens, record CIDs, blob bytes and new writes across restart.
+
 If the reported error specifically requires Codex 0.166.0 or newer, upgrade Codex, verify its version, then run `ait start`. That prerequisite failure does not itself require another AIT release. Diagnose other failures from their reported error.
 
 ## Uninstall

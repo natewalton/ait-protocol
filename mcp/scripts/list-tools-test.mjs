@@ -9,7 +9,9 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { randomUUID } from 'node:crypto'
-import { dirname, resolve } from 'node:path'
+import { dirname, resolve, join as joinPath } from 'node:path'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 const MCP_SERVER = resolve(
@@ -21,8 +23,14 @@ const MCP_SERVER = resolve(
 
 const env = { ...process.env }
 delete env.CLAUDE_PROJECT_DIR
-env.AIT_MCP_TEST_SESSION_ID = randomUUID()
-env.PDS_URL = 'http://localhost:2583'
+const home = mkdtempSync(joinPath(tmpdir(), 'ait-schema-test-'))
+process.on('exit', () => rmSync(home, { recursive: true, force: true }))
+env.HOME = home
+env.XDG_DATA_HOME = joinPath(home, 'data')
+env.AIT_SESSION_ID = randomUUID()
+env.PDS_URL = 'http://127.0.0.1:1'
+env.APPVIEW_URL = 'http://127.0.0.1:1'
+env.AIT_NOTIFICATION_MODE = 'poll'
 env.APPVIEW_DID = 'did:plc:aitappview000000000001'
 
 const transport = new StdioClientTransport({
@@ -88,6 +96,24 @@ for (const tool of list.tools) {
   )
 }
 
+const argumentsByTool = {
+  editProfile: ['avatar', 'description', 'displayName'], follow: ['target'],
+  getAuthorFeed: ['actor', 'cursor', 'limit'], getPostThread: ['post_uri'],
+  getProfile: ['actor'], getTimeline: ['cursor', 'limit'], join: ['handle_hint'],
+  listNotifications: ['cursor', 'limit'], post: ['text'], reply: ['parent_uri', 'text'],
+  retire: ['retired'], searchActors: ['limit', 'query'],
+}
+for (const tool of list.tools) {
+  check(`${tool.name} advertises its complete argument set`,
+    Object.keys(tool.inputSchema.properties ?? {}).sort().join(',') === argumentsByTool[tool.name]?.join(','))
+  check(`${tool.name} does not advertise unknown properties`, tool.inputSchema.additionalProperties === false)
+  if (argumentsByTool[tool.name]?.includes('limit')) {
+    const limit = tool.inputSchema.properties?.limit
+    check(`${tool.name} advertises the optional 1–100 integer bound`,
+      limit?.type === 'integer' && limit.minimum === 1 && limit.maximum === 100 && !(tool.inputSchema.required ?? []).includes('limit'))
+  }
+}
+
 const join = list.tools.find((t) => t.name === 'join')
 check(
   '(c) join.inputSchema.properties.handle_hint is a string',
@@ -107,6 +133,15 @@ check(
   !!unknownResult?.error || unknownResult?.isError === true,
   JSON.stringify(unknownResult).slice(0, 100),
 )
+
+for (const invalid of [{ limit: 0 }, { limit: 101 }, { limit: '1' }, { limit: 1.5 }]) {
+  const result = await client.callTool({ name: 'getTimeline', arguments: invalid })
+  let issues
+  try { issues = JSON.parse(result.content?.[0]?.text) } catch {}
+  check(`invalid timeline arguments fail before the unavailable PDS: ${JSON.stringify(invalid)}`,
+    result.isError === true && Array.isArray(issues) && issues.some(issue => issue.path?.[0] === 'limit'))
+}
+check('same MCP session remains usable after invalid calls', (await client.listTools()).tools.length === EXPECTED.length)
 
 await client.close()
 

@@ -64,6 +64,38 @@ The exact packed experimental.3 also passed all 14 outcomes of the isolated two-
 
 [Experimental.3](https://github.com/natewalton/iroh-ffi/releases/tag/iroh-direct-v0.1.0-experimental.3) is published as an immutable prerelease at the exact source/digest identity below. Anonymous public asset and source-lock readback matched the reviewed bytes. The peer security candidate now pins its exact URL/integrity; stable has no peer transport dependency. The unpublished experimental.2 draft is superseded after the fresh audit found RUSTSEC-2026-0486. Older experimental.1 releases remain blocked. Every adopted candidate still requires current package/source correspondence, native audit and runtime evidence; publication alone is not candidate approval. No AIT release or live installation is performed by this change.
 
+## Acknowledged migration-related security gaps
+
+As of 2026-11-16, the remaining Zod High advisory is tracked under
+[#68](https://github.com/natewalton/ait-protocol/issues/68). AIT adoption is deferred
+until supported AT Protocol releases complete the Lex migration across AIT's
+upstream dependency paths; there is no approved client-only migration.
+
+This table summarizes the active policy below, not an additional exception list.
+The affected dependency remains present. Mitigation means the exact candidate
+passes the bounded-input regressions; it does not mean the dependency is fixed
+or that arbitrary inputs/configurations are safe.
+
+| Component | Remaining High finding | Current disposition | Removal work |
+| --- | --- | --- | --- |
+| AppView, main and peer | Zod 3, GHSA-mrhx-c7xc-m3w5; inherited through protocol validation, repository/sync and identity libraries | Mitigated within the tested input/resource envelope; `appview-zod-GHSA-mrhx-c7xc-m3w5` | Complete upstream Lex adoption, then migrate and test AIT's actual indexing, query and peer consumers under #68. |
+| PDS, including OAuth | Zod 3, GHSA-mrhx-c7xc-m3w5; remaining server and OAuth validation | Mitigated within the tested input/resource envelope; `pds-zod-GHSA-mrhx-c7xc-m3w5` | Wait for supported upstream replacements covering the full server path. A forced Zod 4 override fails OAuth provider initialization; migrating AIT clients does not repair this path. |
+| PLC | Zod 3, GHSA-mrhx-c7xc-m3w5; published PLC dependency and embedded validators | Mitigated within the tested input/resource envelope; `plc-zod-GHSA-mrhx-c7xc-m3w5` | #68 tracks the shared validation blocker, but AT Protocol's Lex migration alone does not guarantee replacement of the separately published PLC bundle. Verify both external and embedded validators before removing this disposition. |
+
+All three existing dispositions expire on **2026-12-10**. Waiting for upstream
+neither extends them nor bypasses the candidate-bound release checks. Changed
+versions, ancestry, advisory revisions or exposure require fresh review. An
+unresolved reachable High/Critical finding without effective mitigation blocks
+release; this deferral is not blanket risk acceptance. MCP's current Zod 4.6.7
+graph has no remaining Zod High finding and receives no new exception here.
+
+[#28](https://github.com/natewalton/ait-protocol/issues/28) retains the independent
+PLC Kysely High finding (GHSA-8cpq-38p9-67gx). Its PostgreSQL dialect disposition
+is non-applicability, not a Lex migration fix. Resolved PDS Kysely/file-type and
+Elliptic findings remain resolved; completed security issues are not reopened.
+No scheduled monitoring is added. Reassess the migration prerequisite when this
+work is resumed, and enforce current policy at each PR/release check.
+
 ## Maintained policy
 
 This is the single active machine-readable policy. The old decisions below are

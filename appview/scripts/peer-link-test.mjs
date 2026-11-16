@@ -23,6 +23,9 @@ import { localCommand } from '../dist/peerCli.mjs'
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const pdsRequire = createRequire(path.join(repo, 'pds/package.json'))
 const plcRequire = createRequire(path.join(repo, 'plc/package.json'))
+const mcpRequire = createRequire(path.join(repo, 'mcp/package.json'))
+const { Client } = await import(pathToFileURL(mcpRequire.resolve('@modelcontextprotocol/sdk/client/index.js')))
+const { StdioClientTransport } = await import(pathToFileURL(mcpRequire.resolve('@modelcontextprotocol/sdk/client/stdio.js')))
 const { PDS, envToCfg, envToSecrets } = await import(pathToFileURL(pdsRequire.resolve('@atproto/pds')))
 const { Database, PlcServer } = plcRequire('@did-plc/server')
 const { registerAitLexicons, localPdsFetch } = await import(pathToFileURL(path.join(repo, 'mcp/dist/atproto/aitClient.js')))
@@ -170,16 +173,22 @@ function notification(s, uri, ms = 20000) {
   }), `${s.name} notification ${uri}`, ms)
 }
 async function tool(s, name, args) {
-  const script = `const{setIdentity}=await import(${JSON.stringify(pathToFileURL(path.join(repo, 'mcp/dist/session.js')).href)});setIdentity(JSON.parse(process.env.FIXTURE_ID));const m=await import(${JSON.stringify(pathToFileURL(path.join(repo, `mcp/dist/tools/${name}.js`)).href)});const r=await m[${JSON.stringify(`${name}Handler`)}](JSON.parse(process.env.FIXTURE_ARGS));console.log(JSON.stringify(r));`
+  const script = `const{setIdentity}=await import(${JSON.stringify(pathToFileURL(path.join(repo, 'mcp/dist/session.js')).href)});setIdentity(JSON.parse(process.env.FIXTURE_ID));await import(${JSON.stringify(pathToFileURL(path.join(repo, 'mcp/dist/server.js')).href)});`
   const env = { PATH: process.env.PATH, HOME: path.join(s.repo, 'home'), XDG_DATA_HOME: path.join(s.repo, 'home/data'),
-    AIT_SESSION_ID: s.session, PDS_URL: s.url, APPVIEW_URL: s.appviewUrl, APPVIEW_DID: s.values.bskyAppViewDid,
-    FIXTURE_ID: JSON.stringify({ ...s.account, password: s.password }), FIXTURE_ARGS: JSON.stringify(args) }
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--input-type=module', '-e', script], { env, cwd: s.repo, stdio: ['ignore', 'pipe', 'pipe'] })
-    let stdout = '', stderr = ''; child.stdout.on('data', c => { stdout += c }); child.stderr.on('data', c => { stderr += c })
-    child.once('exit', code => code === 0 ? resolve(JSON.parse(stdout.trim().split('\n').at(-1))) : reject(Error(`MCP ${name}: ${code}: ${stderr}`)))
-  })
+    AIT_SESSION_ID: s.session, AIT_NOTIFICATION_MODE: 'poll', LOG_ENABLED: 'false', PDS_URL: s.url, APPVIEW_URL: s.appviewUrl, APPVIEW_DID: s.values.bskyAppViewDid,
+    FIXTURE_ID: JSON.stringify({ ...s.account, password: s.password }) }
+  const transport = new StdioClientTransport({ command: process.execPath, args: ['--input-type=module', '-e', script], env, cwd: s.repo, stderr: 'pipe' })
+  const client = new Client({ name: `peer-fixture-${s.name}`, version: '0.0.0' })
+  let stderr = ''
+  transport.stderr?.on('data', chunk => { stderr += chunk })
+  try {
+    await within(client.connect(transport), `${s.name} MCP initialization`)
+    const result = await within(client.callTool({ name, arguments: args }), `${s.name} MCP ${name}`)
+    assert(!result.isError, `MCP ${name}: ${JSON.stringify(result)} ${stderr}`)
+    return result
+  } finally { await client.close() }
 }
+
 async function publicLink(s, invitation = '', options = {}) {
   const interrupt = options.interrupt ? 'expect -exact {Connecting directly…}\nsend -- "\\003"\n' : ''
   const code = `set timeout 40\nspawn env -i PATH=$env(PATH) HOME=$env(FIXTURE_HOME) /bin/bash $env(FIXTURE_AIT) link $env(FIXTURE_INVITE)\n${invitation ? 'expect {\n  -exact {Link this computer? [y/N] } {send -- "yes\\r"}\n  eof {exit 91}\n  timeout {exit 90}\n}\n' : ''}${interrupt}expect eof\nset result [wait]\nexit [lindex $result 3]\n`

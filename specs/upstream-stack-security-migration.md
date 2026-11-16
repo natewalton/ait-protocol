@@ -45,7 +45,7 @@ Implementation scope: **28 files across both variants**, plus this specification
 - .github/workflows/security.yml and .github/workflows/release.yml (2): required persistence-upgrade execution.
 - bin/security-workflow-test.mjs (1): prevent omission of the upgrade journey.
 
-Peer integration adds two existing files before implementation: `appview/src/peerFeed.mjs` converts authenticated raw IPLD records with official `ipldToLex` before complete-record validation and projection; `appview/scripts/peer-link-test.mjs` extends the actual two-PDS/native-approved journey with MCP avatar upload, peer profile projection, approved-native owner byte readback and read-modify-write preservation. Local JWT authority and approved-source verification remain separate from display resolution. Peer-specific manifests preserve the experimental.3 transport and Node 24 floor.
+Peer integration adds two existing files before implementation: `appview/src/peerFeed.mjs` converts authenticated raw IPLD records with official `ipldToLex` before complete-record validation and projection; `appview/scripts/peer-link-test.mjs` extends the actual two-PDS/native-approved journey through real MCP SDK stdio clients and the compiled MCP server, including avatar upload, peer profile projection, approved-native owner byte readback and read-modify-write preservation. Local JWT authority and approved-source verification remain separate from display resolution. Peer-specific manifests preserve the experimental.3 transport and Node 24 floor.
 
 Product source or additional tests required by concrete upstream incompatibilities must be enumerated here before editing. The PLC lane is initially read-only upstream-artifact research, not permission to introduce a parallel PLC implementation.
 

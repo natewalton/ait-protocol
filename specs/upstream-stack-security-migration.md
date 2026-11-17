@@ -1,6 +1,14 @@
 # Preserve AIT collaboration while updating the protocol stack
 
-Status: Implementation authorized; upstream-first candidate validation in isolated worktrees.
+Status: Corrected on 2026-11-16: retain supported upstream upgrades only. The
+MCP-wide Zod override amendment below is superseded; AIT tool schemas may use
+supported Zod 4, while AT Protocol consumers retain their declared Zod 3.
+Unsupported Nodemailer, html-to-text, glob and dependent minimatch overrides are
+also being removed, including ones predating this stack upgrade. Passing tests
+do not establish upstream support. Findings and release blockers must remain
+visible; no release or installation is authorized here. Full Lex adoption is
+deferred under #68. Earlier proposal details below are historical where they
+conflict with this correction.
 Date: 2026-11-15. Bases: main ce70eab; peer c8a5b41.
 
 ## Why
@@ -21,7 +29,7 @@ A disposable global Zod 4.6.7 override makes MCP's package audit clean but cause
 4. Preserve AppView's source ownership, bootstrap/replay ordering, account lifecycle and retained history. Preserve MCP's actual tool schemas, successful/invalid calls, push/channel notifications, cursor behavior and Claude/Codex session bindings. Main and peer retain their distinct local versus verified-feed trust and data models.
 5. After upstream validation, reassess remaining advisories. If a dependency migration is still necessary, use its native supported APIs and add consumer-specific tests. A Zod migration must preserve advertised input schemas and actual ATproto parsing; a PLC change must rebuild/inspect the executed bundle. No fake package versions, renamed vulnerable code, unreviewed overrides or /v3 imports to conceal findings. Broader source/fork changes require a concrete counted amendment and independent review, not another routine version assumption.
 
-   MCP amendment: the coherent latest API stack compiles and passes actual push/handle consumers but still depends on Zod 3. Migrate this process to official Zod 4.6.7 and native `z.toJSONSchema` (draft-07), removing AIT's direct dependency and use of zod-to-json-schema (the SDK may retain it for legacy compatibility). This is an explicit client dependency migration, not a claim that upstream ATproto declares Zod 4 compatibility. Require actual tool-schema constraints, invalid-call recovery, client/record behavior and fixed-budget ingress tests before adopting the scoped MCP override. Do not apply it to PLC/PDS/AppView or infer their compatibility from MCP.
+   MCP amendment, corrected 2026-11-16: retain Zod 4.6.7 and native `z.toJSONSchema` only for AIT-owned tool schemas supported by the MCP SDK. Remove the package-wide override; AT Protocol consumers must resolve their declared Zod 3 independently. Restore their High findings in the issue and security-gap records. Tool-schema, actual client and fixed-budget regressions are still required, but cannot authorize overriding an upstream dependency contract. Full Lex migration remains deferred under #68.
 6. Remove dispositions only when their packages or vulnerable consumer paths are actually gone. Add any changed graph fingerprint only after the existing fixed-budget ingress and dialect regressions pass. Do not extend deadlines or suppress remaining findings. Add the real persistence-upgrade fixture to required PR/release checks so future stack changes cannot bypass it.
 
 ## Files touched

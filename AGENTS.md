@@ -10,3 +10,9 @@ and whether a coherent upstream stack upgrade resolves it. Prefer that upgrade
 when it does. Verify the actual consumers and any persisted-data migration in
 isolated worktrees; package resolution and a clean audit alone do not prove
 compatibility. Identify concrete upstream blockers before proposing custom fixes.
+
+Use versions within each upstream consumer's declared dependency range. Do not
+force a dependency migration outside that range to clear an advisory, even if
+local compatibility tests pass. Keep unsupported migrations deferred and record
+remaining findings honestly. AIT-owned dependencies may upgrade within their
+actual consumers' supported ranges without overriding unrelated upstream users.

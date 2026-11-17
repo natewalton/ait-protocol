@@ -81,13 +81,43 @@ or that arbitrary inputs/configurations are safe.
 | AppView, main and peer | Zod 3, GHSA-mrhx-c7xc-m3w5; inherited through protocol validation, repository/sync and identity libraries | Mitigated within the tested input/resource envelope; `appview-zod-GHSA-mrhx-c7xc-m3w5` | Complete upstream Lex adoption, then migrate and test AIT's actual indexing, query and peer consumers under #68. |
 | PDS, including OAuth | Zod 3, GHSA-mrhx-c7xc-m3w5; remaining server and OAuth validation | Mitigated within the tested input/resource envelope; `pds-zod-GHSA-mrhx-c7xc-m3w5` | Wait for supported upstream replacements covering the full server path. A forced Zod 4 override fails OAuth provider initialization; migrating AIT clients does not repair this path. |
 | PLC | Zod 3, GHSA-mrhx-c7xc-m3w5; published PLC dependency and embedded validators | Mitigated within the tested input/resource envelope; `plc-zod-GHSA-mrhx-c7xc-m3w5` | #68 tracks the shared validation blocker, but AT Protocol's Lex migration alone does not guarantee replacement of the separately published PLC bundle. Verify both external and embedded validators before removing this disposition. |
+| MCP upstream AT Protocol libraries | Zod 3, GHSA-mrhx-c7xc-m3w5; required independently by API/common-web/lexicon/XRPC | Restored when the unsupported global override is removed; not covered by a new waiver here | Track under #68. Candidate-bound ingress evidence and a current explicit disposition are required before release. AIT-owned tool schemas remain on SDK-supported Zod 4.6.7. |
 
 All three existing dispositions expire on **2026-12-10**. Waiting for upstream
 neither extends them nor bypasses the candidate-bound release checks. Changed
 versions, ancestry, advisory revisions or exposure require fresh review. An
 unresolved reachable High/Critical finding without effective mitigation blocks
-release; this deferral is not blanket risk acceptance. MCP's current Zod 4.6.7
-graph has no remaining Zod High finding and receives no new exception here.
+release; this deferral is not blanket risk acceptance. The earlier zero-High MCP
+claim depended on forcing upstream Zod 3 consumers onto Zod 4 and is withdrawn.
+The corrected graph retains Zod 3 findings and receives no new exception here.
+
+### Supported dependency ranges and returned mail findings
+
+The corrective candidate removes unsupported forced Nodemailer 10.5.0,
+html-to-text 10.0.1, glob 14 and associated minimatch overrides. It retains
+upstream PDS 0.5.59, which requires Nodemailer ^6.8.0, and the mail plugin's
+exact html-to-text 7.1.1 contract. Supported resolutions include Nodemailer
+6.10.1 and glob 10.5.0. Compatible Hono, esbuild, form-data and ws fixes remain.
+
+Fresh lock audits return five High Nodemailer roots: GHSA-rcmh-qjqh-p98v,
+GHSA-p6gq-j5cr-w38f, GHSA-2x7j-588g-ccc2, GHSA-v53p-9fqp-m79j and
+GHSA-r7g4-qg5f-qqm2. Moderate findings also return in the mailer and
+glob/minimatch graph. These are tracked in #28 separately from the Lex hold.
+No current supported PDS release was found to clear the mail dependency range.
+
+The unchanged mailer security assertion fails with the restored dependencies:
+HTML compilation accepts a file-backed HTML reference despite
+disableFileAccess:true. This is an actual dependency-API failure, not proof that
+a public PDS route can supply that object. Ordinary PDS mail routes build their
+own options; administrative email updates also require separate recipient-bound
+review. Do not claim blanket non-applicability or weaken the assertion.
+
+**The supported-range corrective candidate is not release-cleared.** Returned
+findings and the failing security assertion remain blockers until a supported
+upstream fix or independently verified applicable disposition exists. The
+checker and required workflows are unchanged; no reachable High risk is accepted
+to make this correction pass. Tests passing elsewhere do not authorize an
+unsupported dependency migration.
 
 [#28](https://github.com/natewalton/ait-protocol/issues/28) retains the independent
 PLC Kysely High finding (GHSA-8cpq-38p9-67gx). Its PostgreSQL dialect disposition
@@ -99,7 +129,17 @@ work is resumed, and enforce current policy at each PR/release check.
 ## Maintained policy
 
 This is the single active machine-readable policy. The old decisions below are
-historical evidence, not authorization. Current Kysely decisions require actual dialect regressions; current Zod mitigation requires the entire bounded ingress suite to pass. Nodemailer findings are absent from the fresh upgraded graph and have no maintained exception. The residual follow-up uses html-to-text 10.0.1 and removes the old deepmerge component and its exception. The current migration candidate selects upstream PDS 0.5.59 with patched Kysely 0.29.9 and file-type 22.3.0; its key-encoder/Elliptic chain is absent. MCP now uses official Zod 4.6.7 and native tool-schema conversion. Those resolved component findings have no maintained exception. PLC, PDS and AppView still retain separately tested Zod 3 paths; PLC also retains its bundled query builder. Their exact remaining decisions and original expiry dates stay enforced. Affected historical releases remain blocked by the current checker. The published experimental.3 transport must match its exact reviewed source/artifact and pass a fresh audit; older experimental.1 releases remain blocked. Reviewed lower-severity
+historical evidence, not authorization. Current Kysely decisions require actual
+dialect regressions; current Zod mitigation requires the entire bounded ingress
+suite to pass. The supported upstream PDS 0.5.59 retains patched Kysely 0.29.9
+and file-type 22.3.0 and removes the old key-encoder/Elliptic chain. Unsupported
+mail/converter/glob overrides and the MCP-wide Zod override are withdrawn.
+Returned mail and MCP findings are not cleared by the old candidate's passing
+tests. AIT tool schemas use supported Zod 4 independently of upstream Zod 3.
+Existing exact dispositions and original expiries remain enforced. Affected
+historical releases remain blocked by the current checker. The published
+experimental.3 transport must match its reviewed identity and pass a fresh audit;
+older experimental.1 releases remain blocked. Reviewed lower-severity
 residual risks may use explicit accepted-risk decisions; they are not mitigations. Expired blocked records
 remain useful explanations; they never authorize publication. A real approved
 disposition needs its exact advisory revision/status and actual current passing

@@ -106,7 +106,7 @@ exact html-to-text 7.1.1 contract. Supported resolutions include Nodemailer
 Fresh lock audits return five High Nodemailer roots: GHSA-rcmh-qjqh-p98v,
 GHSA-p6gq-j5cr-w38f, GHSA-2x7j-588g-ccc2, GHSA-v53p-9fqp-m79j and
 GHSA-r7g4-qg5f-qqm2. Moderate findings also return in the mailer and
-glob/minimatch graph. These are tracked in #28 separately from the Lex hold.
+glob/minimatch graph. These are tracked in #75 under #28, separately from the Lex hold.
 No current supported PDS release was found to clear the mail dependency range.
 
 The unchanged mailer security assertion fails with the restored dependencies:

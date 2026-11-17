@@ -85,13 +85,139 @@ or that arbitrary inputs/configurations are safe.
 | AppView, main and peer | Zod 3, GHSA-mrhx-c7xc-m3w5; inherited through protocol validation, repository/sync and identity libraries | Mitigated within the tested input/resource envelope; `appview-zod-GHSA-mrhx-c7xc-m3w5` | Complete upstream Lex adoption, then migrate and test AIT's actual indexing, query and peer consumers under #68. |
 | PDS, including OAuth | Zod 3, GHSA-mrhx-c7xc-m3w5; remaining server and OAuth validation | Mitigated within the tested input/resource envelope; `pds-zod-GHSA-mrhx-c7xc-m3w5` | Wait for supported upstream replacements covering the full server path. A forced Zod 4 override fails OAuth provider initialization; migrating AIT clients does not repair this path. |
 | PLC | Zod 3, GHSA-mrhx-c7xc-m3w5; published PLC dependency and embedded validators | Mitigated within the tested input/resource envelope; `plc-zod-GHSA-mrhx-c7xc-m3w5` | #68 tracks the shared validation blocker, but AT Protocol's Lex migration alone does not guarantee replacement of the separately published PLC bundle. Verify both external and embedded validators before removing this disposition. |
+| MCP upstream AT Protocol libraries | Zod 3, GHSA-mrhx-c7xc-m3w5; required independently by API/common-web/lexicon/XRPC | Restored when the unsupported global override is removed; not covered by a new waiver here | Track under #68. Candidate-bound ingress evidence and a current explicit disposition are required before release. AIT-owned tool schemas remain on SDK-supported Zod 4.6.7. |
 
 All three existing dispositions expire on **2026-12-10**. Waiting for upstream
 neither extends them nor bypasses the candidate-bound release checks. Changed
 versions, ancestry, advisory revisions or exposure require fresh review. An
 unresolved reachable High/Critical finding without effective mitigation blocks
-release; this deferral is not blanket risk acceptance. MCP's current Zod 4.6.7
-graph has no remaining Zod High finding and receives no new exception here.
+release; this deferral is not blanket risk acceptance. The earlier zero-High MCP
+claim depended on forcing upstream Zod 3 consumers onto Zod 4 and is withdrawn.
+The corrected graph retains Zod 3 findings and receives no new exception here.
+
+### Supported dependency ranges and returned mail findings
+
+The corrective candidate removes unsupported forced Nodemailer 10.5.0,
+html-to-text 10.0.1, glob 14 and associated minimatch overrides. It retains
+upstream PDS 0.5.59, which requires Nodemailer ^6.8.0, and the mail plugin's
+exact html-to-text 7.1.1 contract. Supported resolutions include Nodemailer
+6.10.1 and glob 10.5.0. Compatible Hono, esbuild, form-data and ws fixes remain.
+
+Fresh lock audits return five High Nodemailer roots: GHSA-rcmh-qjqh-p98v,
+GHSA-p6gq-j5cr-w38f, GHSA-2x7j-588g-ccc2, GHSA-v53p-9fqp-m79j and
+GHSA-r7g4-qg5f-qqm2. Moderate findings also return in the mailer and
+glob/minimatch graph. These are tracked in #75 under #28, separately from the Lex hold.
+No current supported PDS release was found to clear the mail dependency range.
+
+The unchanged mailer security assertion fails with the restored dependencies:
+HTML compilation accepts a file-backed HTML reference despite
+disableFileAccess:true. This is an actual dependency-API failure, not proof that
+a public PDS route can supply that object. Ordinary PDS mail routes build their
+own options; administrative email updates also require separate recipient-bound
+review. Do not claim blanket non-applicability or weaken the assertion.
+
+**The supported-range corrective candidate is not release-cleared.** Returned
+findings and the failing security assertion remain blockers until a supported
+upstream fix or independently verified applicable disposition exists. The
+checker and required workflows are unchanged; no reachable High risk is accepted
+to make this correction pass. Tests passing elsewhere do not authorize an
+unsupported dependency migration.
+
+### Issue #75 source assessment (2026-11-17)
+
+**Outcome: no release clearance.** Fresh official metadata and actual installed
+source were reviewed for all 24 PDS advisories. Fourteen remain blocked by
+recipient evidence or supported SMTP/operator configuration; ten have possible
+non-applicability arguments but lack complete consumer proof and also remain
+blocked. No finding is marked fixed, mitigated or approved for exemption by this
+assessment. The existing policy JSON, expiry dates and required tests are unchanged.
+
+Canonical PDS 0.5.59 constructs both normal and moderation transports from the
+configured SMTP URL, or uses JSON transport when unconfigured
+(`dist/context.js:82-89`). All 22 mailer advisories have first patched versions
+in Nodemailer 7 or later; the freshly queried supported PDS 0.5.60 still requires
+Nodemailer ^6.8.0 and the current converter plugin still requires exact
+html-to-text 7.1.1. There is no supported dependency bump that clears these
+mail findings. Stop local-fix attempts rather than restore the forced major.
+
+Source confirms the SMTP response parsers consume server-controlled bytes, so
+filtering HTTP mail fields cannot establish their safety. Two configured PDS
+transports also share a host-keyed DNS cache that retains TLS servername and can
+overwrite the second transport's configured identity. A no-network, constructed
+cache control reproduced that identity reuse; it was not a complete TLS or
+credential-disclosure test. No malicious SMTP interaction was performed and no
+public PDS exploit is claimed. These moderate findings still need disposition;
+they have not been accepted merely because their severity is below High.
+
+The direct mailer test still fails its file-access assertion after four JSON
+route cases. Administrative email updates bypass ordinary recipient validation,
+and later unauthenticated reset requests can consume the stored address. The
+proposed new route/recipient test implementation did not complete: an automatic
+safety check flagged the delegated step. Its partial draft was excluded from
+both corrective branches; no security assertion was weakened. SMTP/parser cases
+and route-level file/URL non-applicability remain unproved, not passing.
+
+The following is dated review evidence, not a second approval policy. All rows
+remain blocked. For every row, the affected range and metadata revision are in
+the fresh metadata receipt; future version/revision/exposure changes require
+reassessment. No High/Critical disposition or deadline extension is introduced.
+
+Nodes: **N** = `node_modules/@atproto/pds/node_modules/nodemailer@6.10.1`;
+**G** = `node_modules/rimraf/node_modules/glob@10.5.0`;
+**M** = `node_modules/rimraf/node_modules/minimatch@9.0.9`.
+
+<details>
+<summary>All 24 PDS advisories, source classification and unresolved proof</summary>
+
+| Advisory | Severity | First patched version | Node | Decision | Source-level assessment |
+| --- | --- | --- | --- | --- | --- |
+| [GHSA-3g3m-2fjr-6pw4](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4) | moderate | 14.0.2 | G | Blocked: non-applicability not yet proved | Glob AbortSignal walk requires invoked glob/stream over pattern/tree. Actual gaxios7.1.3 runtime cjs/src+esm/src has zero whole-token rimraf/glob/minimatch references; rimraf is declared dependency, not found runtime caller. |
+| [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249) | moderate | 11.0.1 | M | Blocked: non-applicability not yet proved | Minimatch pattern amplification requires optimizationLevel>=2 and attacker pattern. Only current parent is nested glob10 via rimraf5; same absent gaxios caller. |
+| [GHSA-mm7p-fcc7-pg87](https://github.com/advisories/GHSA-mm7p-fcc7-pg87) | moderate | 7.0.7 | N | Blocked: needs recipient evidence | Canonical user account email is passed to Nodemailer addressparser; malformed string acceptance, nesting, length and header/envelope interpretation need actual PDS validation evidence. |
+| [GHSA-c7w3-x93f-qmm8](https://github.com/advisories/GHSA-c7w3-x93f-qmm8) | low | 8.0.4 | N | Blocked: non-applicability not yet proved | SMTP MAIL FROM envelope.size is not set by canonical ServerMailer/ModerationMailer options. |
+| [GHSA-vvjj-xcjg-gr5g](https://github.com/advisories/GHSA-vvjj-xcjg-gr5g) | moderate | 8.0.5 | N | Blocked: operator configuration | PDS passes operator SMTP URL unfiltered; scalar name query accepted and reaches HELO/EHLO. Public HTTP does not set it, but config input exists. |
+| [GHSA-268h-hp4c-crq3](https://github.com/advisories/GHSA-268h-hp4c-crq3) | moderate | 8.0.9 | N | Blocked: non-applicability not yet proved | List-* structured header comments are not constructed by canonical mailers. |
+| [GHSA-wqvq-jvpq-h66f](https://github.com/advisories/GHSA-wqvq-jvpq-h66f) | moderate | 8.0.9 | N | Blocked: non-applicability not yet proved | Default JSON transport is real; bypass requires structured attachment/content source normalization and safety flags. Canonical HTML is built string and mailOpts callers narrow. |
+| [GHSA-rcmh-qjqh-p98v](https://github.com/advisories/GHSA-rcmh-qjqh-p98v) | high | 7.0.11 | N | Blocked: needs recipient evidence | Canonical user account email is passed to Nodemailer addressparser; malformed string acceptance, nesting, length and header/envelope interpretation need actual PDS validation evidence. |
+| [GHSA-p6gq-j5cr-w38f](https://github.com/advisories/GHSA-p6gq-j5cr-w38f) | high | 9.0.1 | N | Blocked: non-applicability not yet proved | Mail-level raw option not passed by known canonical HTTP callers; mailer itself spreads mailOpts, so direct helper permissiveness is insufficient proof. |
+| [GHSA-8m3c-c648-2xjj](https://github.com/advisories/GHSA-8m3c-c648-2xjj) | moderate | 9.1.1 | N | Blocked: non-applicability not yet proved | Legacy MailMessage.resolveContent invocation not found in PDS mailers. |
+| [GHSA-wmmp-3585-3rmp](https://github.com/advisories/GHSA-wmmp-3585-3rmp) | moderate | 9.1.0 | N | Blocked: needs recipient evidence | User account email reaches canonical to; exact accepted email grammar/normalization and domain comparison need actual HTTP proof. |
+| [GHSA-2x7j-588g-ccc2](https://github.com/advisories/GHSA-2x7j-588g-ccc2) | high | 9.1.0 | N | Blocked: needs recipient evidence | Canonical user account email is passed to Nodemailer addressparser; malformed string acceptance, nesting, length and header/envelope interpretation need actual PDS validation evidence. |
+| [GHSA-cc9r-2j5m-2m83](https://github.com/advisories/GHSA-cc9r-2j5m-2m83) | moderate | 9.1.0 | N | Blocked: needs recipient evidence | Account email reaches addressparser; RFC5322 comments may be rejected by upstream account validation but must prove real consumer. |
+| [GHSA-6vj9-mwq6-2f5v](https://github.com/advisories/GHSA-6vj9-mwq6-2f5v) | moderate | 10.0.2 | N | Blocked: configured SMTP | Two PDS transports share process-global host-keyed DNS cache. PDS-style smtps URLs accept different tls.servername values for same host. Constructed cached resolver control returned first name for second requested name (no network). |
+| [GHSA-8vvx-rff5-p5rq](https://github.com/advisories/GHSA-8vvx-rff5-p5rq) | moderate | 10.0.2 | N | Blocked: non-applicability not yet proved | Nested structured recipient array is absent from canonical account email string callers. |
+| [GHSA-v53p-9fqp-m79j](https://github.com/advisories/GHSA-v53p-9fqp-m79j) | high | 10.0.6 | N | Blocked: needs recipient evidence | Canonical user account email is passed to Nodemailer addressparser; malformed string acceptance, nesting, length and header/envelope interpretation need actual PDS validation evidence. |
+| [GHSA-r7g4-qg5f-qqm2](https://github.com/advisories/GHSA-r7g4-qg5f-qqm2) | high | 8.0.8 | N | Blocked: non-applicability not yet proved | OAuth2 token fetch has rejectUnauthorized:false. Canonical PDS passes only SMTP URL; nested auth.type/clientId/refreshToken URL keys are ignored; actual constructor control yielded LOGIN and no oauth2. API OAuth-provider stack is separate from SMTP OAuth2. |
+| [GHSA-39m8-27wv-hr27](https://github.com/advisories/GHSA-39m8-27wv-hr27) | moderate | 10.0.10 | N | Blocked: non-applicability not yet proved | Canonical mailers/config never construct DKIM key/options or folded attacker-controlled signed header; URL dkim.* ignored. |
+| [GHSA-8c8m-p3m8-cjg8](https://github.com/advisories/GHSA-8c8m-p3m8-cjg8) | moderate | 10.1.4 | N | Blocked: needs recipient evidence | Canonical user account email is passed to Nodemailer addressparser; malformed string acceptance, nesting, length and header/envelope interpretation need actual PDS validation evidence. |
+| [GHSA-m943-m63m-w62w](https://github.com/advisories/GHSA-m943-m63m-w62w) | moderate | 10.1.4 | N | Blocked: needs recipient evidence | Canonical user account email is passed to Nodemailer addressparser; malformed string acceptance, nesting, length and header/envelope interpretation need actual PDS validation evidence. |
+| [GHSA-85x2-q946-cp5h](https://github.com/advisories/GHSA-85x2-q946-cp5h) | moderate | 10.1.4 | N | Blocked: needs recipient evidence | Canonical user account email is passed to Nodemailer addressparser; malformed string acceptance, nesting, length and header/envelope interpretation need actual PDS validation evidence. |
+| [GHSA-4ffr-jq9g-5ffx](https://github.com/advisories/GHSA-4ffr-jq9g-5ffx) | moderate | 10.0.13 | N | Blocked: configured SMTP | AUTH mechanism regex parses peer-controlled EHLO capability bytes before successful auth, including LOGIN mode. Restricting HTTP mail fields does not protect parser. |
+| [GHSA-g73g-hqqh-jr95](https://github.com/advisories/GHSA-g73g-hqqh-jr95) | moderate | 10.0.13 | N | Blocked: needs recipient evidence | Canonical user account email is passed to Nodemailer addressparser; malformed string acceptance, nesting, length and header/envelope interpretation need actual PDS validation evidence. |
+| [GHSA-4g23-2xm8-66gc](https://github.com/advisories/GHSA-4g23-2xm8-66gc) | moderate | 10.0.10 | N | Blocked: configured SMTP | All SMTP replies use uncapped multiline continuation reassembly; malicious server or preSTARTTLS MITM can starve PDS event loop. Timer is not work/size bound. |
+
+</details>
+
+Sources examined from the exact PDS 0.5.59 / Nodemailer 6.10.1 artifacts:
+PDS `dist/context.js:82-89`, `dist/mailer/index.js:69-78`,
+`dist/mailer/moderation.js:9-22`,
+`dist/api/com/atproto/admin/sendEmail.js:4-25`,
+`dist/api/com/atproto/admin/updateAccountEmail.js:4-22`, the account manager and
+OAuth store mail callbacks; Nodemailer `lib/shared/index.js:70-178,273-345`,
+`lib/smtp-connection/index.js:297-331` and its EHLO/response parsers,
+`lib/smtp-transport/index.js` authentication construction and
+`lib/fetch/index.js` token-fetch TLS options. All are pinned by this candidate's
+lock. Actual gaxios 7.1.3 production CJS/ESM source has no whole-token
+rimraf/glob/minimatch reference; that is a non-applicability candidate, not a
+complete transitive import/call proof.
+
+Supporting receipts: `/private/tmp/ait-issue75-advisory-metadata-20261117.json`
+(fresh official GitHub advisory responses),
+`/private/tmp/ait-issue75-advisory-triage-20261117.md` (full source map), and the
+unchanged `/private/tmp/ait-supported-mailer.log` baseline. The table above
+preserves the review outcome without requiring those temporary files. #75
+remains open for supported upstream resolution and missing consumer evidence;
+MCP Zod remains #68. PRs #76/#77 remain unmerged and releases held.
 
 [#28](https://github.com/natewalton/ait-protocol/issues/28) retains the independent
 PLC Kysely High finding (GHSA-8cpq-38p9-67gx). Its PostgreSQL dialect disposition
@@ -103,7 +229,17 @@ work is resumed, and enforce current policy at each PR/release check.
 ## Maintained policy
 
 This is the single active machine-readable policy. The old decisions below are
-historical evidence, not authorization. Current Kysely decisions require actual dialect regressions; current Zod mitigation requires the entire bounded ingress suite to pass. Nodemailer findings are absent from the fresh upgraded graph and have no maintained exception. The residual follow-up uses html-to-text 10.0.1 and removes the old deepmerge component and its exception. The current migration candidate selects upstream PDS 0.5.59 with patched Kysely 0.29.9 and file-type 22.3.0; its key-encoder/Elliptic chain is absent. MCP now uses official Zod 4.6.7 and native tool-schema conversion. Those resolved component findings have no maintained exception. PLC, PDS and AppView still retain separately tested Zod 3 paths; PLC also retains its bundled query builder. Their exact remaining decisions and original expiry dates stay enforced. Affected historical releases remain blocked by the current checker. The published experimental.3 transport must match its exact reviewed source/artifact and pass a fresh audit; older experimental.1 releases remain blocked. Reviewed lower-severity
+historical evidence, not authorization. Current Kysely decisions require actual
+dialect regressions; current Zod mitigation requires the entire bounded ingress
+suite to pass. The supported upstream PDS 0.5.59 retains patched Kysely 0.29.9
+and file-type 22.3.0 and removes the old key-encoder/Elliptic chain. Unsupported
+mail/converter/glob overrides and the MCP-wide Zod override are withdrawn.
+Returned mail and MCP findings are not cleared by the old candidate's passing
+tests. AIT tool schemas use supported Zod 4 independently of upstream Zod 3.
+Existing exact dispositions and original expiries remain enforced. Affected
+historical releases remain blocked by the current checker. The published
+experimental.3 transport must match its reviewed identity and pass a fresh audit;
+older experimental.1 releases remain blocked. Reviewed lower-severity
 residual risks may use explicit accepted-risk decisions; they are not mitigations. Expired blocked records
 remain useful explanations; they never authorize publication. A real approved
 disposition needs its exact advisory revision/status and actual current passing

@@ -8,10 +8,13 @@ scope of those controls.
 
 ## Current release rule (2026-11-11)
 
-A release requires no unresolved reachable High/Critical finding in its supported
-configuration within the declared four npm locks and packaged transport Cargo graph. Non-applicability and effective
-mitigation require current source evidence and a passing candidate-bound
-regression. Reachable High/Critical risk acceptance cannot pass. A policy pass
+A release requires a current decision for every finding in its supported
+configuration within the declared four npm locks and packaged transport Cargo graph.
+Non-applicability and effective mitigation require current source evidence and a
+passing candidate-bound regression. Critical risk acceptance cannot pass. The
+narrow upstream High decision below is available for a reviewed npm finding
+when a supported fix is unavailable and exposure has not materially increased.
+A policy pass
 is distinct from a clean npm audit; issue [#28](https://github.com/natewalton/ait-protocol/issues/28)
 remains open while High/Critical scanner findings remain.
 
@@ -243,11 +246,42 @@ Existing exact dispositions and original expiries remain enforced. Affected
 historical releases remain blocked by the current checker. The published
 experimental.3 transport must match its reviewed identity and pass a fresh audit;
 older experimental.1 releases remain blocked. Reviewed lower-severity
-residual risks may use explicit accepted-risk decisions; they are not mitigations. Expired blocked records
+residual risks may use explicit accepted-risk decisions. An accepted upstream
+High remains visible as residual risk in the gate report and release notes.
+Expired blocked records
 remain useful explanations; they never authorize publication. A real approved
 disposition needs its exact advisory revision/status and actual current passing
 regressions. High/Critical validity is at most 30 days; expiry requires renewed
 evidence at the next check. Removing a scanner finding removes its exception.
+
+### Reviewing upstream High risk
+
+Use the existing `accepted-risk` decision and add `upstreamAcceptance` with the
+reported `candidateTree`, the last supported release's `baselineCommit`, a
+distinct `reviewer`, `upstreamCheckedOn`, and a written `supportedFixCheck`,
+`exposureComparison`, and `exploitationReview`. Keep exact finding identity,
+owner, evidence, passing regressions, and the existing maximum 30-day review
+period. Get the maintainer's explicit acceptance after independent review.
+A supported dependency graph and evidence that exposure has not materially
+increased are approval requirements. The gate verifies scope and record
+completeness. Reviewers establish the underlying factual claims.
+
+The candidate fingerprint includes the committed tree except this register,
+so reviewing or renewing the register can leave the tested code identity
+intact. The gate checks the baseline against the supported release inventory
+and requires the candidate's exposure to match. It checks CISA KEV against the
+current advisory's CVE IDs for proposed High acceptances. KEV presence blocks
+acceptance. Absence, including the case of an advisory with no CVE, does not
+establish lack of exploitation and still requires a documented review.
+Missing advisory metadata or an unavailable KEV check blocks acceptance.
+
+Recheck published upstream packages at every release attempt and before
+renewal. Log the date, result and next manual review date in the existing
+issue while it blocks a release. If a supported fix becomes available, assess
+it on an isolated candidate before relying again on an exception. The gate
+checks the record and expiry. The maintainer performs the upstream recheck and
+verifies the available options. No scheduler is required. Required test
+failures, including the PDS mailer assertion, remain independent blockers.
 
 Native provenance identifies the published binary's source and locked graph; it
 does not assert that the graph is free from advisories or prove binary reproduction.

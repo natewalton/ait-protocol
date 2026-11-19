@@ -15,7 +15,7 @@ import { WebSocketServer } from 'ws'
 import { Secp256k1Keypair } from '@atproto/crypto'
 import { createServiceJwt } from '@atproto/xrpc-server'
 import { formatDidDoc } from '@did-plc/lib'
-import { cidForRecord } from '@atproto/repo'
+import { MemoryBlockstore, Repo, cidForRecord, concatBytesAsync, getFullRepo } from '@atproto/repo'
 import { base32 } from 'multiformats/bases/base32'
 import { openDb } from '../dist/db.js'
 
@@ -115,13 +115,18 @@ async function fixture(t, { held = true, occupiedPort = false, operator = 'termi
       } else state.reply(res)
       return
     }
+    if (state.snapshot && url.pathname === '/xrpc/com.atproto.sync.getRepo' && url.searchParams.get('did') === A) {
+      res.writeHead(200, { 'content-type': 'application/vnd.ipld.car' })
+      res.end(state.snapshot.car)
+      return
+    }
     res.writeHead(404, { 'content-type': 'application/json' }); res.end('{"error":"fixture-not-found"}')
   })
   state.wss = new WebSocketServer({ server: state.pds })
   state.pdsUrl = `http://127.0.0.1:${await listen(state.pds)}`
   state.reply = response => {
     response.writeHead(state.result === 'fail' ? 503 : 200, { 'content-type': 'application/json' })
-    response.end(state.result === 'fail' ? '{"error":"fixture-backfill-failure"}' : '{"repos":[]}')
+    response.end(state.result === 'fail' ? '{"error":"fixture-backfill-failure"}' : JSON.stringify({ repos: state.snapshot ? [state.snapshot.listing] : [] }))
   }
   state.release = result => {
     state.result = result
@@ -208,6 +213,29 @@ async function assertExplicitHistoryAndRetirement(state) {
   const after = await state.call('ait.feed.getAuthorFeed', { actor: B })
   assert.equal(after.body.feed[0].post.uri, state.uri, 'retirement changes no retained history')
 }
+
+test('legacy over-limit post does not block readiness or the author feed', async t => {
+  const state = await fixture(t)
+  const storage = new MemoryBlockstore()
+  const collection = 'ait.feed.post'
+  const records = [['legacy', 'x'.repeat(1001)], ['valid', 'valid history']]
+  const snapshot = await Repo.create(storage, A, state.signer, records.map(([rkey, text]) => ({
+    action: 'create', collection, rkey,
+    record: { $type: collection, text, createdAt: timestamp },
+  })))
+  state.snapshot = {
+    car: await concatBytesAsync(getFullRepo(storage, snapshot.cid)),
+    listing: { did: A, head: snapshot.cid.toString(), rev: snapshot.commit.rev, active: true },
+  }
+  state.release('ok')
+  await until(async () => (await state.health()).status === 200, 'local indexing ready')
+  const feed = await state.call('ait.feed.getAuthorFeed', { actor: A })
+  assert.equal(feed.status, 200)
+  assert.deepEqual(feed.body.feed.map(item => item.post.uri), [`at://${A}/${collection}/valid`])
+  await until(() => state.err.includes(`skipped at://${A}/${collection}/legacy: post text exceeds 1000 graphemes`),
+    'skipped post diagnostic')
+  await state.stop()
+})
 
 test('starting and failed local projections cannot provide authoritative names or suppress a mention', async t => {
   const state = await fixture(t)

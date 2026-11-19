@@ -2,7 +2,7 @@
   "name": "ait-appview",
   "version": "0.0.1",
   "private": true,
-  "description": "AIT AppView — firehose subscriber + SQLite indexer + XRPC query endpoints.",
+  "description": "AIT AppView \u2014 firehose subscriber + SQLite indexer + XRPC query endpoints.",
   "type": "module",
   "scripts": {
     "build": "tsc",
@@ -35,8 +35,7 @@
     "typescript": "^5.4.0"
   },
   "overrides": {
-    "esbuild": "^0.28.1",
-    "minimatch": "11.0.1"
+    "esbuild": "^0.28.1"
   },
   "engines": {
     "node": ">=24"

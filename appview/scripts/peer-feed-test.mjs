@@ -448,6 +448,37 @@ test('an initially sleeping peer resumes signed backfill and live delivery using
 })
 
 
+test('local legacy post is absent after snapshot and queued replay, and a later valid commit indexes', { timeout: 5000 }, async t => {
+  const value = await signed(A, [post('legacy', 'a'.repeat(1001)), post('valid', 'kept')])
+  const newer = await signed(A, [post('live', 'new valid post')], value.signer)
+  const f = await fixture(t, { source: 'local', repos: [value], pages: { '': { repos: [listing(value)] } },
+    messages: [await commit(value, 1), await commit(newer, 2)] })
+  legacyPost(f.db, A, 'legacy', 'stale projected content')
+  void f.feed.start().catch(() => {})
+  await waitFor(() => f.feed.getCursor() === 2)
+  assert.equal(f.feed.getStatus().state, 'running')
+  assert.deepEqual(f.db.prepare('SELECT text FROM posts ORDER BY text').all(),
+    [{ text: 'kept' }, { text: 'new valid post' }])
+})
+
+test('over-limit exception leaves peer, current live, and otherwise malformed records terminal', { timeout: 5000 }, async t => {
+  const oversized = post('legacy', 'a'.repeat(1001))
+  for (const mode of ['peer', 'live', 'sync', 'malformed']) {
+    await t.test(mode, async sub => {
+      const write = mode === 'malformed' ? { ...oversized, record: { ...oversized.record, createdAt: false } } : oversized
+      const value = await signed(A, [write])
+      const messages = mode === 'live' ? [await commit(value, 1)] : []
+      if (mode === 'sync') messages.push({ $type: `${METHOD}#sync`, did: A, seq: 1,
+        time: TIME, rev: value.repo.commit.rev, blocks: value.car })
+      const f = await fixture(sub, { source: mode === 'peer' ? SOURCE : 'local', repos: [value],
+        pages: { '': { repos: messages.length ? [] : [listing(value)] } }, messages })
+      assert.match((await failed(f.feed)).message, mode === 'malformed' ? /createdAt/ : /1000 graphemes/)
+      assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM posts').get().n, 0)
+      assert.equal(f.feed.getCursor(), 0)
+    })
+  }
+})
+
 test('signed malformed snapshot records never admit identity or earlier valid records', { timeout: 5000 }, async t => {
   for (const writes of [[post('bad', [])], [post('a-valid', 'valid but must not write'), post('z-bad', [])]]) {
     await t.test(`${writes.length} records`, async sub => {

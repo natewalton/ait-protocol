@@ -16,7 +16,7 @@ const candidateArg = process.argv.indexOf('--candidate');
 const candidate = path.resolve(candidateArg < 0 ? path.join(path.dirname(script), '../..') : process.argv[candidateArg + 1]);
 const require = createRequire(path.join(candidate, 'pds/package.json'));
 const asf = Buffer.from('3026b2758e66cf11a6d9000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000', 'hex');
-const checks = ['file-type-stream', 'elliptic-public-key'];
+const checks = ['file-type-stream', 'elliptic-public-key', 'telemetry-unused-glob'];
 
 if (process.argv.includes('--fixture-child')) {
   await fixture(process.argv.at(-1));
@@ -51,7 +51,7 @@ async function javascriptFiles(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const full = path.join(directory, entry.name);
     if (entry.isDirectory()) result.push(...await javascriptFiles(full));
-    else if (entry.name.endsWith('.js')) result.push(full);
+    else if (/\.(?:js|cjs|mjs)$/.test(entry.name)) result.push(full);
   }
   return result;
 }
@@ -73,6 +73,27 @@ async function fixture(home) {
   const lock = JSON.parse(await readFile(path.join(candidate, 'pds/package-lock.json')));
   assert.ok(!Object.keys(lock.packages).some(name => /node_modules\/(elliptic|key-encoder)$/.test(name)), 'upgraded graph restored the old key encoder');
   assert.equal(lock.packages['node_modules/file-type'].version, '22.3.0');
+  // Gaxios is the sole declared entrance to this unused dependency chain.
+  // Bind both runtime formats (including util.cjs) and the export map to the
+  // reviewed source, rather than executing known Glob/Minimatch vulnerabilities.
+  for (const [dependency, parent] of [
+    ['rimraf', 'node_modules/gaxios'],
+    ['glob', 'node_modules/rimraf'],
+    ['minimatch', 'node_modules/rimraf/node_modules/glob'],
+  ]) {
+    const parents = Object.entries(lock.packages).filter(([, pkg]) =>
+      pkg.dependencies?.[dependency] || pkg.optionalDependencies?.[dependency] || pkg.peerDependencies?.[dependency]).map(([name]) => name).sort();
+    assert.deepEqual(parents, [parent], `reviewed telemetry parent changed: ${dependency}`);
+  }
+  const gaxiosRoot = path.resolve(path.dirname(require.resolve('gaxios')), '../../..');
+  const sources = [path.join(gaxiosRoot, 'package.json')];
+  for (const format of ['cjs', 'esm']) sources.push(...await javascriptFiles(path.join(gaxiosRoot, 'build', format, 'src')));
+  const reviewedSources = await Promise.all(sources.sort().map(async file =>
+    [path.relative(gaxiosRoot, file).split(path.sep).join('/'), await readFile(file, 'utf8')]));
+  assert.equal(createHash('sha256').update(JSON.stringify(reviewedSources)).digest('hex'),
+    'c4f53a7081a7fe18b5ef775e98dd3a8957ebf15e092157ca139daf07438253de',
+    'reviewed Gaxios runtime source or export map changed');
+
   const parserCallers = [];
   for (const root of [pdsRoot, awsRoot]) {
     for (const file of await javascriptFiles(path.join(root, 'dist'))) {

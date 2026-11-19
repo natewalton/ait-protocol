@@ -32,8 +32,12 @@ if (!process.argv.includes('--fixture-child')) {
 async function runFixture(home) {
   process.umask(0o077);
   const require = createRequire(import.meta.url);
-  assert.equal(require('nodemailer/package.json').version, '10.5.0');
-  assert.equal(require('@atproto/pds/package.json').version, '0.5.59');
+  // Resolve the mailer owned by PDS, including npm's nested dependency layout.
+  const pdsRequire = createRequire(require.resolve('@atproto/pds/package.json'));
+  const nodemailerVersion = pdsRequire('nodemailer/package.json').version;
+  const pdsVersion = require('@atproto/pds/package.json').version;
+  assert.equal(nodemailerVersion, '6.10.1');
+  assert.equal(pdsVersion, '0.5.59');
 
   // No installed .env is read. Restrict even accidental dependency connections
   // to this fixture's explicitly registered ephemeral listeners.
@@ -48,7 +52,7 @@ async function runFixture(home) {
   };
   const { PDS, envToCfg, envToSecrets } = await import('@atproto/pds');
   const { cidForRawHash } = await import('@atproto/lex-data');
-  const addressparser = require('nodemailer/lib/addressparser');
+  const addressparser = pdsRequire('nodemailer/lib/addressparser');
   const did = 'did:plc:aaaaaaaaaaaaaaaaaaaaaaaa';
   const email = 'fixture@example.test';
   const password = 'Fixture-password-123456';
@@ -218,7 +222,7 @@ async function runFixture(home) {
         await pds.ctx.didCache.db.db.destroy(); await pds.ctx.sequencer.db.db.destroy();
       }
     }
-    // Advisory shapes exercise the upgraded parser. The parent has a hard
+    // Advisory shapes exercise the actual PDS-owned parser. The parent has a hard
     // timeout/memory cap, and this fixed input/latency budget is not adaptive.
     const parserTimingsMs = [];
     for (const input of ['a@b.example,'.repeat(30000), ' >' + '>[x][x]'.repeat(40000)]) {
@@ -228,7 +232,7 @@ async function runFixture(home) {
     }
     checked('crafted flat address lists and free-text fallback finish within fixed budget');
     assert.equal(urlRequests, 0);
-    console.log(JSON.stringify({ result: 'PASS', pds: '0.5.59', nodemailer: '10.5.0', checks, parserTimingsMs,
+    console.log(JSON.stringify({ result: 'PASS', pds: pdsVersion, nodemailer: nodemailerVersion, checks, parserTimingsMs,
       coverage: 'seeded account HTTP mail/token/auth journeys, actual plugin, JSON and SMTP; no PLC registration or external delivery' }));
   } finally {
     for (const socket of smtpSockets) socket.destroy();

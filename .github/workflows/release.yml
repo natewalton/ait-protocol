@@ -23,6 +23,8 @@ jobs:
   validate:
     if: (inputs.operation == 'prepare' || inputs.operation == 'publish') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/build/private-peer-integration')
     runs-on: macos-latest
+    outputs:
+      accepted_upstream: ${{ steps.dispositions.outputs.accepted_upstream }}
     permissions:
       contents: read
     steps:
@@ -138,12 +140,29 @@ jobs:
           node mcp/scripts/codex-recovery-test.mjs
           bin/codex-native-contract-test.sh
           bin/check-single-lexicon.sh
-          node pds/scripts/mailer-security-test.mjs
+          node pds/scripts/default-mail-scope-test-test.mjs
+          node pds/scripts/default-mail-scope-test.mjs --candidate "$GITHUB_WORKSPACE" --json
           node pds/scripts/dependency-security-test.mjs --candidate "$GITHUB_WORKSPACE" --json
           node bin/check-advisories-test.mjs
           node bin/security-workflow-test.mjs
           node bin/check-native-advisories-test.mjs
-          GITHUB_TOKEN="${{ github.token }}" bin/check-advisories.sh --candidate "$GITHUB_WORKSPACE"
+      - name: Verify and report release dispositions
+        id: dispositions
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/release-security.json"
+          bin/check-advisories.sh --candidate "$GITHUB_WORKSPACE" --configuration managed-default-json --json > "$report" || { cat "$report"; exit 1; }
+          node --input-type=module - "$report" <<'NODE'
+          import fs from 'node:fs';
+          const r = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (r.status !== 'passed' || !Array.isArray(r.decisions) || !Array.isArray(r.blockers) || r.blockers.length) process.exit(1);
+          const accepted = r.decisions.filter(d => d.upstreamAcceptance || d.configuration).map(d =>
+            `- ${d.advisory}: ${d.workspace}/${d.package}@${d.version}, ${r.exposure}${d.configuration ? ` / ${d.configuration} (SMTP outside approval; accepted upstream mail risks; see decision register)` : ''}, expires ${d.expiresOn}. See docs/security.md for the decision and evidence.`);
+          console.log(JSON.stringify(r));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `accepted_upstream=${JSON.stringify(accepted)}\n`);
+          NODE
 
   release:
     needs: validate
@@ -155,6 +174,7 @@ jobs:
       RELEASE_VERSION: ${{ inputs.version }}
       RELEASE_OPERATION: ${{ inputs.operation }}
       GH_TOKEN: ${{ github.token }}
+      ACCEPTED_UPSTREAM: ${{ needs.validate.outputs.accepted_upstream }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -255,8 +275,18 @@ jobs:
           test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/remotes/origin/$GITHUB_REF_NAME")"
           channel_args=(--latest=false)
           if [ "$GITHUB_REF_NAME" = build/private-peer-integration ]; then channel_args+=(--prerelease); fi
+          notes_args=(--generate-notes)
+          if [ "$ACCEPTED_UPSTREAM" != '[]' ]; then
+            node --input-type=module - "$RUNNER_TEMP/security-release-notes.md" <<'NODE'
+          import fs from 'node:fs';
+          const lines = JSON.parse(process.env.ACCEPTED_UPSTREAM);
+          if (!Array.isArray(lines) || !lines.length || lines.some(line => typeof line !== 'string')) process.exit(1);
+          fs.writeFileSync(process.argv[2], '## Accepted upstream security risks\n\n' + lines.join('\n') + '\n');
+          NODE
+            notes_args+=(--notes-file "$RUNNER_TEMP/security-release-notes.md")
+          fi
           gh release create "$RELEASE_TAG" "$RELEASE_ASSET#install.sh" "${channel_args[@]}" \
-            --draft --generate-notes --target "$(git rev-parse HEAD)" \
+            --draft "${notes_args[@]}" --target "$(git rev-parse HEAD)" \
             --title "AIT $RELEASE_TAG"
           draft_created=1
           draft_id="$(gh release view "$RELEASE_TAG" --json databaseId --jq '.databaseId')"
@@ -267,6 +297,8 @@ jobs:
           const r = JSON.parse(raw);
           const a = (r.assets || []).find(x => x.name === 'install.sh');
           if (!r.draft || r.prerelease !== (process.env.GITHUB_REF_NAME === 'build/private-peer-integration') || r.target_commitish !== expectedCommit || !a || a.digest !== `sha256:${expectedDigest}`) process.exit(1);
+          const accepted = JSON.parse(process.env.ACCEPTED_UPSTREAM);
+          if (!Array.isArray(accepted) || accepted.some(line => typeof line !== 'string' || !r.body?.split('\n').includes(line))) process.exit(1);
           NODE
           gh release view "$RELEASE_TAG" --json url,tagName,targetCommitish,isDraft
       - name: Publish inspected immutable release
@@ -289,6 +321,8 @@ jobs:
           const r = JSON.parse(raw);
           const a = (r.assets || []).find(x => x.name === 'install.sh');
           if (!r.draft || r.prerelease !== (process.env.GITHUB_REF_NAME === 'build/private-peer-integration') || r.target_commitish !== expectedCommit || !a || a.digest !== `sha256:${expectedDigest}`) process.exit(1);
+          const accepted = JSON.parse(process.env.ACCEPTED_UPSTREAM);
+          if (!Array.isArray(accepted) || accepted.some(line => typeof line !== 'string' || !r.body?.split('\n').includes(line))) process.exit(1);
           NODE
           if [ "$GITHUB_REF_NAME" = build/private-peer-integration ]; then
             latest_before="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.id')"
@@ -303,6 +337,8 @@ jobs:
           const [raw, expectedTag, expectedCommit, expected] = process.argv.slice(2);
           const r = JSON.parse(raw);
           if (r.tag_name !== expectedTag || r.draft || r.prerelease !== (process.env.GITHUB_REF_NAME === 'build/private-peer-integration') || r.immutable !== true || r.target_commitish !== expectedCommit || r.html_url !== `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/tag/${expectedTag}`) process.exit(1);
+          const accepted = JSON.parse(process.env.ACCEPTED_UPSTREAM);
+          if (!Array.isArray(accepted) || accepted.some(line => typeof line !== 'string' || !r.body?.split('\n').includes(line))) process.exit(1);
           const a = (r.assets || []).find(x => x.name === 'install.sh');
           if (!a || a.digest !== `sha256:${expected}`) process.exit(1);
           NODE

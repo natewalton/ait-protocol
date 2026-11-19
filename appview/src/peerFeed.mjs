@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { schemas } from '@atproto/api'
-import { Lexicons, ipldToLex } from '@atproto/lexicon'
+import { Lexicons, ValidationError, ipldToLex } from '@atproto/lexicon'
 import { cborToLexRecord, parseDataKey, readCarWithRoot, verifyProofs, verifyRepoCar } from '@atproto/repo'
 import { parseAccount, parseCommitAuthenticated, parseIdentity } from '@atproto/sync'
 import { AtUri } from '@atproto/syntax'
@@ -14,6 +14,21 @@ const METHOD = 'com.atproto.sync.subscribeRepos'
 const LIST = 'com.atproto.sync.listRepos'
 const lexicons = new Lexicons([...schemas, ...AIT_LEXICONS])
 const collections = new Set(['ait.feed.post', 'ait.graph.follow', 'ait.actor.profile'])
+
+// A signed local historical post may predate enforcement of the text limit.
+// Only excuse that specific failure, and still validate every other field.
+function validateRecord(collection, record, allowOverlongPost) {
+  try {
+    lexicons.assertValidRecord(collection, record)
+    return true
+  } catch (error) {
+    if (!allowOverlongPost || collection !== 'ait.feed.post' ||
+        !(error instanceof ValidationError) ||
+        error.message !== 'Record/text must not be longer than 1000 graphemes') throw error
+    lexicons.assertValidRecord(collection, { ...record, text: '' })
+    return false
+  }
+}
 
 // idResolver and both readers must be bound to this approved source. The
 // source resolver verifies its DID genesis and PDS endpoint before returning.
@@ -87,7 +102,7 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
     await project(event)
   }
 
-  async function reconcile(did, meta, doc) {
+  async function reconcile(did, meta, doc, { backfill = false } = {}) {
     doc ??= await boundDocument(did)
     const key = await idResolver.did.resolveAtprotoKey(did)
     const { creates, commit } = await verifyRepoCar(assertRepoCarBounds(await getRepo(did, controller.signal)), did, key)
@@ -96,14 +111,18 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
     // Authenticate and validate every selected record before admitting this
     // snapshot, including its identity/account metadata.
     const records = []
+    const skipped = []
     for (const entry of creates) {
       if (!collections.has(entry.collection)) continue
       const uri = AtUri.make(did, entry.collection, entry.rkey)
-      present.add(uri.toString())
       const bytes = commit.newBlocks.get(entry.cid)
       assert(bytes, `Verified snapshot is missing ${uri}`)
       const record = ipldToLex(cborToLexRecord(bytes))
-      lexicons.assertValidRecord(entry.collection, record)
+      if (!validateRecord(entry.collection, record, source === 'local' && backfill)) {
+        skipped.push(uri.toString())
+        continue
+      }
+      present.add(uri.toString())
       records.push({ ...base, ...entry, uri, event: 'create', record })
     }
     if (commit.rev < (snapshotRevisions.get(did) ?? '')) return
@@ -121,6 +140,9 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       await project({ ...base, event: 'delete', uri, collection: uri.collection, rkey: uri.rkey })
     }
     snapshotRevisions.set(did, commit.rev)
+    for (const uri of skipped) {
+      console.error(`feed local: skipped ${uri}: post text exceeds 1000 graphemes`)
+    }
   }
 
   async function* listedRepos() {
@@ -142,7 +164,7 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       const doc = await boundDocument(repo.did)
       const meta = { seq: cursor, time: new Date().toISOString() }
       if (repo.active === false) await account(repo.did, doc, false, repo.status, meta)
-      else await reconcile(repo.did, meta, doc)
+      else await reconcile(repo.did, meta, doc, { backfill: true })
     }
   }
 
@@ -178,12 +200,6 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       const events = await parseCommitAuthenticated(idResolver, message, col => collections.has(col))
       const expected = message.ops.filter(op => collections.has(parseDataKey(op.path).collection))
       assert.equal(events.length, expected.length, `Incomplete authenticated commit for ${did}`)
-      for (const event of events) {
-        if (event.event === 'create' || event.event === 'update') {
-          event.record = ipldToLex(event.record)
-          lexicons.assertValidRecord(event.collection, event.record)
-        }
-      }
       // The sync parser authenticates record claims, but copies rev/commit from
       // the envelope. Bind those fields to that same signed CAR root before
       // using its revision as an ordering decision (including empty commits).
@@ -192,7 +208,14 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       assert(car.root.equals(message.commit) && root.did === did && root.rev === message.rev,
         `Commit envelope does not match authenticated root for ${did}`)
       if (!expected.length) await verifyProofs(message.blocks, [], did, await idResolver.did.resolveAtprotoKey(did))
-      if (root.rev > (snapshotRevisions.get(did) ?? '')) {
+      const covered = root.rev <= (snapshotRevisions.get(did) ?? '')
+      for (const event of events) {
+        if (event.event === 'create' || event.event === 'update') {
+          event.record = ipldToLex(event.record)
+          validateRecord(event.collection, event.record, source === 'local' && covered)
+        }
+      }
+      if (!covered) {
         for (const event of events) await project(event)
       }
     } else if (message.$type === `${METHOD}#identity`) {

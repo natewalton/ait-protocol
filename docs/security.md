@@ -64,6 +64,13 @@ The exact packed experimental.3 also passed all 14 outcomes of the isolated two-
 
 [Experimental.3](https://github.com/natewalton/iroh-ffi/releases/tag/iroh-direct-v0.1.0-experimental.3) is published as an immutable prerelease at the exact source/digest identity below. Anonymous public asset and source-lock readback matched the reviewed bytes. The peer security candidate now pins its exact URL/integrity; stable has no peer transport dependency. The unpublished experimental.2 draft is superseded after the fresh audit found RUSTSEC-2026-0486. Older experimental.1 releases remain blocked. Every adopted candidate still requires current package/source correspondence, native audit and runtime evidence; publication alone is not candidate approval. No AIT release or live installation is performed by this change.
 
+
+### Chrono in the native source lock
+
+The full source lock scan reports [RUSTSEC-2026-0543](https://rustsec.org/advisories/RUSTSEC-2026-0543.html) for Chrono 0.4.45. The [experimental.3 build script](https://github.com/natewalton/iroh-ffi/blob/d50c2b7de23ac8872db630056897742518d9706d/iroh-js/build-package.sh) uses the default features of `number0_iroh` with `--locked --release --target aarch64-apple-darwin`. The published addon is macOS arm64. On the pinned source commit and lock, Cargo 1.91.0 resolved the macOS arm64 tree without Chrono or WMI. The same locked package and default features resolved Chrono through WMI and netwatch for the Windows x64 target.
+
+Reproduce with `cargo tree --locked --package number0_iroh --target aarch64-apple-darwin` and `cargo tree --locked --package number0_iroh --target x86_64-pc-windows-msvc --invert chrono` from the pinned workspace. The release regression checks that the installed package manifest, loader and addon match the reviewed macOS bytes. The gate still scans the entire source lock and binds the disposition to the exact artifact, source lock and advisory revision. A new artifact or target requires fresh review. See [#78](https://github.com/natewalton/ait-protocol/issues/78).
+
 ## Acknowledged migration-related security gaps
 
 As of 2026-11-16, the remaining Zod High advisory is tracked under
@@ -487,6 +494,42 @@ source commit, source-lock digest and exact crate path/version.
       "ecosystem": "npm",
       "advisoryStatus": "active",
       "advisoryRevision": "2026-10-23T18:26:52Z"
+    },
+    {
+      "id": "rust-RUSTSEC-2026-0543-experimental3-darwin-arm64",
+      "ecosystem": "rust",
+      "workspace": "appview",
+      "package": "chrono",
+      "version": "0.4.45",
+      "advisory": "RUSTSEC-2026-0543",
+      "reviewedSeverity": "info",
+      "advisoryStatus": "active",
+      "advisoryRevision": "sha256:2ada3351db1564cef8838727c525cfbd15a69929045bb06d9de75f95666de2e4",
+      "decision": "non-applicable",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "The exact locked number0_iroh graph for aarch64-apple-darwin excludes Chrono and WMI. The Windows target resolves Chrono through WMI. The immutable published package is macOS arm64 only, and the regression binds the candidate loading chain to those reviewed bytes. Full source lock scanning remains in force.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:chrono@0.4.45",
+          "dependencyFingerprint": "sha256:9727198d9bc4712a37efc87c3fa3db5a65d32b8acf6630934adbe7fd5f0bfa27"
+        }
+      ],
+      "evidence": [
+        "https://rustsec.org/advisories/RUSTSEC-2026-0543.html",
+        "https://github.com/natewalton/ait-protocol/issues/78",
+        "https://github.com/natewalton/iroh-ffi/blob/d50c2b7de23ac8872db630056897742518d9706d/iroh-js/build-package.sh"
+      ],
+      "regressions": [
+        {
+          "path": "bin/chrono-macos-artifact-test.mjs",
+          "check": "chrono-macos-artifact"
+        }
+      ]
     },
     {
       "id": "rust-RUSTSEC-2023-0089-experimental3",

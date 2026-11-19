@@ -262,15 +262,15 @@ The High raw-message and OAuth2-token findings need inputs not supplied by the
 traced canonical callers. Those observations support a narrower exposure
 assessment, without claiming the dependency has been fixed.
 
-The file/URL assertion still fails when the fixture directly passes object
-content into the transporter. Canonical account mail renders strings and
-moderation mail accepts a string. This is an observed dependency defect whose
-HTTP reachability remains unproved. It must remain a visible result. The default-mail characterization records both known failures, checks the
-canonical JSON journeys and IDN handling, and then evaluates the existing
-parser budget. The full JSON-and-SMTP fixture retains strict assertions.
-SMTP is explicitly outside this approval. Publication cannot
-claim those cases passed or treat a timeout or unrelated failure as this result.
-
+Known upstream file/URL and recipient-parser vulnerabilities remain accepted
+residual risks in this configuration. The earlier isolated fixture reproduced
+the file/URL defects and measured a recipient-parser case at 46.5 seconds;
+those results are evidence, not claims of fixes. Reproducing an accepted
+upstream vulnerability is not a release requirement. The required mail-scope
+check verifies the reviewed distribution defaults, peer exposure and dependency
+identity without invoking the mailer. The original strict mail-library fixture
+remains available for optional investigation and is not run by the release gate.
+SMTP is outside this approval.
 The default-mail residual risk is accepted while supported upstream fixes are
 unavailable, within the dates above. Release remains subject to complete
 required check results, enforcement of this scope, and separate telemetry and MCP decisions. If SMTP
@@ -329,8 +329,8 @@ renewal. Log the date, result and next manual review date in the existing
 issue while it blocks a release. If a supported fix becomes available, assess
 it on an isolated candidate before relying again on an exception. The gate
 checks the record and expiry. The maintainer performs the upstream recheck and
-verifies the available options. No scheduler is required. Required test
-failures, including the PDS mailer assertion, remain independent blockers.
+verifies the available options. No scheduler is required. Required AIT exposure and behavior checks remain blockers. Tests that merely
+reproduce explicitly accepted upstream vulnerabilities are not release requirements.
 
 Native provenance identifies the published binary's source and locked graph; it
 does not assert that the graph is free from advisories or prove binary reproduction.
@@ -716,7 +716,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -733,8 +733,8 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ]
     },
@@ -753,7 +753,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -770,8 +770,8 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ]
     },
@@ -790,7 +790,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -807,8 +807,8 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ]
     },
@@ -827,7 +827,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -844,8 +844,8 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ]
     },
@@ -864,7 +864,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -881,8 +881,8 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ]
     },
@@ -901,7 +901,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -918,12 +918,12 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:ee53217063d4983746a6245b3f01065477af7c3df175b5da5d25f33963f4287f",
+        "candidateTree": "sha256:c82ea2aac99d122aa1173b008ab43886727553c897e3140037b13a9361ceb5f5",
         "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
         "reviewer": "independent-review/default_mail_gate_review",
         "upstreamCheckedOn": "2026-11-19",
@@ -947,7 +947,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -964,12 +964,12 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:ee53217063d4983746a6245b3f01065477af7c3df175b5da5d25f33963f4287f",
+        "candidateTree": "sha256:c82ea2aac99d122aa1173b008ab43886727553c897e3140037b13a9361ceb5f5",
         "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
         "reviewer": "independent-review/default_mail_gate_review",
         "upstreamCheckedOn": "2026-11-19",
@@ -993,7 +993,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1010,8 +1010,8 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ]
     },
@@ -1030,7 +1030,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1047,8 +1047,8 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ]
     },
@@ -1067,7 +1067,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1084,12 +1084,12 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:ee53217063d4983746a6245b3f01065477af7c3df175b5da5d25f33963f4287f",
+        "candidateTree": "sha256:c82ea2aac99d122aa1173b008ab43886727553c897e3140037b13a9361ceb5f5",
         "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
         "reviewer": "independent-review/default_mail_gate_review",
         "upstreamCheckedOn": "2026-11-19",
@@ -1113,7 +1113,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1130,8 +1130,8 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ]
     },
@@ -1150,7 +1150,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1167,8 +1167,8 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ]
     },
@@ -1187,7 +1187,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1204,8 +1204,8 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ]
     },
@@ -1224,7 +1224,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1241,12 +1241,12 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:ee53217063d4983746a6245b3f01065477af7c3df175b5da5d25f33963f4287f",
+        "candidateTree": "sha256:c82ea2aac99d122aa1173b008ab43886727553c897e3140037b13a9361ceb5f5",
         "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
         "reviewer": "independent-review/default_mail_gate_review",
         "upstreamCheckedOn": "2026-11-19",
@@ -1270,7 +1270,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1287,12 +1287,12 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:ee53217063d4983746a6245b3f01065477af7c3df175b5da5d25f33963f4287f",
+        "candidateTree": "sha256:c82ea2aac99d122aa1173b008ab43886727553c897e3140037b13a9361ceb5f5",
         "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
         "reviewer": "independent-review/default_mail_gate_review",
         "upstreamCheckedOn": "2026-11-19",
@@ -1316,7 +1316,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1333,8 +1333,8 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ]
     },
@@ -1353,7 +1353,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1370,8 +1370,8 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ]
     },
@@ -1390,7 +1390,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1407,8 +1407,8 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ]
     },
@@ -1427,7 +1427,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1444,8 +1444,8 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ]
     },
@@ -1464,7 +1464,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1481,8 +1481,8 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ]
     },
@@ -1501,7 +1501,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1518,8 +1518,8 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ]
     },
@@ -1538,7 +1538,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1555,8 +1555,8 @@ source commit, source-lock digest and exact crate path/version.
       ],
       "regressions": [
         {
-          "path": "pds/scripts/default-mail-risk-test.mjs",
-          "check": "default-mail-approved-result"
+          "path": "pds/scripts/default-mail-scope-test.mjs",
+          "check": "default-mail-approved-scope"
         }
       ]
     }

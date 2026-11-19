@@ -91,7 +91,7 @@ or that arbitrary inputs/configurations are safe.
 | AppView, main and peer | Zod 3, GHSA-mrhx-c7xc-m3w5; inherited through protocol validation, repository/sync and identity libraries | Mitigated within the tested input/resource envelope; `appview-zod-GHSA-mrhx-c7xc-m3w5` | Complete upstream Lex adoption, then migrate and test AIT's actual indexing, query and peer consumers under #68. |
 | PDS, including OAuth | Zod 3, GHSA-mrhx-c7xc-m3w5; remaining server and OAuth validation | Mitigated within the tested input/resource envelope; `pds-zod-GHSA-mrhx-c7xc-m3w5` | Wait for supported upstream replacements covering the full server path. A forced Zod 4 override fails OAuth provider initialization; migrating AIT clients does not repair this path. |
 | PLC | Zod 3, GHSA-mrhx-c7xc-m3w5; published PLC dependency and embedded validators | Mitigated within the tested input/resource envelope; `plc-zod-GHSA-mrhx-c7xc-m3w5` | #68 tracks the shared validation blocker, but AT Protocol's Lex migration alone does not guarantee replacement of the separately published PLC bundle. Verify both external and embedded validators before removing this disposition. |
-| MCP upstream AT Protocol libraries | Zod 3, GHSA-mrhx-c7xc-m3w5; required independently by API/common-web/lexicon/XRPC | Restored when the unsupported global override is removed; not covered by a new waiver here | Track under #68. Candidate-bound ingress evidence and a current explicit disposition are required before release. AIT-owned tool schemas remain on SDK-supported Zod 4.6.7. |
+| MCP upstream AT Protocol libraries | Zod 3, GHSA-mrhx-c7xc-m3w5; required independently by API/common-web/lexicon/XRPC | Proposed temporary accepted-risk decision, awaiting explicit maintainer approval; all four exact paths remain blocked | Track under #68. Candidate-bound ingress evidence and a current explicit disposition are required before release. AIT-owned tool schemas remain on SDK-supported Zod 4.6.7. |
 
 All three existing dispositions expire on **2026-12-10**. Waiting for upstream
 neither extends them nor bypasses the candidate-bound release checks. Changed
@@ -100,6 +100,37 @@ unresolved reachable High/Critical finding without effective mitigation blocks
 release; this deferral is not blanket risk acceptance. The earlier zero-High MCP
 claim depended on forcing upstream Zod 3 consumers onto Zod 4 and is withdrawn.
 The corrected graph retains Zod 3 findings and receives no new exception here.
+
+### MCP decision prepared for approval (2026-11-19)
+
+One proposed temporary accepted-risk decision covers all four MCP Zod 3.25.76
+paths for GHSA-mrhx-c7xc-m3w5. It is recorded as **blocked**, pending explicit
+maintainer approval. Independent security and systems review support the
+proposal. The existing mail approval does not authorize this separate risk.
+
+The concrete residual risk is excessive memory/CPU use or termination of an
+MCP or aitty process when the canonical client consumes hostile or malformed
+responses from its configured local PDS. The common-web DID-document validator
+accepts response-controlled arrays. Existing MCP stdio limits do not bound
+those HTTP responses. Local routing and rejected redirects reduce exposure;
+they do not establish complete response-side mitigation.
+
+Source review found fixed-shape scalar schemas in API's NUX helper and XRPC's
+error helper. Lexicon registers bundled schema documents and validates scalar
+blob shapes while converting responses. The proposal conservatively retains
+all four findings rather than adding separate non-applicability machinery.
+Existing bounded-ingress tests remain required for their actual tested
+surfaces, without claiming they fix the response gap. No vulnerability
+reproduction or new runtime control is required for this decision.
+
+The proposed exception expires **December 10** and is limited to this exact
+candidate, dependency paths and local/approved-peer exposure. It requires
+fresh advisory/KEV checks and manual upstream review at every release attempt,
+before renewal, and November 26 if still waiting. Latest published API 0.32.2,
+common-web 0.5.17, Lexicon 0.7.19 and XRPC 0.8.18 still require Zod ^3.23.8;
+the advisory's first fixed Zod version is 4.6.6. A forced major upgrade and a
+partial Lex migration remain out of scope. No runtime or dependency change is
+proposed. See #68 and #77 for the approval and current release status.
 
 ### Supported dependency ranges and returned mail findings
 
@@ -1654,6 +1685,55 @@ source commit, source-lock digest and exact crate path/version.
         {
           "path": "pds/scripts/dependency-security-test.mjs",
           "check": "telemetry-unused-glob"
+        }
+      ]
+    },
+    {
+      "id": "mcp-zod-GHSA-mrhx-c7xc-m3w5",
+      "ecosystem": "npm",
+      "workspace": "mcp",
+      "package": "zod",
+      "version": "3.25.76",
+      "advisory": "GHSA-mrhx-c7xc-m3w5",
+      "reviewedSeverity": "high",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-10-23T18:26:52Z",
+      "decision": "blocked",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Pending explicit maintainer approval of the reviewed temporary MCP availability-risk exception. Supported upstream Zod 3 remains vulnerable. Local PDS HTTP responses can reach DID-document array validation without a complete response/work bound, potentially exhausting or terminating MCP or aitty. Existing stdio controls do not establish HTTP-response mitigation. No dependency override, custom validator or partial Lex migration is proposed.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/api/node_modules/zod",
+          "dependencyFingerprint": "sha256:ab05d5f107896b0dca1142cf7bf491eaa17bb9342c3c3a06ed6e9fa966ef3d24"
+        },
+        {
+          "path": "node_modules/@atproto/common-web/node_modules/zod",
+          "dependencyFingerprint": "sha256:863fc9e48a0f386218afac5add9f7ce61b9650638a1fcd27e4127ee97300f830"
+        },
+        {
+          "path": "node_modules/@atproto/lexicon/node_modules/zod",
+          "dependencyFingerprint": "sha256:5f6d34571cc8a16cde6f7aa5b8c6dec9d0198114ccdcc56b2dfe34b6c24ecc50"
+        },
+        {
+          "path": "node_modules/@atproto/xrpc/node_modules/zod",
+          "dependencyFingerprint": "sha256:5c483b12ed382d8b824b2caf5c3bf96bee3be8b10bfeb1f5075b64425cf0db78"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-mrhx-c7xc-m3w5",
+        "https://github.com/bluesky-social/atproto/issues/5811",
+        "https://github.com/natewalton/ait-protocol/issues/68",
+        "https://github.com/natewalton/ait-protocol/pull/77"
+      ],
+      "regressions": [
+        {
+          "path": "bin/security-input-test.mjs",
+          "check": "zod-ingress"
         }
       ]
     }

@@ -232,24 +232,29 @@ Elliptic findings remain resolved; completed security issues are not reopened.
 No scheduled monitoring is added. Reassess the migration prerequisite when this
 work is resumed, and enforce current policy at each PR/release check.
 
-## Peer.5 PDS decision awaiting maintainer approval
+## Approved peer.5 default-mail risk decision
 
-Supported PDS dependencies are mandatory. The proposed treatment for the default mail configuration under #75 is a
-temporary accepted upstream risk, expiring December 10, 2026. Telemetry findings
-remain separately assessed under the same issue. Upstream is next
-checked November 26 and at every release attempt or renewal. This proposal adds
-no active disposition and grants no publication permission.
+Supported PDS dependencies are mandatory. The maintainer approved temporary
+acceptance of the default-mail residual risk on November 19, 2026, after
+independent review. Owner: @natewalton. Expiry: December 10, 2026. Next manual
+upstream review: November 26, and at every release attempt or renewal.
+Telemetry and MCP findings remain separate decisions.
+
+This is the maintainer's recorded risk decision for the scope below.
+Machine-readable disposition entries and test-result handling still need to
+enforce that scope before the release gate can apply the approval. The current
+broad local-and-approved-peer exposure cannot silently extend it to SMTP.
 
 The reviewed configuration uses the managed loopback PDS listener, default JSON
 mail and AIT's generated account emails. The peer interface exposes approved
-sync/read operations and does not forward account mail requests. This review
-does not cover operator-configured SMTP or moderation SMTP. A release decision
-must state that scope and describe the residual risk to users.
+sync/read operations and does not forward account mail requests. The approval covers the default JSON mail configuration. Operator-configured
+SMTP and moderation SMTP require a separate decision. Release notes must state
+this scope and describe the residual risk to users.
 
 The three High recipient-parser findings remain plausible local denial-of-service
 risks because stored addresses can reach the parser. Normal account inputs are
 validated, but administrative and historical addresses have weaker provenance.
-The proposed acceptance would cover that uncertainty only for the stated configuration.
+The approval covers that uncertainty only for the stated configuration.
 The High raw-message and OAuth2-token findings need inputs not supplied by the
 traced canonical callers. Those observations support a narrower exposure
 assessment, without claiming the dependency has been fixed.
@@ -261,9 +266,9 @@ HTTP reachability remains unproved. It must remain a visible result. The current
 suite stops there, leaving later SMTP and parser cases unrun. Publication cannot
 claim those cases passed or treat a timeout or unrelated failure as this result.
 
-For the default configuration, an explicit temporary risk decision is a
-reasonable option while upstream fixes are unavailable. Release remains subject
-to complete required check results and the separate MCP decisions. If SMTP
+The default-mail residual risk is accepted while supported upstream fixes are
+unavailable, within the dates above. Release remains subject to complete
+required check results, enforcement of this scope, and separate telemetry and MCP decisions. If SMTP
 remains within peer.5's supported release scope, its broader risks still require
 review before any acceptance applies. See #77 for the current release decision.
 

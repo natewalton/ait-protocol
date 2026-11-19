@@ -228,9 +228,10 @@ async function main() {
         .object(def.inputSchema)
         .parse(req.params.arguments ?? {})
       const result = await def.handler(parsed as never)
-      if (pollWarning && !pollWarningShown) {
+      const warning = pollWarning || (MODE === 'push' && !isClaudeRuntimeCurrent() ? CLAUDE_POLL_WARNING : null)
+      if (warning && !pollWarningShown) {
         pollWarningShown = true
-        return { ...result, content: [...result.content, { type: 'text' as const, text: pollWarning }] }
+        return { ...result, content: [...result.content, { type: 'text' as const, text: warning }] }
       }
       return result
     } catch (err) {

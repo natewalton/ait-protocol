@@ -19,12 +19,13 @@ function step(document, name) {
   const content = document.split(marker)[1].split(/^      - /m)[0];
   const match = content.match(/^        run: \|\n([\s\S]*)/m);
   assert.ok(match, `literal shell block: ${name}`);
-  return match[1].split('\n').map(line => line.startsWith('          ') ? line.slice(10) : line).join('\n').trim();
+  return match[1].split(/\n(?= {0,9}\S)/, 1)[0].split('\n').map(line => line.slice(10)).join('\n').trim();
 }
 const publish = step(release, 'Publish inspected immutable release');
 const prepare = step(release, 'Prepare inspected draft');
 const relevance = step(security, 'Determine security relevance');
 const validate = step(release, 'Validate candidate and run gates');
+const dispositions = step(release, 'Verify and report release dispositions');
 const securityValidate = step(security, 'Test candidate security boundaries');
 for (const block of [validate, securityValidate]) {
   assert.match(block, /git archive b4ea412c50caf3a21f5e270f65b20906dc76f0de pds/);
@@ -40,10 +41,11 @@ for (const block of [validate, securityValidate]) {
 const releaseJob = release.slice(release.indexOf('\n  release:\n'));
 assert.match(release, /validate:\n    if: [^\n]*inputs\.operation == 'prepare'[^\n]*inputs\.operation == 'publish'/);
 assert.match(releaseJob, /needs: validate\n    if: needs\.validate\.result == 'success'/);
-assert.match(validate, /bin\/check-advisories\.sh --candidate "\$GITHUB_WORKSPACE"/);
+assert.match(dispositions, /bin\/check-advisories\.sh --candidate "\$GITHUB_WORKSPACE"/);
 assert.match(validate, /node bin\/check-advisories-test\.mjs/);
 assert.match(validate, /node bin\/security-workflow-test\.mjs/);
-assert.ok(validate.indexOf('bin/check-advisories.sh --candidate') > validate.indexOf('npm --prefix pds ci'));
+assert.ok(release.indexOf('bin/check-advisories.sh --candidate') > release.indexOf('node pds/scripts/mailer-security-test.mjs'));
+assert.match(releaseJob, /ACCEPTED_UPSTREAM: \$\{\{ needs\.validate\.outputs\.accepted_upstream \}\}/);
 assert.match(release, /permissions:\n  contents: read/);
 assert.match(release, /validate:[\s\S]*?permissions:\n      contents: read/);
 assert.equal((security.match(/^  pull_request:/gm) || []).length, 1);
@@ -72,6 +74,7 @@ const fail = message => { console.error(message); process.exit(1); };
 const record = () => ({ id: 91, tag_name: state.apiTag || process.env.RELEASE_TAG, target_commitish: state.apiTarget || process.env.HEAD,
   draft: state.draft, prerelease: state.wrongChannel ? !state.peer : state.peer, immutable: true,
   html_url: 'https://github.com/'+process.env.GITHUB_REPOSITORY+'/releases/tag/'+process.env.RELEASE_TAG,
+  body: state.releaseNotes || '',
   assets: [{ name:'install.sh', digest:'sha256:'+(state.badDigest ? '0'.repeat(64) : process.env.DIGEST) }] });
 if (command === 'git') {
   if (args[0] === 'rev-parse') output(args[1] === 'HEAD' ? process.env.HEAD : state.moved ? '${other}' : process.env.HEAD);
@@ -82,7 +85,7 @@ if (command === 'git') {
     if (args.includes('databaseId,targetCommitish,isDraft')) output('91\\t'+(state.viewTarget || process.env.HEAD)+'\\t'+state.draft);
     else if (args.includes('databaseId')) output('91');
     else output(JSON.stringify(record()));
-  } else if (args[0] === 'release' && args[1] === 'create') { state.draft = true; state.mutations++; save(); }
+  } else if (args[0] === 'release' && args[1] === 'create') { state.draft = true; state.mutations++; if (args.includes('--notes-file')) state.releaseNotes = fs.readFileSync(args[args.indexOf('--notes-file') + 1], 'utf8'); save(); }
   else if (args[0] === 'release' && args[1] === 'edit') { state.draft = false; state.mutations++; save(); }
   else if (args[0] === 'api' && args[1].endsWith('/releases/latest')) {
     if (args.includes('--jq')) output(state.changedStableLatest && !state.draft ? '18' : '17'); else output(JSON.stringify(record()));
@@ -101,7 +104,7 @@ if (command === 'git') {
       env: { PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: directory,
         GITHUB_REF_NAME: peer ? 'build/private-peer-integration' : 'main', GITHUB_REPOSITORY: 'fixture/ait',
         RELEASE_TAG: peer ? 'v0.1.46-peer.3' : 'v0.1.46', RELEASE_ASSET: asset, RUNNER_TEMP: directory,
-        STATE: stateFile, CALLS: callsFile, HEAD: head, DIGEST: digest, BASE_SHA: other, GITHUB_OUTPUT: path.join(directory, 'output') },
+        ACCEPTED_UPSTREAM: JSON.stringify(overrides.accepted || []), STATE: stateFile, CALLS: callsFile, HEAD: head, DIGEST: digest, BASE_SHA: other, GITHUB_OUTPUT: path.join(directory, 'output') },
     });
     assert.ifError(result.error);
     return { ...result, state: JSON.parse(readFileSync(stateFile)),
@@ -127,21 +130,42 @@ if (command === 'git') {
     assert.ok(create.includes('--draft')); assert.ok(create.includes('--latest=false'));
     assert.equal(create.includes('--prerelease'), peer); assert.equal(create[create.indexOf('--target') + 1], head);
   }
+  const accepted = ['- GHSA-aaaa-bbbb-cccc: pds/leaf@1.0.0, local-and-approved-peer, expires 2026-12-10. See docs/security.md for the decision and evidence.'];
+  const withDisclosure = runBlock(prepare, true, { accepted });
+  assert.equal(withDisclosure.status, 0, withDisclosure.stderr);
+  assert.ok(withDisclosure.state.releaseNotes.split('\n').includes(accepted[0]));
+  const missingDisclosure = runBlock(publish, true, { accepted });
+  assert.notEqual(missingDisclosure.status, 0);
+  assert.equal(missingDisclosure.state.mutations, 0);
+  const disclosed = runBlock(publish, true, { accepted, releaseNotes: withDisclosure.state.releaseNotes });
+  assert.equal(disclosed.status, 0, disclosed.stderr);
+  assert.equal(disclosed.state.mutations, 1);
   const changedLatest = runBlock(publish, true, { changedStableLatest: true });
   assert.notEqual(changedLatest.status, 0, 'peer stable-latest readback must detect an unexpected change');
   console.log('ok - extracted stable/peer prepare and publish blocks; wrong source/target/digest/channel/draft blocked before mutation');
 
   // Re-run the exact validation gate invocation with a controlled checker. The
   // source DAG above requires this fresh job result before the publication job.
-  const gateLine = validate.split('\n').find(line => line.includes('bin/check-advisories.sh --candidate')).replaceAll('${{ github.token }}', 'fixture-read-only-token');
   const validationHome = path.join(scratch, 'validation'); mkdirSync(validationHome); mkdirSync(path.join(validationHome, 'bin'));
-  writeFileSync(path.join(validationHome, 'bin/check-advisories.sh'), '#!/bin/bash\n[ "$1" = --candidate ] && [ "$2" = "$GITHUB_WORKSPACE" ] && [ "$FINDING_STATE" = green ]\n', { mode: 0o700 });
-  function gate(finding) {
-    return spawnSync('/bin/bash', ['-euc', gateLine], { cwd: validationHome, encoding: 'utf8', timeout: 5000,
-      env: { PATH: '/usr/bin:/bin', GITHUB_WORKSPACE: validationHome, FINDING_STATE: finding } }).status;
+  const check = path.join(validationHome, 'bin/check-advisories.sh');
+  writeFileSync(check, '#!/bin/bash\ncat "$GATE_REPORT"\n[ "$FINDING_STATE" = green ]\n', { mode: 0o700 });
+  const gateReport = path.join(validationHome, 'gate.json'), gateOutput = path.join(validationHome, 'gate-output');
+  const approved = {
+    status: 'passed', blockers: [], exposure: 'local-and-approved-peer',
+    decisions: [{ advisory: 'GHSA-aaaa-bbbb-cccc', workspace: 'pds', package: 'leaf', version: '1.0.0',
+      expiresOn: '2026-12-10', upstreamAcceptance: {} }],
+  };
+  function gate(finding, report = approved) {
+    writeFileSync(gateReport, JSON.stringify(report)); writeFileSync(gateOutput, '');
+    return spawnSync('/bin/bash', ['-euc', dispositions], { cwd: validationHome, encoding: 'utf8', timeout: 5000,
+      env: { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, GITHUB_WORKSPACE: validationHome,
+        GATE_REPORT: gateReport, GITHUB_OUTPUT: gateOutput, RUNNER_TEMP: validationHome, FINDING_STATE: finding } }).status;
   }
   assert.equal(gate('green'), 0, 'prepare-time green');
-  assert.notEqual(gate('changed-advisory'), 0, 'publish-time disclosure must require a new passing gate');
+  assert.equal(readFileSync(gateOutput, 'utf8'), 'accepted_upstream=' + JSON.stringify(accepted) + '\n');
+  assert.notEqual(gate('changed-advisory'), 0, 'publish-time disclosure requires a new passing gate');
+  assert.equal(readFileSync(gateOutput, 'utf8'), '');
+  assert.notEqual(gate('green', { ...approved, blockers: ['unresolved fixture'] }), 0);
   console.log('ok - green preparation cannot authorize publication after a new blocking advisory');
 
   for (const [paths, expected] of [['README.md\n', 'false'], ['LICENSE\n', 'false'], ['docs/guide.md\n', 'false'],

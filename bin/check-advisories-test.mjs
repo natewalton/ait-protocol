@@ -143,12 +143,12 @@ try {
     ['absent current regression', d => { d.regressions[0].path = 'bin/absent.mjs' }, /regression missing\/blocked/],
     ['explicit blocked migration is not grandfathered', d => { d.decision = 'blocked'; d.reason = 'proof outstanding' }, /proof outstanding/],
   ]) await test(name, async () => { const p = approved(); change(p.dispositions[0]); await blocked(p, pattern) })
-  await test('default-mail decision requires its exact scope and observation regression', () => {
+  await test('default-mail decision requires its exact scope and exposure check', () => {
     const p = approved()
     const d = p.dispositions[0]
     d.configuration = 'managed-default-json'
     d.workspace = 'pds'
-    d.regressions = [{ path: 'pds/scripts/default-mail-risk-test.mjs', check: 'default-mail-approved-result' }]
+    d.regressions = [{ path: 'pds/scripts/default-mail-scope-test.mjs', check: 'default-mail-approved-scope' }]
     assert.doesNotThrow(() => validatePolicy(p))
     const f = { ...d, path: d.components[0].path, dependencyFingerprint: d.components[0].dependencyFingerprint, severity: d.reviewedSeverity }
     const now = new Date().toISOString().slice(0, 10)

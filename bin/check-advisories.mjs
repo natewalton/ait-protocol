@@ -46,7 +46,7 @@ export function validatePolicy(policy) {
     if (['non-applicable', 'mitigated'].includes(d.decision) && !d.regressions.length) fail(`missing regression: ${d.id}`)
     if (d.configuration !== undefined &&
         (d.configuration !== 'managed-default-json' || d.workspace !== 'pds' ||
-         !d.regressions.some(r => r.path === 'pds/scripts/default-mail-risk-test.mjs' && r.check === 'default-mail-approved-result'))) fail(`invalid mail configuration scope: ${d.id}`)
+         !d.regressions.some(r => r.path === 'pds/scripts/default-mail-scope-test.mjs' && r.check === 'default-mail-approved-scope'))) fail(`invalid mail configuration scope: ${d.id}`)
     if (d.decision === 'accepted-risk' && d.reviewedSeverity === 'high') {
       const a = d.upstreamAcceptance
       if ((d.ecosystem || 'npm') !== 'npm' || !object(a) || !digest(a.candidateTree) ||

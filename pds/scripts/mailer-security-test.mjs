@@ -11,19 +11,12 @@ import http from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-const defaultJson = process.argv.includes('--default-json');
-const candidateArg = process.argv.indexOf('--candidate');
-const candidate = path.resolve(candidateArg < 0 ? path.join(path.dirname(fileURLToPath(import.meta.url)), '../..') : process.argv[candidateArg + 1]);
 
 if (!process.argv.includes('--fixture-child')) {
   assert.ok(Number(process.versions.node.split('.')[0]) >= 24, 'Run with Node 24+');
-  if (defaultJson) {
-    assert.ok(!process.env.PDS_EMAIL_SMTP_URL && !process.env.PDS_MODERATION_EMAIL_SMTP_URL,
-      'default-json review does not cover configured SMTP');
-  }
   const home = await mkdtemp(path.join(tmpdir(), 'ait-mailer-test-'));
   try {
-    const child = spawnSync(process.execPath, ['--max-old-space-size=256', fileURLToPath(import.meta.url), '--candidate', candidate, ...(defaultJson ? ['--default-json'] : []), '--fixture-child', home], {
+    const child = spawnSync(process.execPath, ['--max-old-space-size=256', fileURLToPath(import.meta.url), '--fixture-child', home], {
       env: { PATH: process.env.PATH, HOME: home, TMPDIR: home, LOG_ENABLED: 'false', NODE_ENV: 'test' },
       encoding: 'utf8', timeout: 90000, maxBuffer: 1024 * 1024,
     });
@@ -38,7 +31,7 @@ if (!process.argv.includes('--fixture-child')) {
 
 async function runFixture(home) {
   process.umask(0o077);
-  const require = createRequire(path.join(candidate, 'pds/package.json'));
+  const require = createRequire(import.meta.url);
   // Resolve the mailer owned by PDS, including npm's nested dependency layout.
   const pdsRequire = createRequire(require.resolve('@atproto/pds/package.json'));
   const nodemailerVersion = pdsRequire('nodemailer/package.json').version;
@@ -57,14 +50,13 @@ async function runFixture(home) {
     assert.ok(ports.has(Number(opts.port)), `fixture attempted unowned port ${opts.port}`);
     return originalConnect.apply(this, args);
   };
-  const { PDS, envToCfg, envToSecrets } = await import(require.resolve('@atproto/pds'));
-  const { cidForRawHash } = await import(require.resolve('@atproto/lex-data'));
+  const { PDS, envToCfg, envToSecrets } = await import('@atproto/pds');
+  const { cidForRawHash } = await import('@atproto/lex-data');
   const addressparser = pdsRequire('nodemailer/lib/addressparser');
   const did = 'did:plc:aaaaaaaaaaaaaaaaaaaaaaaa';
   const email = 'fixture@example.test';
   const password = 'Fixture-password-123456';
   let checks = 0;
-  const observations = [];
   function checked(label) { checks++; console.log(`ok ${checks} - ${label}`); }
   async function listen(server) {
     server.listen(0, '127.0.0.1'); await once(server, 'listening');
@@ -103,7 +95,7 @@ async function runFixture(home) {
   const secret = path.join(home, 'secret.txt'); await writeFile(secret, 'FIXTURE_PRIVATE_CONTENT');
 
   try {
-    for (const mode of (defaultJson ? ['json'] : ['json', 'smtp'])) {
+    for (const mode of ['json', 'smtp']) {
       const directory = path.join(home, mode); await mkdir(directory);
       const smtpUrl = `smtp://127.0.0.1:${smtpPort}`;
       const env = {
@@ -214,23 +206,15 @@ async function runFixture(home) {
             assert.ok(!result.message.includes('FIXTURE_PRIVATE_CONTENT'));
           } else await assert.rejects(transports[0].sendMail({ ...options, raw: content }), /access|disabled/i);
           // The real HTML conversion plugin resolves html content even for JSON.
-          if (defaultJson) {
-            const beforeRequests = urlRequests;
-            const result = await transports[0].sendMail({ ...options, html: content });
-            const message = JSON.parse(result.message);
-            const kind = content.path ? 'file' : 'url';
-            assert.equal(message.text, kind === 'file' ? 'FIXTURE_PRIVATE_CONTENT' : 'must-not-read');
-            observations.push({ id: `json-html-${kind}-access`, outcome: 'reference-read-despite-disabled-access' });
-            assert.equal(urlRequests - beforeRequests, kind === 'url' ? 2 : 0);
-          } else await assert.rejects(transports[0].sendMail({ ...options, html: content }), /access|disabled/i);
+          await assert.rejects(transports[0].sendMail({ ...options, html: content }), /access|disabled/i);
         }
-        assert.equal(urlRequests, defaultJson ? 2 : 0);
+        assert.equal(urlRequests, 0);
         const unicode = await transports[0].sendMail({ from: 'sender@example.test', to: 'Fixture Ω <fixture@bücher.example>', subject: 'Unicode', text: 'fixture' });
         assert.deepEqual(unicode.envelope.to, ['fixture@xn--bcher-kva.example']);
         if (mode === 'json') {
           const message = JSON.parse(unicode.message); assert.equal(message.text, 'fixture'); assert.equal(message.subject, 'Unicode');
         }
-        checked(`${mode}: ${defaultJson ? 'observed approved upstream file/URL defect' : 'raw file/URL restrictions'} and IDN recipient envelope`);
+        checked(`${mode}: raw file/URL restrictions and IDN recipient envelope`);
       } finally {
         for (const transport of transports) transport.close();
         await close(server);
@@ -244,14 +228,12 @@ async function runFixture(home) {
     for (const input of ['a@b.example,'.repeat(30000), ' >' + '>[x][x]'.repeat(40000)]) {
       const started = performance.now(); addressparser(input);
       parserTimingsMs.push(Math.round(performance.now() - started));
-      if (!defaultJson) assert.ok(parserTimingsMs.at(-1) < 1500, 'address parser exceeded fixed 1.5s budget');
+      assert.ok(parserTimingsMs.at(-1) < 1500, 'address parser exceeded fixed 1.5s budget');
     }
-    if (!defaultJson || parserTimingsMs.every(ms => ms < 1500)) {
-      checked('crafted flat address lists and free-text fallback finish within fixed budget');
-    }
-    assert.equal(urlRequests, defaultJson ? 2 : 0);
-    console.log(JSON.stringify({ result: defaultJson ? 'OBSERVED' : 'PASS', parserBudgetPassed: parserTimingsMs.every(ms => ms < 1500), profile: defaultJson ? 'managed-default-json' : 'json-and-smtp', observations, smtp: defaultJson ? 'outside-approved-scope' : 'tested', pds: pdsVersion, nodemailer: nodemailerVersion, checks, parserTimingsMs,
-      coverage: defaultJson ? 'six default JSON checks; SMTP outside approved scope' : 'seeded account HTTP mail/token/auth journeys, actual plugin, JSON and SMTP' }));
+    checked('crafted flat address lists and free-text fallback finish within fixed budget');
+    assert.equal(urlRequests, 0);
+    console.log(JSON.stringify({ result: 'PASS', pds: pdsVersion, nodemailer: nodemailerVersion, checks, parserTimingsMs,
+      coverage: 'seeded account HTTP mail/token/auth journeys, actual plugin, JSON and SMTP; no PLC registration or external delivery' }));
   } finally {
     for (const socket of smtpSockets) socket.destroy();
     await close(smtp); await close(urlSink);

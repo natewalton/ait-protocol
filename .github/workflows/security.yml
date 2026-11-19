@@ -79,8 +79,8 @@ jobs:
           node mcp/scripts/handles-test.mjs
           node mcp/scripts/claude-background-test.mjs
           node mcp/scripts/channel-sink-test.mjs
-          node pds/scripts/default-mail-risk-test-test.mjs
-          node pds/scripts/default-mail-risk-test.mjs --candidate "$GITHUB_WORKSPACE" --json
+          node pds/scripts/default-mail-scope-test-test.mjs
+          node pds/scripts/default-mail-scope-test.mjs --candidate "$GITHUB_WORKSPACE" --json
           node pds/scripts/xml-parser-test.cjs
           node pds/scripts/dependency-security-test.mjs --candidate "$GITHUB_WORKSPACE" --json
           node bin/check-advisories-test.mjs

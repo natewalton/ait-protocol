@@ -91,22 +91,23 @@ or that arbitrary inputs/configurations are safe.
 | AppView, main and peer | Zod 3, GHSA-mrhx-c7xc-m3w5; inherited through protocol validation, repository/sync and identity libraries | Mitigated within the tested input/resource envelope; `appview-zod-GHSA-mrhx-c7xc-m3w5` | Complete upstream Lex adoption, then migrate and test AIT's actual indexing, query and peer consumers under #68. |
 | PDS, including OAuth | Zod 3, GHSA-mrhx-c7xc-m3w5; remaining server and OAuth validation | Mitigated within the tested input/resource envelope; `pds-zod-GHSA-mrhx-c7xc-m3w5` | Wait for supported upstream replacements covering the full server path. A forced Zod 4 override fails OAuth provider initialization; migrating AIT clients does not repair this path. |
 | PLC | Zod 3, GHSA-mrhx-c7xc-m3w5; published PLC dependency and embedded validators | Mitigated within the tested input/resource envelope; `plc-zod-GHSA-mrhx-c7xc-m3w5` | #68 tracks the shared validation blocker, but AT Protocol's Lex migration alone does not guarantee replacement of the separately published PLC bundle. Verify both external and embedded validators before removing this disposition. |
-| MCP upstream AT Protocol libraries | Zod 3, GHSA-mrhx-c7xc-m3w5; required independently by API/common-web/lexicon/XRPC | Proposed temporary accepted-risk decision, awaiting explicit maintainer approval; all four exact paths remain blocked | Track under #68. Candidate-bound ingress evidence and a current explicit disposition are required before release. AIT-owned tool schemas remain on SDK-supported Zod 4.6.7. |
+| MCP upstream AT Protocol libraries | Zod 3, GHSA-mrhx-c7xc-m3w5; required independently by API/common-web/lexicon/XRPC | Temporary accepted-risk decision approved through December 10; all four exact paths remain reported | Track under #68. Candidate-bound ingress evidence and a current explicit disposition are required before release. AIT-owned tool schemas remain on SDK-supported Zod 4.6.7. |
 
-All three existing dispositions expire on **2026-12-10**. Waiting for upstream
+All four Zod dispositions expire on **2026-12-10**. Waiting for upstream
 neither extends them nor bypasses the candidate-bound release checks. Changed
 versions, ancestry, advisory revisions or exposure require fresh review. An
-unresolved reachable High/Critical finding without effective mitigation blocks
-release; this deferral is not blanket risk acceptance. The earlier zero-High MCP
+unresolved reachable High/Critical finding without effective mitigation or a
+current approved upstream-risk decision blocks release; this deferral is not blanket risk acceptance. The earlier zero-High MCP
 claim depended on forcing upstream Zod 3 consumers onto Zod 4 and is withdrawn.
-The corrected graph retains Zod 3 findings and receives no new exception here.
+The corrected graph retains Zod 3 findings. The separately approved MCP exception
+below records its remaining availability risk.
 
-### MCP decision prepared for approval (2026-11-19)
+### Approved MCP residual-risk decision (2026-11-19)
 
-One proposed temporary accepted-risk decision covers all four MCP Zod 3.25.76
-paths for GHSA-mrhx-c7xc-m3w5. It is recorded as **blocked**, pending explicit
-maintainer approval. Independent security and systems review support the
-proposal. The existing mail approval does not authorize this separate risk.
+The maintainer explicitly approved one temporary accepted-risk decision for
+all four MCP Zod 3.25.76 paths for GHSA-mrhx-c7xc-m3w5, after independent
+security and systems review. This approval covers the MCP availability risk
+through December 10; it is separate from the default-mail approval.
 
 The concrete residual risk is excessive memory/CPU use or termination of an
 MCP or aitty process when the canonical client consumes hostile or malformed
@@ -117,13 +118,13 @@ they do not establish complete response-side mitigation.
 
 Source review found fixed-shape scalar schemas in API's NUX helper and XRPC's
 error helper. Lexicon registers bundled schema documents and validates scalar
-blob shapes while converting responses. The proposal conservatively retains
+blob shapes while converting responses. The decision conservatively retains
 all four findings rather than adding separate non-applicability machinery.
 Existing bounded-ingress tests remain required for their actual tested
 surfaces, without claiming they fix the response gap. No vulnerability
 reproduction or new runtime control is required for this decision.
 
-The proposed exception expires **December 10** and is limited to this exact
+The approved exception expires **December 10** and is limited to this exact
 candidate, dependency paths and local/approved-peer exposure. It requires
 fresh advisory/KEV checks and manual upstream review at every release attempt,
 before renewal, and November 26 if still waiting. Latest published API 0.32.2,
@@ -329,7 +330,8 @@ remains available for optional investigation and is not run by the release gate.
 SMTP is outside this approval.
 The default-mail residual risk is accepted while supported upstream fixes are
 unavailable, within the dates above. Release remains subject to complete
-required check results, enforcement of this scope, and separate telemetry and MCP decisions. If SMTP
+required check results and enforcement of this scope. The telemetry and MCP
+decisions are recorded separately in the same policy below. If SMTP
 remains within peer.5's supported release scope, its broader risks still require
 review before any acceptance applies. See #77 for the current release decision.
 
@@ -1698,11 +1700,11 @@ source commit, source-lock digest and exact crate path/version.
       "reviewedSeverity": "high",
       "advisoryStatus": "active",
       "advisoryRevision": "2026-10-23T18:26:52Z",
-      "decision": "blocked",
+      "decision": "accepted-risk",
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Pending explicit maintainer approval of the reviewed temporary MCP availability-risk exception. Supported upstream Zod 3 remains vulnerable. Local PDS HTTP responses can reach DID-document array validation without a complete response/work bound, potentially exhausting or terminating MCP or aitty. Existing stdio controls do not establish HTTP-response mitigation. No dependency override, custom validator or partial Lex migration is proposed.",
+      "reason": "Maintainer explicitly approved the independently reviewed temporary MCP availability-risk exception on November 19 through December 10. Supported upstream Zod 3 remains vulnerable. Local PDS HTTP responses can reach DID-document array validation without a complete response/work bound, potentially exhausting or terminating MCP or aitty. Existing stdio controls do not establish HTTP-response mitigation. No dependency override, custom validator or partial Lex migration is proposed.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1735,7 +1737,16 @@ source commit, source-lock digest and exact crate path/version.
           "path": "bin/security-input-test.mjs",
           "check": "zod-ingress"
         }
-      ]
+      ],
+      "upstreamAcceptance": {
+        "candidateTree": "sha256:a85527d27dcc796523b3378c401d8b7338b19f543d90a02170ce777c36465281",
+        "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
+        "reviewer": "independent-review/default_mail_gate_review",
+        "upstreamCheckedOn": "2026-11-19",
+        "supportedFixCheck": "Latest published API 0.32.2, common-web 0.5.17, lexicon 0.7.19 and XRPC 0.8.18 still declare Zod ^3.23.8. The advisory first patches Zod at 4.6.6. No supported upstream Zod 3 fix was found; complete upstream Lex adoption remains deferred.",
+        "exposureComparison": "Peer.4 suppressed these findings through an unsupported package-wide Zod override. Restoring upstream contracts is mandatory and scan equivalence is not required. MCP and aitty route canonical client requests through localPdsFetch to the configured loopback PDS with redirects rejected. Approved peers can contribute data. Common-web response-controlled collections lack a complete pre-validation work bound; process denial of service remains a residual risk. API/XRPC use fixed-shape scalar validators and Lexicon loads bundled schema documents plus scalar blob shapes, but no non-applicability exemption is claimed for any of the four paths.",
+        "exploitationReview": "Fresh GitHub advisory metadata reviewed November 19; CVE-2023-54404 was absent from the CISA KEV catalog dated November 18. Absence is not proof of no exploitation. The release gate must repeat the fresh lookup. Known memory-exhaustion risk remains disclosed; existing ingress regressions prove only their actual tested surfaces."
+      }
     }
   ]
 }

@@ -115,21 +115,46 @@ GHSA-r7g4-qg5f-qqm2. Moderate findings also return in the mailer and
 glob/minimatch graph. These are tracked in #75 under #28, separately from the Lex hold.
 No current supported PDS release was found to clear the mail dependency range.
 
-The unchanged mailer security assertion fails with the restored dependencies:
-HTML compilation accepts a file-backed HTML reference despite
-disableFileAccess:true. This is an actual dependency-API failure, not proof that
-a public PDS route can supply that object. Ordinary PDS mail routes build their
-own options; administrative email updates also require separate recipient-bound
-review. Do not claim blanket non-applicability or weaken the assertion.
+Known mail-library file/URL and recipient-parser defects remain present.
+The temporary default JSON-mail acceptance and telemetry non-applicability
+below resolve the PDS release decisions within their reviewed scopes. SMTP is
+outside the mail approval, and the MCP findings remain separate blockers.
+These decisions do not claim fixes or authorize unsupported dependency changes.
 
-**The supported-range corrective candidate is not release-cleared.** Returned
-findings and the failing security assertion remain blockers until a supported
-upstream fix or independently verified applicable disposition exists. The
-checker and required workflows are unchanged; no reachable High risk is accepted
-to make this correction pass. Tests passing elsewhere do not authorize an
-unsupported dependency migration.
+### PDS telemetry decision (2026-11-19)
 
-### Issue #75 source assessment (2026-11-17)
+The two telemetry findings are **non-applicable to the reviewed PDS graph**:
+Glob GHSA-3g3m-2fjr-6pw4 and Minimatch GHSA-g3hv-75wg-m249. They remain
+scanner findings, not patched packages. The active decisions are in the single
+policy register below, expire December 10, and require a current source check.
+
+The sole declared chain is PDS telemetry → GCP detector → gcp-metadata 8.1.4
+→ Gaxios 7.1.3 → Rimraf 5.0.10 → Glob 10.5.0 → Minimatch 9.0.9. Gaxios's
+published CJS and ESM runtime entrypoints, all twelve runtime files including
+both util.cjs files, and their literal dynamic imports never load or call the
+three filesystem/pattern libraries. Glob's advisory requires a cancellable
+filesystem walk; Minimatch's requires executing pattern preprocessing. Neither
+operation is reached through this dependency chain.
+
+The existing dependency check now verifies the sole declared parent edges and
+hashes Gaxios's package metadata/export map and complete CJS/ESM runtime source
+trees against the reviewed artifact. Changed runtime source, added runtime
+files and a new declared parent each fail a negative control. No vulnerability
+reproduction, runtime workaround, override or new gate mechanism is added.
+
+Fresh registry review found no supported update that removes this chain:
+latest PDS 0.5.61 still uses telemetry 0.5.0; the latest GCP detector still
+requires gcp-metadata ^8, whose newest 8.1.4 pins Gaxios 7.1.3 exactly.
+Newer Gaxios releases remove Rimraf but cannot replace that exact pin.
+Recheck upstream at the next release attempt, before renewal, and November 26
+if still waiting. This is a manual review, with no scheduled monitoring.
+
+### Issue #75 source assessment (2026-11-17, historical)
+
+The following assessment predates the default-mail approval and telemetry
+non-applicability decisions above. Its blocked results are historical evidence;
+the active policy register governs the current candidate.
+
 
 **Outcome: no release clearance.** Fresh official metadata and actual installed
 source were reviewed for all 24 PDS advisories. Fourteen remain blocked by
@@ -923,7 +948,7 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:c82ea2aac99d122aa1173b008ab43886727553c897e3140037b13a9361ceb5f5",
+        "candidateTree": "sha256:a85527d27dcc796523b3378c401d8b7338b19f543d90a02170ce777c36465281",
         "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
         "reviewer": "independent-review/default_mail_gate_review",
         "upstreamCheckedOn": "2026-11-19",
@@ -969,7 +994,7 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:c82ea2aac99d122aa1173b008ab43886727553c897e3140037b13a9361ceb5f5",
+        "candidateTree": "sha256:a85527d27dcc796523b3378c401d8b7338b19f543d90a02170ce777c36465281",
         "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
         "reviewer": "independent-review/default_mail_gate_review",
         "upstreamCheckedOn": "2026-11-19",
@@ -1089,7 +1114,7 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:c82ea2aac99d122aa1173b008ab43886727553c897e3140037b13a9361ceb5f5",
+        "candidateTree": "sha256:a85527d27dcc796523b3378c401d8b7338b19f543d90a02170ce777c36465281",
         "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
         "reviewer": "independent-review/default_mail_gate_review",
         "upstreamCheckedOn": "2026-11-19",
@@ -1246,7 +1271,7 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:c82ea2aac99d122aa1173b008ab43886727553c897e3140037b13a9361ceb5f5",
+        "candidateTree": "sha256:a85527d27dcc796523b3378c401d8b7338b19f543d90a02170ce777c36465281",
         "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
         "reviewer": "independent-review/default_mail_gate_review",
         "upstreamCheckedOn": "2026-11-19",
@@ -1292,7 +1317,7 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:c82ea2aac99d122aa1173b008ab43886727553c897e3140037b13a9361ceb5f5",
+        "candidateTree": "sha256:a85527d27dcc796523b3378c401d8b7338b19f543d90a02170ce777c36465281",
         "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
         "reviewer": "independent-review/default_mail_gate_review",
         "upstreamCheckedOn": "2026-11-19",
@@ -1557,6 +1582,78 @@ source commit, source-lock digest and exact crate path/version.
         {
           "path": "pds/scripts/default-mail-scope-test.mjs",
           "check": "default-mail-approved-scope"
+        }
+      ]
+    },
+    {
+      "id": "telemetry-unused-glob",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "glob",
+      "version": "10.5.0",
+      "advisory": "GHSA-3g3m-2fjr-6pw4",
+      "reviewedSeverity": "moderate",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-10-30T23:09:15Z",
+      "decision": "non-applicable",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "The only declared runtime dependency chain is Gaxios 7.1.3 -> Rimraf 5 -> Glob 10 -> Minimatch 9. Reviewed Gaxios CJS and ESM runtime code, including util.cjs and literal dynamic imports, never loads or calls Rimraf, Glob or Minimatch. This advisory requires executing the unused filesystem/pattern operation. The required source-and-parent verification binds that review to the exact published code and dependency paths. Packages remain vulnerable; no canonical dependency is overridden or claimed fixed.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/rimraf/node_modules/glob",
+          "dependencyFingerprint": "sha256:9920ed2808d8dbe7ed68c410db64c69c459574de31d7810369af0d42e3338fd3"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-3g3m-2fjr-6pw4",
+        "https://registry.npmjs.org/gaxios/7.1.3",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/dependency-security-test.mjs",
+          "check": "telemetry-unused-glob"
+        }
+      ]
+    },
+    {
+      "id": "telemetry-unused-minimatch",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "minimatch",
+      "version": "9.0.9",
+      "advisory": "GHSA-g3hv-75wg-m249",
+      "reviewedSeverity": "moderate",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-11-04T16:50:04Z",
+      "decision": "non-applicable",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "The only declared runtime dependency chain is Gaxios 7.1.3 -> Rimraf 5 -> Glob 10 -> Minimatch 9. Reviewed Gaxios CJS and ESM runtime code, including util.cjs and literal dynamic imports, never loads or calls Rimraf, Glob or Minimatch. This advisory requires executing the unused filesystem/pattern operation. The required source-and-parent verification binds that review to the exact published code and dependency paths. Packages remain vulnerable; no canonical dependency is overridden or claimed fixed.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/rimraf/node_modules/minimatch",
+          "dependencyFingerprint": "sha256:5a522fab73159d053e64dc463e2a036ec275e0ebcfff90e5f45e40bc0b95a7f4"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-g3hv-75wg-m249",
+        "https://registry.npmjs.org/gaxios/7.1.3",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/dependency-security-test.mjs",
+          "check": "telemetry-unused-glob"
         }
       ]
     }

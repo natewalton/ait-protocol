@@ -13,7 +13,7 @@ configuration within the declared four npm locks and packaged transport Cargo gr
 Non-applicability and effective mitigation require current source evidence and a
 passing candidate-bound regression. Critical risk acceptance cannot pass. The
 narrow upstream High decision below is available for a reviewed npm finding
-when a supported fix is unavailable and exposure has not materially increased.
+when a supported fix is unavailable and the residual risk in AIT's supported configuration has been reviewed and explicitly accepted.
 A policy pass
 is distinct from a clean npm audit; issue [#28](https://github.com/natewalton/ait-protocol/issues/28)
 remains open while High/Critical scanner findings remain.
@@ -232,6 +232,41 @@ Elliptic findings remain resolved; completed security issues are not reopened.
 No scheduled monitoring is added. Reassess the migration prerequisite when this
 work is resumed, and enforce current policy at each PR/release check.
 
+## Peer.5 PDS decision awaiting maintainer approval
+
+Supported PDS dependencies are mandatory. The proposed treatment for the default mail configuration under #75 is a
+temporary accepted upstream risk, expiring December 10, 2026. Telemetry findings
+remain separately assessed under the same issue. Upstream is next
+checked November 26 and at every release attempt or renewal. This proposal adds
+no active disposition and grants no publication permission.
+
+The reviewed configuration uses the managed loopback PDS listener, default JSON
+mail and AIT's generated account emails. The peer interface exposes approved
+sync/read operations and does not forward account mail requests. This review
+does not cover operator-configured SMTP or moderation SMTP. A release decision
+must state that scope and describe the residual risk to users.
+
+The three High recipient-parser findings remain plausible local denial-of-service
+risks because stored addresses can reach the parser. Normal account inputs are
+validated, but administrative and historical addresses have weaker provenance.
+The proposed acceptance would cover that uncertainty only for the stated configuration.
+The High raw-message and OAuth2-token findings need inputs not supplied by the
+traced canonical callers. Those observations support a narrower exposure
+assessment, without claiming the dependency has been fixed.
+
+The file/URL assertion still fails when the fixture directly passes object
+content into the transporter. Canonical account mail renders strings and
+moderation mail accepts a string. This is an observed dependency defect whose
+HTTP reachability remains unproved. It must remain a visible result. The current
+suite stops there, leaving later SMTP and parser cases unrun. Publication cannot
+claim those cases passed or treat a timeout or unrelated failure as this result.
+
+For the default configuration, an explicit temporary risk decision is a
+reasonable option while upstream fixes are unavailable. Release remains subject
+to complete required check results and the separate MCP decisions. If SMTP
+remains within peer.5's supported release scope, its broader risks still require
+review before any acceptance applies. See #77 for the current release decision.
+
 ## Maintained policy
 
 This is the single active machine-readable policy. The old decisions below are
@@ -262,8 +297,12 @@ distinct `reviewer`, `upstreamCheckedOn`, and a written `supportedFixCheck`,
 `exposureComparison`, and `exploitationReview`. Keep exact finding identity,
 owner, evidence, passing regressions, and the existing maximum 30-day review
 period. Get the maintainer's explicit acceptance after independent review.
-A supported dependency graph and evidence that exposure has not materially
-increased are approval requirements. The gate verifies scope and record
+A supported dependency graph is mandatory. Restoring upstream's declared
+ranges can bring back advisories suppressed by a previous unsupported override.
+That restoration requires an explicit residual-risk decision, and advisory-count
+equivalence with the unsupported graph is not an approval requirement. Review
+new capabilities, reachable inputs and configuration changes for material risk,
+and flag those changes for discussion. The gate verifies scope and record
 completeness. Reviewers establish the underlying factual claims.
 
 The candidate fingerprint includes the committed tree except this register,

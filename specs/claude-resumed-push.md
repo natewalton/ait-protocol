@@ -1,6 +1,6 @@
 # Restore push after resuming a previously continued conversation
 
-Status: bounded code/systems review GREEN; isolated consumer and native proofs pass. Reported former-child activity still needs confirmation.
+Status: systems review NO-GO. Concurrent original and continued runtimes can both renew one DID; do not release this candidate.
 Date: 2026-11-19
 
 ## Why
@@ -90,3 +90,24 @@ authenticated channel-to-model delivery remains unproved. No installation or
 service restart occurred. Evidence /private/tmp/ait-claude-resume-native-evidence.
 The current predicate explains present registration refusal; its Nov17 install
 postdates the reported last push, so the original silence is not fully explained.
+
+## Systems review on 2026-11-19
+
+The exclusion above is not an acceptable release boundary. A real native
+Claude 2.1.328 probe allowed original A to resume while continued worker B was
+still active (exit 0). A compiled actual-MCP consumer proof then observed two
+callbacks for the same DID renewing five and four times respectively. Existing
+AppView registerAndReplay overwrites by DID, so both eligible runtimes compete
+for delivery. Earlier bounded code review did not establish whole-system safety.
+
+The design must define one delivery owner per AIT identity across continuation
+and deliberate resume. A supported resume must recover delivery without requiring
+the user to prove an older worker dead, while the superseded worker must not
+reclaim it on heartbeat or commit late delivery. Keep identity lineage and
+notification history intact. Do not solve this by increasing retries, treating
+any later transcript line as ownership, or assuming --resume excludes a worker.
+
+Skills-dev review and release are not requested because the prerequisite systems
+review is not green. No main, peer, version, release or installed changes made.
+Evidence: /private/tmp/ait-claude-overlap-systems.log and
+/private/tmp/ait-claude-resume-native-evidence/active-child-review.log.

@@ -700,6 +700,865 @@ source commit, source-lock digest and exact crate path/version.
         "https://rustsec.org/advisories/RUSTSEC-2024-0436.html"
       ],
       "regressions": []
+    },
+    {
+      "id": "default-mail-GHSA-mm7p-fcc7-pg87",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-mm7p-fcc7-pg87",
+      "reviewedSeverity": "moderate",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2025-11-17T17:29:27Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-mm7p-fcc7-pg87",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ]
+    },
+    {
+      "id": "default-mail-GHSA-c7w3-x93f-qmm8",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-c7w3-x93f-qmm8",
+      "reviewedSeverity": "low",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-03-26T22:26:46Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-c7w3-x93f-qmm8",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ]
+    },
+    {
+      "id": "default-mail-GHSA-vvjj-xcjg-gr5g",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-vvjj-xcjg-gr5g",
+      "reviewedSeverity": "moderate",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-04-08T15:05:21Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-vvjj-xcjg-gr5g",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ]
+    },
+    {
+      "id": "default-mail-GHSA-268h-hp4c-crq3",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-268h-hp4c-crq3",
+      "reviewedSeverity": "moderate",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-06-15T17:36:07Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-268h-hp4c-crq3",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ]
+    },
+    {
+      "id": "default-mail-GHSA-wqvq-jvpq-h66f",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-wqvq-jvpq-h66f",
+      "reviewedSeverity": "moderate",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-06-15T17:35:12Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-wqvq-jvpq-h66f",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ]
+    },
+    {
+      "id": "default-mail-GHSA-rcmh-qjqh-p98v",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-rcmh-qjqh-p98v",
+      "reviewedSeverity": "high",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-07-15T21:55:34Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-rcmh-qjqh-p98v",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ],
+      "upstreamAcceptance": {
+        "candidateTree": "sha256:ee53217063d4983746a6245b3f01065477af7c3df175b5da5d25f33963f4287f",
+        "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
+        "reviewer": "independent-review/default_mail_gate_review",
+        "upstreamCheckedOn": "2026-11-19",
+        "supportedFixCheck": "Latest published PDS0.5.61 still declares Nodemailer^6.8.0. Supported PDS0.5.59 resolves6.10.1. No supported mail fix is available.",
+        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval.",
+        "exploitationReview": "Current GitHub metadata reviewed for this finding and known inputs traced. KEV is freshly checked by the gate. Absence from KEV does not establish safety. Known resource/file risks remain disclosed."
+      }
+    },
+    {
+      "id": "default-mail-GHSA-p6gq-j5cr-w38f",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-p6gq-j5cr-w38f",
+      "reviewedSeverity": "high",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-09-02T14:47:23Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-p6gq-j5cr-w38f",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ],
+      "upstreamAcceptance": {
+        "candidateTree": "sha256:ee53217063d4983746a6245b3f01065477af7c3df175b5da5d25f33963f4287f",
+        "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
+        "reviewer": "independent-review/default_mail_gate_review",
+        "upstreamCheckedOn": "2026-11-19",
+        "supportedFixCheck": "Latest published PDS0.5.61 still declares Nodemailer^6.8.0. Supported PDS0.5.59 resolves6.10.1. No supported mail fix is available.",
+        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval.",
+        "exploitationReview": "Current GitHub metadata reviewed for this finding and known inputs traced. KEV is freshly checked by the gate. Absence from KEV does not establish safety. Known resource/file risks remain disclosed."
+      }
+    },
+    {
+      "id": "default-mail-GHSA-8m3c-c648-2xjj",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-8m3c-c648-2xjj",
+      "reviewedSeverity": "moderate",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-09-08T21:16:03Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-8m3c-c648-2xjj",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ]
+    },
+    {
+      "id": "default-mail-GHSA-wmmp-3585-3rmp",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-wmmp-3585-3rmp",
+      "reviewedSeverity": "moderate",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-09-08T21:33:33Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-wmmp-3585-3rmp",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ]
+    },
+    {
+      "id": "default-mail-GHSA-2x7j-588g-ccc2",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-2x7j-588g-ccc2",
+      "reviewedSeverity": "high",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-09-08T21:33:19Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-2x7j-588g-ccc2",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ],
+      "upstreamAcceptance": {
+        "candidateTree": "sha256:ee53217063d4983746a6245b3f01065477af7c3df175b5da5d25f33963f4287f",
+        "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
+        "reviewer": "independent-review/default_mail_gate_review",
+        "upstreamCheckedOn": "2026-11-19",
+        "supportedFixCheck": "Latest published PDS0.5.61 still declares Nodemailer^6.8.0. Supported PDS0.5.59 resolves6.10.1. No supported mail fix is available.",
+        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval.",
+        "exploitationReview": "Current GitHub metadata reviewed for this finding and known inputs traced. KEV is freshly checked by the gate. Absence from KEV does not establish safety. Known resource/file risks remain disclosed."
+      }
+    },
+    {
+      "id": "default-mail-GHSA-cc9r-2j5m-2m83",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-cc9r-2j5m-2m83",
+      "reviewedSeverity": "moderate",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-09-08T21:32:53Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-cc9r-2j5m-2m83",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ]
+    },
+    {
+      "id": "default-mail-GHSA-6vj9-mwq6-2f5v",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-6vj9-mwq6-2f5v",
+      "reviewedSeverity": "moderate",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-09-28T21:57:00Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-6vj9-mwq6-2f5v",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ]
+    },
+    {
+      "id": "default-mail-GHSA-8vvx-rff5-p5rq",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-8vvx-rff5-p5rq",
+      "reviewedSeverity": "moderate",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-09-29T18:25:05Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-8vvx-rff5-p5rq",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ]
+    },
+    {
+      "id": "default-mail-GHSA-v53p-9fqp-m79j",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-v53p-9fqp-m79j",
+      "reviewedSeverity": "high",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-09-29T23:43:38Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-v53p-9fqp-m79j",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ],
+      "upstreamAcceptance": {
+        "candidateTree": "sha256:ee53217063d4983746a6245b3f01065477af7c3df175b5da5d25f33963f4287f",
+        "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
+        "reviewer": "independent-review/default_mail_gate_review",
+        "upstreamCheckedOn": "2026-11-19",
+        "supportedFixCheck": "Latest published PDS0.5.61 still declares Nodemailer^6.8.0. Supported PDS0.5.59 resolves6.10.1. No supported mail fix is available.",
+        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval.",
+        "exploitationReview": "Current GitHub metadata reviewed for this finding and known inputs traced. KEV is freshly checked by the gate. Absence from KEV does not establish safety. Known resource/file risks remain disclosed."
+      }
+    },
+    {
+      "id": "default-mail-GHSA-r7g4-qg5f-qqm2",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-r7g4-qg5f-qqm2",
+      "reviewedSeverity": "high",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-10-05T22:51:58Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-r7g4-qg5f-qqm2",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ],
+      "upstreamAcceptance": {
+        "candidateTree": "sha256:ee53217063d4983746a6245b3f01065477af7c3df175b5da5d25f33963f4287f",
+        "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
+        "reviewer": "independent-review/default_mail_gate_review",
+        "upstreamCheckedOn": "2026-11-19",
+        "supportedFixCheck": "Latest published PDS0.5.61 still declares Nodemailer^6.8.0. Supported PDS0.5.59 resolves6.10.1. No supported mail fix is available.",
+        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval.",
+        "exploitationReview": "Current GitHub metadata reviewed for this finding and known inputs traced. KEV is freshly checked by the gate. Absence from KEV does not establish safety. Known resource/file risks remain disclosed."
+      }
+    },
+    {
+      "id": "default-mail-GHSA-39m8-27wv-hr27",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-39m8-27wv-hr27",
+      "reviewedSeverity": "moderate",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-10-22T16:07:06Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-39m8-27wv-hr27",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ]
+    },
+    {
+      "id": "default-mail-GHSA-8c8m-p3m8-cjg8",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-8c8m-p3m8-cjg8",
+      "reviewedSeverity": "moderate",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-10-23T21:53:05Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-8c8m-p3m8-cjg8",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ]
+    },
+    {
+      "id": "default-mail-GHSA-m943-m63m-w62w",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-m943-m63m-w62w",
+      "reviewedSeverity": "moderate",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-10-23T21:51:54Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-m943-m63m-w62w",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ]
+    },
+    {
+      "id": "default-mail-GHSA-85x2-q946-cp5h",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-85x2-q946-cp5h",
+      "reviewedSeverity": "moderate",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-10-23T21:51:19Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-85x2-q946-cp5h",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ]
+    },
+    {
+      "id": "default-mail-GHSA-4ffr-jq9g-5ffx",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-4ffr-jq9g-5ffx",
+      "reviewedSeverity": "moderate",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-10-27T15:04:41Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-4ffr-jq9g-5ffx",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ]
+    },
+    {
+      "id": "default-mail-GHSA-g73g-hqqh-jr95",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-g73g-hqqh-jr95",
+      "reviewedSeverity": "moderate",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-10-27T15:04:36Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-g73g-hqqh-jr95",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ]
+    },
+    {
+      "id": "default-mail-GHSA-4g23-2xm8-66gc",
+      "ecosystem": "npm",
+      "workspace": "pds",
+      "package": "nodemailer",
+      "version": "6.10.1",
+      "advisory": "GHSA-4g23-2xm8-66gc",
+      "reviewedSeverity": "moderate",
+      "advisoryStatus": "active",
+      "advisoryRevision": "2026-10-27T15:04:35Z",
+      "decision": "accepted-risk",
+      "configuration": "managed-default-json",
+      "owner": "@natewalton",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-12-10",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures are retained as observations. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Required canonical checks and parser work budget must complete.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "node_modules/@atproto/pds/node_modules/nodemailer",
+          "dependencyFingerprint": "sha256:81de064b3476f5b9eccf75570f388513c841e79dc34babdd981809a0787d7089"
+        }
+      ],
+      "evidence": [
+        "https://github.com/advisories/GHSA-4g23-2xm8-66gc",
+        "https://github.com/natewalton/ait-protocol/pull/77",
+        "https://github.com/natewalton/ait-protocol/issues/75"
+      ],
+      "regressions": [
+        {
+          "path": "pds/scripts/default-mail-risk-test.mjs",
+          "check": "default-mail-approved-result"
+        }
+      ]
     }
   ]
 }

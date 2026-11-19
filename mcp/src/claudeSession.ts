@@ -81,24 +81,25 @@ export function claudeIdentityUuid(id: string): string {
     id = binding.identity
   }
 }
-interface Continuation { type: string; sessionId: string; continuedInSessionId: string }
+interface Continuation { type: string; sessionId: string; continuedInSessionId: string; timestamp?: unknown }
+interface ContinuationEdge { next: string; at: number | null }
 interface Candidate { id: string; file: string }
-interface ReadState { size: number; mtime: number; ino: number; next: string | null }
+interface ReadState { size: number; mtime: number; ino: number; edge: ContinuationEdge | null }
 const reads = new Map<string, ReadState>()
 // Fixed memory blocks; only candidate metadata is decoded. A growing file is
 // read from its previous size, not scanned again. Misses are not persisted.
-function continuedTo(candidate: Candidate): string | null {
+function continuation(candidate: Candidate): ContinuationEdge | null {
   let stat: fs.Stats
   try { stat = fs.lstatSync(candidate.file) }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error }
   if (!stat.isFile() || stat.isSymbolicLink()) return null
   const key = candidate.file
   const previous = reads.get(key)
-  if (previous?.size === stat.size && previous.mtime === stat.mtimeMs && previous.ino === stat.ino) return previous.next
+  if (previous?.size === stat.size && previous.mtime === stat.mtimeMs && previous.ino === stat.ino) return previous.edge
   const unchangedPrefix = previous?.ino === stat.ino && previous.size < stat.size
   const lower = unchangedPrefix ? Math.max(0, previous!.size - 8192) : 0
   const fd = fs.openSync(candidate.file, 'r'), block = Buffer.allocUnsafe(65536 + 8192)
-  let position = stat.size, suffix: Buffer = Buffer.alloc(0), next = unchangedPrefix ? previous!.next : null
+  let position = stat.size, suffix: Buffer = Buffer.alloc(0), edge = unchangedPrefix ? previous!.edge : null
   try {
     while (position > lower) {
       const n = Math.min(position - lower, 65536); position -= n
@@ -111,15 +112,42 @@ function continuedTo(candidate: Candidate): string | null {
           try { value = JSON.parse(line) as Continuation } catch { continue }
           if (value.type === 'continued-in' && uuid(value.sessionId) === candidate.id && uuid(value.continuedInSessionId)) {
             if (uuid(value.continuedInSessionId) === candidate.id) throw new Error('Claude continuation points to itself')
-            next = uuid(value.continuedInSessionId); position = lower; break
+            const timestamp = typeof value.timestamp === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.timestamp) ? Date.parse(value.timestamp) : NaN
+            edge = { next: uuid(value.continuedInSessionId)!, at: Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value.timestamp ? timestamp : null }; position = lower; break
           }
         }
       }
       suffix = Buffer.from(block.subarray(0, Math.min(read, 8192)))
     }
   } finally { fs.closeSync(fd) }
-  reads.set(key, { size: stat.size, mtime: stat.mtimeMs, ino: stat.ino, next })
-  return next
+  reads.set(key, { size: stat.size, mtime: stat.mtimeMs, ino: stat.ino, edge })
+  return edge
+}
+function continuedTo(candidate: Candidate): string | null {
+  return continuation(candidate)?.next ?? null
+}
+// A transcript edge records historical account lineage. Only an edge from this
+// Claude process's lifetime can retire its delivery. MCP reconnect time is not
+// evidence: the owning Claude process may still be the retired original.
+let parentBirth: number | null | undefined
+function claudeParentBirth(): number | null {
+  if (parentBirth !== undefined) return parentBirth
+  parentBirth = null
+  if (!/^(?:\S*\/)?claude(?:\s|$)/.test(claudeParentCommand().trim())) return null
+  try {
+    const output = execFileSync('ps', ['-o', 'lstart=', '-p', String(process.ppid)], {
+      encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' },
+    }).trim()
+    const match = /^(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat) +(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +(\d{1,2}) +(\d{2}):(\d{2}):(\d{2}) +(\d{4})$/.exec(output)
+    if (!match) return null
+    const [, month, day, hour, minute, second, year] = match
+    const value = Date.UTC(Number(year), ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].indexOf(month), Number(day), Number(hour), Number(minute), Number(second))
+    // ps prints whole seconds. Same-second continuations stay conservative.
+    const parsed = new Date(value)
+    if (Number.isFinite(value) && value <= Date.now() && parsed.getUTCFullYear() === Number(year) && parsed.getUTCDate() === Number(day) && parsed.getUTCHours() === Number(hour) && parsed.getUTCMinutes() === Number(minute) && parsed.getUTCSeconds() === Number(second)) parentBirth = value
+  } catch { /* Unknown process birth cannot authorize reclaiming delivery. */ }
+  return parentBirth
 }
 function entries(dir: string): fs.Dirent[] {
   try { return fs.readdirSync(dir, { withFileTypes: true }) }
@@ -237,7 +265,12 @@ export function isClaudeRuntimeCurrent(): boolean {
   const key = config() + runtime
   const own = ownTranscripts.get(key) ?? candidates().filter(candidate => candidate.id === runtime)
   if (own.length) ownTranscripts.set(key, own)
-  for (const candidate of own) if (continuedTo(candidate)) return false
+  for (const candidate of own) {
+    const edge = continuation(candidate)
+    if (!edge) continue
+    const born = claudeParentBirth()
+    if (edge.at === null || born === null || edge.at >= born) return false
+  }
   return true
 }
 export function claudeContinuedSessions(): Binding[] {

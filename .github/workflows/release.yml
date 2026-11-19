@@ -119,6 +119,7 @@ jobs:
           node mcp/scripts/push-mode-test.mjs
           node mcp/scripts/handles-test.mjs
           node mcp/scripts/claude-background-test.mjs
+          node mcp/scripts/claude-delivery-owner-test.mjs
           node mcp/scripts/channel-sink-test.mjs
           node mcp/scripts/codex-writer-ownership-test.mjs
           node mcp/scripts/session-picker-test.mjs

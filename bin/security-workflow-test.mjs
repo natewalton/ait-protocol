@@ -36,6 +36,7 @@ for (const block of [validate, securityValidate]) {
   assert.match(block, /node mcp\/scripts\/list-tools-test\.mjs/);
   assert.match(block, /node pds\/scripts\/dependency-security-test\.mjs --candidate "\$GITHUB_WORKSPACE" --json/);
   assert.match(block, /node pds\/scripts\/xml-parser-test\.cjs/);
+  assert.match(block, /node pds\/scripts\/default-mail-risk-test\.mjs --candidate "\$GITHUB_WORKSPACE" --json/);
   assert.ok(block.indexOf('node mcp/scripts/stack-migration-test.mjs') > block.indexOf('npm --prefix mcp run build'));
 }
 const releaseJob = release.slice(release.indexOf('\n  release:\n'));
@@ -44,7 +45,7 @@ assert.match(releaseJob, /needs: validate\n    if: needs\.validate\.result == 's
 assert.match(dispositions, /bin\/check-advisories\.sh --candidate "\$GITHUB_WORKSPACE"/);
 assert.match(validate, /node bin\/check-advisories-test\.mjs/);
 assert.match(validate, /node bin\/security-workflow-test\.mjs/);
-assert.ok(release.indexOf('bin/check-advisories.sh --candidate') > release.indexOf('node pds/scripts/mailer-security-test.mjs'));
+assert.ok(release.indexOf('bin/check-advisories.sh --candidate') > release.indexOf('node pds/scripts/default-mail-risk-test.mjs'));
 assert.match(releaseJob, /ACCEPTED_UPSTREAM: \$\{\{ needs\.validate\.outputs\.accepted_upstream \}\}/);
 assert.match(release, /permissions:\n  contents: read/);
 assert.match(release, /validate:[\s\S]*?permissions:\n      contents: read/);

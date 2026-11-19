@@ -140,7 +140,8 @@ jobs:
           node mcp/scripts/codex-recovery-test.mjs
           bin/codex-native-contract-test.sh
           bin/check-single-lexicon.sh
-          node pds/scripts/mailer-security-test.mjs
+          node pds/scripts/default-mail-risk-test-test.mjs
+          node pds/scripts/default-mail-risk-test.mjs --candidate "$GITHUB_WORKSPACE" --json
           node pds/scripts/dependency-security-test.mjs --candidate "$GITHUB_WORKSPACE" --json
           node bin/check-advisories-test.mjs
           node bin/security-workflow-test.mjs
@@ -152,13 +153,13 @@ jobs:
         run: |
           set -euo pipefail
           report="$RUNNER_TEMP/release-security.json"
-          bin/check-advisories.sh --candidate "$GITHUB_WORKSPACE" --json > "$report" || { cat "$report"; exit 1; }
+          bin/check-advisories.sh --candidate "$GITHUB_WORKSPACE" --configuration managed-default-json --json > "$report" || { cat "$report"; exit 1; }
           node --input-type=module - "$report" <<'NODE'
           import fs from 'node:fs';
           const r = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
           if (r.status !== 'passed' || !Array.isArray(r.decisions) || !Array.isArray(r.blockers) || r.blockers.length) process.exit(1);
-          const accepted = r.decisions.filter(d => d.upstreamAcceptance).map(d =>
-            `- ${d.advisory}: ${d.workspace}/${d.package}@${d.version}, ${r.exposure}, expires ${d.expiresOn}. See docs/security.md for the decision and evidence.`);
+          const accepted = r.decisions.filter(d => d.upstreamAcceptance || d.configuration).map(d =>
+            `- ${d.advisory}: ${d.workspace}/${d.package}@${d.version}, ${r.exposure}${d.configuration ? ` / ${d.configuration} (SMTP outside approval; known file/URL protection failures retained)` : ''}, expires ${d.expiresOn}. See docs/security.md for the decision and evidence.`);
           console.log(JSON.stringify(r));
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `accepted_upstream=${JSON.stringify(accepted)}\n`);
           NODE

@@ -241,9 +241,12 @@ upstream review: November 26, and at every release attempt or renewal.
 Telemetry and MCP findings remain separate decisions.
 
 This is the maintainer's recorded risk decision for the scope below.
-Machine-readable disposition entries and test-result handling still need to
-enforce that scope before the release gate can apply the approval. The current
-broad local-and-approved-peer exposure cannot silently extend it to SMTP.
+The PDS Nodemailer entries below require the explicit
+`managed-default-json` release configuration and a fresh trusted mail-result
+regression. The gate reports that scope and the known file/URL failures.
+Installer and launcher identity checks establish the reviewed distribution
+defaults. They do not inspect or clear a user's preserved configuration.
+Operator-configured SMTP requires a separate decision.
 
 The reviewed configuration uses the managed loopback PDS listener, default JSON
 mail and AIT's generated account emails. The peer interface exposes approved
@@ -262,8 +265,10 @@ assessment, without claiming the dependency has been fixed.
 The file/URL assertion still fails when the fixture directly passes object
 content into the transporter. Canonical account mail renders strings and
 moderation mail accepts a string. This is an observed dependency defect whose
-HTTP reachability remains unproved. It must remain a visible result. The current
-suite stops there, leaving later SMTP and parser cases unrun. Publication cannot
+HTTP reachability remains unproved. It must remain a visible result. The default-mail characterization records both known failures, checks the
+canonical JSON journeys and IDN handling, and then evaluates the existing
+parser budget. The full JSON-and-SMTP fixture retains strict assertions.
+SMTP is explicitly outside this approval. Publication cannot
 claim those cases passed or treat a timeout or unrelated failure as this result.
 
 The default-mail residual risk is accepted while supported upstream fixes are

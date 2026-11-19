@@ -6,7 +6,7 @@ import os from 'node:os'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
-import { WORKSPACES, checkCandidate, parseAudit, validatePolicy, validateInstalledDependencies, dependencyFingerprint, nativeDependencyFingerprint, snapshotCandidate, candidateTreeFingerprint, hash, childEnv } from './check-advisories.mjs'
+import { WORKSPACES, checkCandidate, parseAudit, validatePolicy, validateInstalledDependencies, dependencyFingerprint, nativeDependencyFingerprint, snapshotCandidate, candidateTreeFingerprint, evaluateFinding, hash, childEnv } from './check-advisories.mjs'
 
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ait-advisory-test-'))
 const candidate = path.join(temporary, 'candidate'), trusted = path.join(temporary, 'trusted')
@@ -143,6 +143,21 @@ try {
     ['absent current regression', d => { d.regressions[0].path = 'bin/absent.mjs' }, /regression missing\/blocked/],
     ['explicit blocked migration is not grandfathered', d => { d.decision = 'blocked'; d.reason = 'proof outstanding' }, /proof outstanding/],
   ]) await test(name, async () => { const p = approved(); change(p.dispositions[0]); await blocked(p, pattern) })
+  await test('default-mail decision requires its exact scope and observation regression', () => {
+    const p = approved()
+    const d = p.dispositions[0]
+    d.configuration = 'managed-default-json'
+    d.workspace = 'pds'
+    d.regressions = [{ path: 'pds/scripts/default-mail-risk-test.mjs', check: 'default-mail-approved-result' }]
+    assert.doesNotThrow(() => validatePolicy(p))
+    const f = { ...d, path: d.components[0].path, dependencyFingerprint: d.components[0].dependencyFingerprint, severity: d.reviewedSeverity }
+    const now = new Date().toISOString().slice(0, 10)
+    assert.match(evaluateFinding(f, p, 'local-and-approved-peer', now, metadata, () => true), /configuration differs/)
+    assert.equal(evaluateFinding(f, p, 'local-and-approved-peer', now, metadata, () => true, { configuration: 'managed-default-json' }), null)
+    assert.match(evaluateFinding(f, p, 'local-and-approved-peer', now, metadata, () => false, { configuration: 'managed-default-json' }), /regression missing/)
+    d.configuration = 'smtp'
+    assert.throws(() => validatePolicy(p), /invalid mail configuration/)
+  })
   const candidateTree = candidateTreeFingerprint(candidate)
   const upstreamHigh = () => {
     const p = approved()

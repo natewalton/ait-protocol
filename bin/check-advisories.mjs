@@ -44,6 +44,9 @@ export function validatePolicy(policy) {
     if (new Date(d.expiresOn) < new Date(d.reviewedOn) || (HIGH.has(d.reviewedSeverity) && (new Date(d.expiresOn) - new Date(d.reviewedOn)) / 86400000 > 30)) fail(`invalid review period: ${d.id}`)
     if (d.decision !== 'blocked' && (!['active', 'withdrawn'].includes(d.advisoryStatus) || !text(d.advisoryRevision))) fail(`missing advisory revision: ${d.id}`)
     if (['non-applicable', 'mitigated'].includes(d.decision) && !d.regressions.length) fail(`missing regression: ${d.id}`)
+    if (d.configuration !== undefined &&
+        (d.configuration !== 'managed-default-json' || d.workspace !== 'pds' ||
+         !d.regressions.some(r => r.path === 'pds/scripts/default-mail-risk-test.mjs' && r.check === 'default-mail-approved-result'))) fail(`invalid mail configuration scope: ${d.id}`)
     if (d.decision === 'accepted-risk' && d.reviewedSeverity === 'high') {
       const a = d.upstreamAcceptance
       if ((d.ecosystem || 'npm') !== 'npm' || !object(a) || !digest(a.candidateTree) ||
@@ -255,6 +258,7 @@ export function evaluateFinding(f, policy, exposure, now, metadata, regression, 
   const d = findDisposition(f, policy)
   if (!d) return 'no current disposition for this advisory/version/dependency path'
   if (d.decision === 'blocked') return d.reason
+  if (d.configuration && d.configuration !== upstream.configuration) return 'approved mail configuration differs from release scope'
   if (d.reviewedSeverity !== f.severity || metadata.severity !== f.severity || d.advisoryStatus !== metadata.advisoryStatus || d.advisoryRevision !== metadata.advisoryRevision) return 'advisory severity/status/revision changed'
   if (!d.exposures.includes(exposure)) return 'supported exposure differs from reviewed scope'
   if (d.reviewedOn > now || d.expiresOn <= now) return 'decision is future-dated or expired'
@@ -288,6 +292,8 @@ export async function checkCandidate(root, options = {}) {
   const policyRoot = fs.realpathSync(options.policyRoot || trustedRoot), policy = options.policy || loadPolicy(policyRoot)
   const policyDigest = hash(fs.readFileSync(path.join(policyRoot, 'docs/security.md')))
   validatePolicy(policy)
+  const configuration = options.configuration
+  if (configuration !== undefined && configuration !== 'managed-default-json') fail('unsupported release configuration')
   const before = snapshotCandidate(root), now = new Date().toISOString().slice(0, 10)
   const exposure = policy.supportedReleases.find(r => r.commit === before.candidateCommit)?.exposure || 'local-and-approved-peer'
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ait-advisory-gate-'))
@@ -295,7 +301,8 @@ export async function checkCandidate(root, options = {}) {
   const recordDecision = f => {
     const d = findDisposition(f, policy)
     decisions.set(d.id, { id: d.id, ecosystem: d.ecosystem || 'npm', advisory: d.advisory, workspace: d.workspace, package: d.package, version: d.version, decision: d.decision, owner: d.owner, expiresOn: d.expiresOn, components: d.components,
-      ...(d.upstreamAcceptance && { upstreamAcceptance: d.upstreamAcceptance }) })
+      ...(d.upstreamAcceptance && { upstreamAcceptance: d.upstreamAcceptance }),
+      ...(d.configuration && { configuration: d.configuration }) })
   }
   const regression = r => {
     if (!regressions.has(r.path)) {
@@ -341,7 +348,7 @@ export async function checkCandidate(root, options = {}) {
         exploited ??= Promise.resolve().then(() => (options.knownExploitedReader || knownExploitedCves)())
       }
       const reason = evaluateFinding(f, policy, exposure, now, m, regression, {
-        candidateCommit: before.candidateCommit, candidateTree: before.candidateTree,
+        candidateCommit: before.candidateCommit, candidateTree: before.candidateTree, configuration,
         exploited: reviewed ? await exploited : undefined,
       })
       if (reason) blockers.push(`${f.severity} ${f.workspace} ${f.package}@${f.version} ${f.advisory} ${f.path}: ${reason}`)
@@ -375,18 +382,19 @@ export async function checkCandidate(root, options = {}) {
     const after = snapshotCandidate(before.root)
     if (after.candidateCommit !== before.candidateCommit || after.candidateTree !== before.candidateTree || JSON.stringify(after.lockDigests) !== JSON.stringify(before.lockDigests)) fail('candidate changed during verification')
     if (hash(fs.readFileSync(path.join(policyRoot, 'docs/security.md'))) !== policyDigest) fail('trusted policy changed during verification')
-    return { schemaVersion: 1, status: blockers.length ? 'blocked' : 'passed', candidateCommit: before.candidateCommit, candidateTree: before.candidateTree, exposure, policyDigest, lockDigests: before.lockDigests, scannerTotals, findings, native, verifications, decisions: [...decisions.values()], blockers: [...new Set(blockers)] }
+    return { schemaVersion: 1, status: blockers.length ? 'blocked' : 'passed', candidateCommit: before.candidateCommit, candidateTree: before.candidateTree, exposure, configuration, policyDigest, lockDigests: before.lockDigests, scannerTotals, findings, native, verifications, decisions: [...decisions.values()], blockers: [...new Set(blockers)] }
   } finally { fs.rmSync(home, { recursive: true, force: true }) }
 }
 
 async function main() {
-  const args = process.argv.slice(2); let candidate = trustedRoot, json = false
+  const args = process.argv.slice(2); let candidate = trustedRoot, json = false, configuration
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--candidate' && args[i + 1]) candidate = path.resolve(args[++i])
+    else if (args[i] === '--configuration' && args[i + 1]) configuration = args[++i]
     else if (args[i] === '--json') json = true
     else fail('Usage: bin/check-advisories.sh [--candidate <clean checkout>] [--json]')
   }
-  const result = await checkCandidate(candidate)
+  const result = await checkCandidate(candidate, { configuration })
   if (json) console.log(JSON.stringify(result, null, 2))
   else {
     console.log(`Candidate ${result.candidateCommit}; exposure ${result.exposure}; coverage four npm locks + packaged transport Cargo graph`)

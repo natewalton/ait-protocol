@@ -15,6 +15,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { openDb } from '../../appview/dist/db.js'
 import * as registry from '../../appview/dist/pushRegistry.js'
+import * as delivery from '../dist/claudeDelivery.js'
 import { encodeSeqCursor, decodeSeqCursor } from '../../appview/dist/queries/cursor.js'
 const did='did:plc:'+'a'.repeat(24), author='did:plc:'+'b'.repeat(24)
 const zero=encodeSeqCursor(0), oldBirth='Sat Jan  1 00:00:00 2000', newerBirth='Mon Jan  1 00:00:00 2001'
@@ -62,10 +63,10 @@ async function fixture(t){
  })
  server.listen(0,'127.0.0.1');await once(server,'listening');const endpoint='http://127.0.0.1:'+server.address().port
  const wrapper=path.join(root,'wrapper.mjs')
- fs.writeFileSync(wrapper,`import cp from 'node:child_process';import{syncBuiltinESMExports}from'node:module';const real=cp.execFileSync;cp.execFileSync=(p,a,...r)=>p==='ps'?(a.includes('lstart=')?process.env.FIXTURE_BIRTH:'claude --resume '+process.env.CLAUDE_CODE_SESSION_ID):real(p,a,...r);syncBuiltinESMExports();const timeout=globalThis.setTimeout;let beat;process.on('SIGUSR1',()=>{const f=beat;beat=null;f?.()});globalThis.setTimeout=(f,ms,...a)=>{if(ms===30000){beat=()=>f(...a);console.error('fixture beat armed');return timeout(()=>{},60000)}return timeout(f,ms,...a)};await import(${JSON.stringify(new URL('../dist/server.js',import.meta.url).href)});`)
+ fs.writeFileSync(wrapper,`import fs from 'node:fs';import cp from 'node:child_process';import{syncBuiltinESMExports}from'node:module';const real=cp.execFileSync;cp.execFileSync=(p,a,...r)=>p==='ps'?(a.includes('lstart=')?(()=>{if(fs.existsSync(process.env.FIXTURE_INSPECTION_FAILURE))throw new Error('fixture transient ps failure');return process.env.FIXTURE_BIRTH})():'claude --resume '+process.env.CLAUDE_CODE_SESSION_ID):real(p,a,...r);syncBuiltinESMExports();const timeout=globalThis.setTimeout;let beat;process.on('SIGUSR1',()=>{const f=beat;beat=null;f?.()});globalThis.setTimeout=(f,ms,...a)=>{if(ms===30000){beat=()=>f(...a);console.error('fixture beat armed');return timeout(()=>{},60000)}return timeout(f,ms,...a)};await import(${JSON.stringify(new URL('../dist/server.js',import.meta.url).href)});`)
  async function start(id,birth=oldBirth){
   const registrationHeld=gate!==null
-  const env={...process.env,HOME:path.join(root,'home'),CLAUDE_CONFIG_DIR:config,XDG_DATA_HOME:data,CLAUDE_CODE_SESSION_ID:id,AIT_NOTIFICATION_MODE:'push',PDS_URL:endpoint,APPVIEW_URL:endpoint,FIXTURE_BIRTH:birth}
+  const env={...process.env,HOME:path.join(root,'home'),CLAUDE_CONFIG_DIR:config,XDG_DATA_HOME:data,CLAUDE_CODE_SESSION_ID:id,AIT_NOTIFICATION_MODE:'push',PDS_URL:endpoint,APPVIEW_URL:endpoint,FIXTURE_BIRTH:birth,FIXTURE_INSPECTION_FAILURE:path.join(root,'inspection-unavailable')}
   for(const name of ['AIT_MCP_TEST_SESSION_ID','AIT_SESSION_ID','CODEX_SESSION_ID','CLAUDECODE'])delete env[name]
   const transport=new StdioClientTransport({command:process.execPath,args:[wrapper],env,cwd:project,stderr:'pipe'})
   let errors='';transport.stderr.on('data',chunk=>errors+=chunk)
@@ -177,4 +178,40 @@ test('stale credential rename cannot roll back the active delivery checkpoint',a
  assert.equal(f.checkpoint(a),pending.cursor,'delivery checkpoint is independent of stale credential rename')
  const before=f.requests.length;current.beat();await until(()=>f.requests.length>before,'winner renews after credential rename')
  assert.equal(f.requests.at(-1).cursor,pending.cursor,'registration uses durable delivered cursor')
+})
+
+
+test('temporary parent inspection failure recovers on the same listener heartbeat',async t=>{
+ const f=await fixture(t),a=randomUUID();f.seed(a)
+ const blocked=path.join(f.root,'inspection-unavailable');fs.writeFileSync(blocked,'temporary')
+ const current=await f.start(a);assert.equal(f.requests.length,0)
+ current.beat();await delay(30);assert.equal(f.requests.length,0,'failed inspection cannot authorize push')
+ fs.unlinkSync(blocked);current.beat();await until(()=>f.requests.length===1,'same MCP retries process inspection and registers')
+ const pending=f.notification();f.publish(pending);await until(()=>current.notifications.length===1,'recovered original listener delivers')
+ assert.equal(f.checkpoint(a),pending.cursor)
+})
+
+test('temporary owner-state I/O failure does not permanently stop a live listener',async t=>{
+ const f=await fixture(t),a=randomUUID();f.seed(a);const current=await f.start(a)
+ const claim=path.join(f.claimDir,fs.readdirSync(f.claimDir).find(x=>x.endsWith('.claim'))),saved=fs.readFileSync(claim)
+ fs.writeFileSync(claim,'temporary unreadable checkpoint');current.beat();await delay(50)
+ assert.equal(f.requests.length,1,'unavailable state must refuse renewal')
+ fs.writeFileSync(claim,saved);current.beat();await until(()=>f.requests.length===2,'same listener renews after state recovers')
+ const pending=f.notification();f.publish(pending);await until(()=>current.notifications.length===1,'same listener delivers after state recovery')
+ assert.equal(f.checkpoint(a),pending.cursor)
+})
+
+
+test('a handover snapshot may replay committed notifications but cannot skip them',async t=>{
+ const f=await fixture(t),a=randomUUID(),b=randomUUID()
+ const old=delivery.describeOwner(f.claimDir,a,946684800000,1234,946684800000)
+ delivery.publishOwner(old,{kind:'cursor',value:zero})
+ const inherited=delivery.readCheckpoint(f.claimDir),delivered=encodeSeqCursor(2)
+ assert(delivery.commitCheckpoint(old,zero,delivered),'previous owner commits after successor snapshots')
+ const next=delivery.describeOwner(f.claimDir,b,978307200000,5678,978307200000)
+ delivery.publishOwner(next,inherited)
+ assert.equal(delivery.readCheckpoint(f.claimDir).value,zero,'at-least-once handover may start before already delivered rows')
+ assert.equal(delivery.commitCheckpoint(old,delivered,encodeSeqCursor(3)),false,'old owner cannot skip backlog on successor')
+ assert(delivery.commitCheckpoint(next,zero,delivered),'replay can commit the already delivered rows under the new owner')
+ assert.equal(delivery.readCheckpoint(f.claimDir).value,delivered)
 })

@@ -24,7 +24,7 @@ export function claudeParentCommand(): string {
   if (process.ppid !== parentPid) return ''
   if (command !== undefined) return command
   try { command = execFileSync('ps', ['-o', 'command=', '-p', String(parentPid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }) }
-  catch { command = '' }
+  catch { return '' }
   return command
 }
 export function claudeRuntimeUuid(): string | null {
@@ -132,11 +132,10 @@ function continuedTo(candidate: Candidate): string | null {
 // A transcript edge records historical account lineage. Only an edge from this
 // Claude process's lifetime can retire its delivery. MCP reconnect time is not
 // evidence: the owning Claude process may still be the retired original.
-let parentBirth: number | null | undefined
+let parentBirth: number | undefined
 function claudeParentBirth(): number | null {
   if (process.ppid !== parentPid) return null
   if (parentBirth !== undefined) return parentBirth
-  parentBirth = null
   if (!/^(?:\S*\/)?claude(?:\s|$)/.test(claudeParentCommand().trim())) return null
   try {
     const output = execFileSync('ps', ['-o', 'lstart=', '-p', String(parentPid)], {
@@ -151,7 +150,7 @@ function claudeParentBirth(): number | null {
     const parsed = new Date(value)
     if (Number.isFinite(value) && value <= Date.now() && parsed.getUTCFullYear() === Number(year) && parsed.getUTCDate() === Number(day) && parsed.getUTCHours() === Number(hour) && parsed.getUTCMinutes() === Number(minute) && parsed.getUTCSeconds() === Number(second)) parentBirth = value
   } catch { /* Unknown process birth cannot authorize reclaiming delivery. */ }
-  return parentBirth
+  return parentBirth ?? null
 }
 function entries(dir: string): fs.Dirent[] {
   try { return fs.readdirSync(dir, { withFileTypes: true }) }
@@ -293,8 +292,9 @@ function ownershipUnavailable(error: unknown): false {
   return false
 }
 const ownTranscripts = new Map<string, Candidate[]>()
-function nativeRuntimeCurrent(runtime: string): boolean {
-  if (process.ppid !== parentPid) return false
+type DeliveryState = 'current' | 'retired' | 'unavailable'
+function nativeRuntimeState(runtime: string): DeliveryState {
+  if (process.ppid !== parentPid) return 'retired'
   const key = config() + runtime
   const own = ownTranscripts.get(key) ?? candidates().filter(candidate => candidate.id === runtime)
   if (own.length) ownTranscripts.set(key, own)
@@ -302,26 +302,30 @@ function nativeRuntimeCurrent(runtime: string): boolean {
     const edge = continuation(candidate)
     if (!edge) continue
     const born = claudeParentBirth()
-    if (edge.at === null || born === null || edge.at >= born) return false
+    if (edge.at === null || born === null) return 'unavailable'
+    if (edge.at >= born) return 'retired'
   }
-  return true
+  return 'current'
 }
-export function isClaudeRuntimeCurrent(): boolean {
-  if (process.env.AIT_MCP_TEST_SESSION_ID || process.env.AIT_NOTIFICATION_MODE === 'codex') return true
+export function claudeDeliveryState(): DeliveryState {
+  if (process.env.AIT_MCP_TEST_SESSION_ID || process.env.AIT_NOTIFICATION_MODE === 'codex') return 'current'
   try {
     const runtime = claudeRuntimeUuid()
-    if (!runtime || !nativeRuntimeCurrent(runtime)) return false
+    if (!runtime) return 'unavailable'
+    const native = nativeRuntimeState(runtime)
+    if (native !== 'current') return native
     const owner = deliveryOwner(runtime)
-    return owner === null || ownerEligible(owner)
-  } catch (error) { return ownershipUnavailable(error) }
+    return owner === null || ownerEligible(owner) ? 'current' : 'retired'
+  } catch (error) { ownershipUnavailable(error); return 'unavailable' }
 }
+export function isClaudeRuntimeCurrent(): boolean { return claudeDeliveryState() === 'current' }
 // Called only by the existing push registration path, after identity resolution.
 // Publishing is atomic; readers never observe a half-written owner record.
 export function claimClaudeDelivery(initial: Checkpoint): boolean {
   if (process.env.AIT_MCP_TEST_SESSION_ID || process.env.AIT_NOTIFICATION_MODE === 'codex') return true
   try {
     const runtime = claudeRuntimeUuid()
-    if (!runtime || !nativeRuntimeCurrent(runtime)) return false
+    if (!runtime || nativeRuntimeState(runtime) !== 'current') return false
     const owner = deliveryOwner(runtime)
     if (!owner) return false
     publishOwner(owner, initial)

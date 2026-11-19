@@ -1,6 +1,6 @@
 # Restore automatic mentions after resuming Claude
 
-Status: implementation and systems review GREEN; awaiting independent AIT review.
+Status: review corrections pass systems review and regression tests; awaiting renewed independent AIT GREEN.
 Date: 2026-11-19
 
 ## Why
@@ -30,7 +30,10 @@ Only that owner may deliver. Distinct owners tied at the greatest epoch fail
 closed; a later activation can supersede the tie. Retain claims: deleting an old
 maximum could revive an earlier worker. No process-death fallback or new timer.
 Unjoined sessions keep waiting for identity; joined push runtimes with unknown
-parent evidence or malformed/inaccessible claims cannot claim delivery. Existing
+parent evidence or malformed/inaccessible claims cannot claim delivery. Inspection
+failures are not cached: unavailable delivery keeps the existing heartbeat alive
+and retries. Only positive native handover or newer-owner evidence permanently
+stops the listener. Existing
 tool results explain unavailable automatic mentions and preserve polling.
 
 A newer original resume fences its still-running continued worker. The older
@@ -47,7 +50,12 @@ Registration is eventually convergent, not an atomic remote fence: an old HTTP
 registration can already be in flight when a new claim appears. Its sink must
 reject delivery and cannot commit a late response. Existing AppView matching-URL
 cleanup and the winning owner's next 30-second heartbeat restore delivery from
-the durable backlog. No loss and no manual worker shutdown are required.
+the durable backlog. Delivery is at least once: a successor can snapshot its
+predecessor’s checkpoint just before that predecessor commits, so already
+delivered notifications can replay into the new session. No exactly-once or
+globally monotonic handover checkpoint is promised. Stale credential writes and
+older owners cannot overwrite the successor’s own checkpoint. No lost backlog
+and no manual worker shutdown are required.
 
 ## Files touched
 
@@ -69,6 +77,8 @@ Claims coordinate upgraded runtimes sharing the same local AIT data directory;
 old in-memory MCPs and deliberately separate storage namespaces do not gain the
 new protocol retroactively. Missing process metadata and indistinguishable exact
 activation ties remain visibly unavailable rather than guessing an owner.
+Claims remain retained; major forward clock changes can fence later lower-clock
+activations. This patch does not add claim pruning or clock-skew recovery.
 No automatic installation, session restart or historical data rewrite.
 
 ## Tests
@@ -94,6 +104,9 @@ and continued runtimes, and that parent birth can be measured on the supported
 native launch. Local model stub/scratch config only. Test-only sandbox blocks ps,
 so that run conservatively refused; native parent proof ran outside that sandbox.
 Native authenticated Channels-to-model delivery is not claimed by offline tests.
+Test temporary process-inspection and checkpoint-I/O failures followed by recovery
+through the same listener’s existing heartbeat. Assert the deliberate stale
+snapshot handover replay, followed by successful successor progress.
 
 ## Sequencing or rollout
 

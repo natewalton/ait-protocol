@@ -355,20 +355,19 @@ disposition needs its exact advisory revision/status and actual current passing
 regressions. High/Critical validity is at most 30 days; expiry requires renewed
 evidence at the next check. Removing a scanner finding removes its exception.
 
-### Proposed unscored native non-applicability rule (2026-11-21)
+### Unscored native non-applicability rule
 
-Policy-code proposal, not an activated exception. The whole native lock remains
+The whole native lock remains
 in the audit. Only a Rust finding with an exact reviewed `non-applicable`
 disposition may retain `reviewedSeverity: "unknown"`; npm decisions, accepted
 risk, mitigation and informational borrowing cannot use it. Artifact/source-lock
 fingerprints, advisory revision, supported exposure, current regression and an
 expiry no more than 30 days after review remain required. Changed identity or
-failed evidence blocks. The heapless finding has no active new disposition in
-this proposal; Nate must decide after independent review.
+failed evidence blocks. Nate approved this rule after independent review on November 22, 2026.
 
-### Heapless assessments for the proposed rule
+### Heapless assessments for the macOS ARM artifact
 
-Unactivated proposal. The native audit retains nine individually identified
+The native audit retains nine individually identified
 unknown-severity findings. Four affected APIs are absent from the locked source;
 five have affected source but no production caller in this exact artifact.
 Symbol absence is supplementary, not the proof. The existing immutable-addon
@@ -432,336 +431,7 @@ cargo build --locked --release --target aarch64-apple-darwin -p number0_iroh -vv
 
 The exact build passed all 28 package tests. Supported Postcard and full latest-compatible Cargo updates retain heapless 0.7. Forcing 0.9 violates the declared ^0.7 requirement. No unsupported override or feature-filtered native audit was adopted.
 
-The following nine records are proposals outside the active policy block:
-
-```json
-[
-  {
-    "id": "rust-RUSTSEC-2026-0578-experimental3-darwin-arm64",
-    "ecosystem": "rust",
-    "workspace": "appview",
-    "package": "heapless",
-    "version": "0.7.17",
-    "advisory": "RUSTSEC-2026-0578",
-    "reviewedSeverity": "unknown",
-    "advisoryStatus": "active",
-    "advisoryRevision": "sha256:e871fa606e1192d66ef7fa660bbdf59bc9e6be896fe7607c0b067425e00a0bf1",
-    "decision": "non-applicable",
-    "owner": "@ait-developer",
-    "reviewedOn": "2026-11-21",
-    "expiresOn": "2026-12-10",
-    "reason": "PROPOSED, pending independent review and maintainer approval. The locked 0.7.17 source has no zeroize feature, dependency or implementation; affected SortedLinkedList::zeroize is absent. This determination binds only experimental.3 macOS ARM source/lock/features/loader/addon. It does not fix the crate or assign a severity.",
-    "exposures": [
-      "local-and-approved-peer"
-    ],
-    "components": [
-      {
-        "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:heapless@0.7.17",
-        "dependencyFingerprint": "sha256:417650ee7c137d8b90b83b76041dac2192105179fa95a2d5abb99aa64be83e01"
-      }
-    ],
-    "evidence": [
-      "https://rustsec.org/advisories/RUSTSEC-2026-0578.html",
-      "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d",
-      "https://docs.rs/crate/heapless/0.7.17/source/"
-    ],
-    "regressions": [
-      {
-        "path": "bin/chrono-macos-artifact-test.mjs",
-        "check": "heapless-unaffected-artifact"
-      }
-    ]
-  },
-  {
-    "id": "rust-RUSTSEC-2026-0579-experimental3-darwin-arm64",
-    "ecosystem": "rust",
-    "workspace": "appview",
-    "package": "heapless",
-    "version": "0.7.17",
-    "advisory": "RUSTSEC-2026-0579",
-    "reviewedSeverity": "unknown",
-    "advisoryStatus": "active",
-    "advisoryRevision": "sha256:6fabb957ee40f7f1c4a22166ddcde0d825c8937b4b05f210433d229ca818a629",
-    "decision": "non-applicable",
-    "owner": "@ait-developer",
-    "reviewedOn": "2026-11-21",
-    "expiresOn": "2026-12-10",
-    "reason": "PROPOSED, pending independent review and maintainer approval. Locked 0.7.17 Deque has no TryFrom implementation. RustSec bounds the affected function to >=0.9.2,<0.9.4. This determination binds only experimental.3 macOS ARM source/lock/features/loader/addon. It does not fix the crate or assign a severity.",
-    "exposures": [
-      "local-and-approved-peer"
-    ],
-    "components": [
-      {
-        "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:heapless@0.7.17",
-        "dependencyFingerprint": "sha256:417650ee7c137d8b90b83b76041dac2192105179fa95a2d5abb99aa64be83e01"
-      }
-    ],
-    "evidence": [
-      "https://rustsec.org/advisories/RUSTSEC-2026-0579.html",
-      "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d",
-      "https://docs.rs/crate/heapless/0.7.17/source/"
-    ],
-    "regressions": [
-      {
-        "path": "bin/chrono-macos-artifact-test.mjs",
-        "check": "heapless-unaffected-artifact"
-      }
-    ]
-  },
-  {
-    "id": "rust-RUSTSEC-2026-0576-experimental3-darwin-arm64",
-    "ecosystem": "rust",
-    "workspace": "appview",
-    "package": "heapless",
-    "version": "0.7.17",
-    "advisory": "RUSTSEC-2026-0576",
-    "reviewedSeverity": "unknown",
-    "advisoryStatus": "active",
-    "advisoryRevision": "sha256:f4daa6ca4a95ba854248b0ee5bbb2f91332d7a89458fba8a8e886b526ccfcd46",
-    "decision": "non-applicable",
-    "owner": "@ait-developer",
-    "reviewedOn": "2026-11-21",
-    "expiresOn": "2026-12-10",
-    "reason": "PROPOSED, pending independent review and maintainer approval. IndexMap::truncate does not exist in locked heapless 0.7.17. This determination binds only experimental.3 macOS ARM source/lock/features/loader/addon. It does not fix the crate or assign a severity.",
-    "exposures": [
-      "local-and-approved-peer"
-    ],
-    "components": [
-      {
-        "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:heapless@0.7.17",
-        "dependencyFingerprint": "sha256:417650ee7c137d8b90b83b76041dac2192105179fa95a2d5abb99aa64be83e01"
-      }
-    ],
-    "evidence": [
-      "https://rustsec.org/advisories/RUSTSEC-2026-0576.html",
-      "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d",
-      "https://docs.rs/crate/heapless/0.7.17/source/"
-    ],
-    "regressions": [
-      {
-        "path": "bin/chrono-macos-artifact-test.mjs",
-        "check": "heapless-unaffected-artifact"
-      }
-    ]
-  },
-  {
-    "id": "rust-RUSTSEC-2026-0581-experimental3-darwin-arm64",
-    "ecosystem": "rust",
-    "workspace": "appview",
-    "package": "heapless",
-    "version": "0.7.17",
-    "advisory": "RUSTSEC-2026-0581",
-    "reviewedSeverity": "unknown",
-    "advisoryStatus": "active",
-    "advisoryRevision": "sha256:14e8bbda46f0d01300a0bb0e0e0856c8faa4aa90de2e0dbd87c85084bb9937e2",
-    "decision": "non-applicable",
-    "owner": "@ait-developer",
-    "reviewedOn": "2026-11-21",
-    "expiresOn": "2026-12-10",
-    "reason": "PROPOSED, pending independent review and maintainer approval. Deque::make_contiguous does not exist in locked heapless 0.7.17. This determination binds only experimental.3 macOS ARM source/lock/features/loader/addon. It does not fix the crate or assign a severity.",
-    "exposures": [
-      "local-and-approved-peer"
-    ],
-    "components": [
-      {
-        "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:heapless@0.7.17",
-        "dependencyFingerprint": "sha256:417650ee7c137d8b90b83b76041dac2192105179fa95a2d5abb99aa64be83e01"
-      }
-    ],
-    "evidence": [
-      "https://rustsec.org/advisories/RUSTSEC-2026-0581.html",
-      "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d",
-      "https://docs.rs/crate/heapless/0.7.17/source/"
-    ],
-    "regressions": [
-      {
-        "path": "bin/chrono-macos-artifact-test.mjs",
-        "check": "heapless-unaffected-artifact"
-      }
-    ]
-  },
-  {
-    "id": "rust-RUSTSEC-2026-0580-experimental3-darwin-arm64",
-    "ecosystem": "rust",
-    "workspace": "appview",
-    "package": "heapless",
-    "version": "0.7.17",
-    "advisory": "RUSTSEC-2026-0580",
-    "reviewedSeverity": "unknown",
-    "advisoryStatus": "active",
-    "advisoryRevision": "sha256:c422c98b259a8b84d41b99b4f52529b154c3a16d2308f1c3923ebfc7c6c8043c",
-    "decision": "non-applicable",
-    "owner": "@ait-developer",
-    "reviewedOn": "2026-11-21",
-    "expiresOn": "2026-12-10",
-    "reason": "PROPOSED, pending independent review and maintainer approval. Affected cas Treiber stack is available in source, but Postcard has no pool/Pool/stack use. No concurrent pool operation is reachable in this exact artifact. This determination binds only experimental.3 macOS ARM source/lock/features/loader/addon. It does not fix the crate or assign a severity.",
-    "exposures": [
-      "local-and-approved-peer"
-    ],
-    "components": [
-      {
-        "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:heapless@0.7.17",
-        "dependencyFingerprint": "sha256:417650ee7c137d8b90b83b76041dac2192105179fa95a2d5abb99aa64be83e01"
-      }
-    ],
-    "evidence": [
-      "https://rustsec.org/advisories/RUSTSEC-2026-0580.html",
-      "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d",
-      "https://docs.rs/crate/heapless/0.7.17/source/"
-    ],
-    "regressions": [
-      {
-        "path": "bin/chrono-macos-artifact-test.mjs",
-        "check": "heapless-unaffected-artifact"
-      }
-    ]
-  },
-  {
-    "id": "rust-RUSTSEC-2026-0577-experimental3-darwin-arm64",
-    "ecosystem": "rust",
-    "workspace": "appview",
-    "package": "heapless",
-    "version": "0.7.17",
-    "advisory": "RUSTSEC-2026-0577",
-    "reviewedSeverity": "unknown",
-    "advisoryStatus": "active",
-    "advisoryRevision": "sha256:a8489832de83b93d05e6ab5fc4805b0b47565ad7dc7d02ad5c55795fd34a891d",
-    "decision": "non-applicable",
-    "owner": "@ait-developer",
-    "reviewedOn": "2026-11-21",
-    "expiresOn": "2026-12-10",
-    "reason": "PROPOSED, pending independent review and maintainer approval. Affected Deque/HistoryBuffer/IndexMap clearing and Vec::IntoIter dropping exist, but Postcard uses none of those paths. Its concrete Heapless serialization buffer is Vec<u8>; u8 has no panicking destructor. No affected iterator is created. This determination binds only experimental.3 macOS ARM source/lock/features/loader/addon. It does not fix the crate or assign a severity.",
-    "exposures": [
-      "local-and-approved-peer"
-    ],
-    "components": [
-      {
-        "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:heapless@0.7.17",
-        "dependencyFingerprint": "sha256:417650ee7c137d8b90b83b76041dac2192105179fa95a2d5abb99aa64be83e01"
-      }
-    ],
-    "evidence": [
-      "https://rustsec.org/advisories/RUSTSEC-2026-0577.html",
-      "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d",
-      "https://docs.rs/crate/heapless/0.7.17/source/"
-    ],
-    "regressions": [
-      {
-        "path": "bin/chrono-macos-artifact-test.mjs",
-        "check": "heapless-unaffected-artifact"
-      }
-    ]
-  },
-  {
-    "id": "rust-RUSTSEC-2026-0574-experimental3-darwin-arm64",
-    "ecosystem": "rust",
-    "workspace": "appview",
-    "package": "heapless",
-    "version": "0.7.17",
-    "advisory": "RUSTSEC-2026-0574",
-    "reviewedSeverity": "unknown",
-    "advisoryStatus": "active",
-    "advisoryRevision": "sha256:2dcbe6d9f61c8049585f1340c251e272e3ada2eea85311d588e2c96fa7138101",
-    "decision": "non-applicable",
-    "owner": "@ait-developer",
-    "reviewedOn": "2026-11-21",
-    "expiresOn": "2026-12-10",
-    "reason": "PROPOSED, pending independent review and maintainer approval. Affected FindMut::pop exists in 0.7.17, but its only compiled dependency consumer Postcard has no SortedLinkedList/FindMut/find_mut use. No path into the exact artifact. This determination binds only experimental.3 macOS ARM source/lock/features/loader/addon. It does not fix the crate or assign a severity.",
-    "exposures": [
-      "local-and-approved-peer"
-    ],
-    "components": [
-      {
-        "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:heapless@0.7.17",
-        "dependencyFingerprint": "sha256:417650ee7c137d8b90b83b76041dac2192105179fa95a2d5abb99aa64be83e01"
-      }
-    ],
-    "evidence": [
-      "https://rustsec.org/advisories/RUSTSEC-2026-0574.html",
-      "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d",
-      "https://docs.rs/crate/heapless/0.7.17/source/"
-    ],
-    "regressions": [
-      {
-        "path": "bin/chrono-macos-artifact-test.mjs",
-        "check": "heapless-unaffected-artifact"
-      }
-    ]
-  },
-  {
-    "id": "rust-RUSTSEC-2026-0575-experimental3-darwin-arm64",
-    "ecosystem": "rust",
-    "workspace": "appview",
-    "package": "heapless",
-    "version": "0.7.17",
-    "advisory": "RUSTSEC-2026-0575",
-    "reviewedSeverity": "unknown",
-    "advisoryStatus": "active",
-    "advisoryRevision": "sha256:936981025cb7bb9b35edb1d99a6209a9c848b101a9d12762e916505ec232fa45",
-    "decision": "non-applicable",
-    "owner": "@ait-developer",
-    "reviewedOn": "2026-11-21",
-    "expiresOn": "2026-12-10",
-    "reason": "PROPOSED, pending independent review and maintainer approval. Affected SPSC peek ordering exists, but Postcard has no spsc/Queue/Consumer/peek use. Concurrent queue use cannot be reached from the exact artifact. This determination binds only experimental.3 macOS ARM source/lock/features/loader/addon. It does not fix the crate or assign a severity.",
-    "exposures": [
-      "local-and-approved-peer"
-    ],
-    "components": [
-      {
-        "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:heapless@0.7.17",
-        "dependencyFingerprint": "sha256:417650ee7c137d8b90b83b76041dac2192105179fa95a2d5abb99aa64be83e01"
-      }
-    ],
-    "evidence": [
-      "https://rustsec.org/advisories/RUSTSEC-2026-0575.html",
-      "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d",
-      "https://docs.rs/crate/heapless/0.7.17/source/"
-    ],
-    "regressions": [
-      {
-        "path": "bin/chrono-macos-artifact-test.mjs",
-        "check": "heapless-unaffected-artifact"
-      }
-    ]
-  },
-  {
-    "id": "rust-RUSTSEC-2026-0582-experimental3-darwin-arm64",
-    "ecosystem": "rust",
-    "workspace": "appview",
-    "package": "heapless",
-    "version": "0.7.17",
-    "advisory": "RUSTSEC-2026-0582",
-    "reviewedSeverity": "unknown",
-    "advisoryStatus": "active",
-    "advisoryRevision": "sha256:7f99f51a9df4147ea94f4063fce331b7e4b0c72a1bbdf2a66f50635ae02a3dd2",
-    "decision": "non-applicable",
-    "owner": "@ait-developer",
-    "reviewedOn": "2026-11-21",
-    "expiresOn": "2026-12-10",
-    "reason": "PROPOSED, pending independent review and maintainer approval. Affected large IndexMap insert invariant exists, but Postcard FnvIndexMap references are test-only and no production Heapless map is instantiated. This determination binds only experimental.3 macOS ARM source/lock/features/loader/addon. It does not fix the crate or assign a severity.",
-    "exposures": [
-      "local-and-approved-peer"
-    ],
-    "components": [
-      {
-        "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:heapless@0.7.17",
-        "dependencyFingerprint": "sha256:417650ee7c137d8b90b83b76041dac2192105179fa95a2d5abb99aa64be83e01"
-      }
-    ],
-    "evidence": [
-      "https://rustsec.org/advisories/RUSTSEC-2026-0582.html",
-      "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d",
-      "https://docs.rs/crate/heapless/0.7.17/source/"
-    ],
-    "regressions": [
-      {
-        "path": "bin/chrono-macos-artifact-test.mjs",
-        "check": "heapless-unaffected-artifact"
-      }
-    ]
-  }
-]
-```
+Nate approved these nine determinations for the peer artifact after independent review on November 22, 2026. Stable does not package that artifact.
 
 ### Reviewing upstream High risk
 
@@ -801,8 +471,7 @@ does not assert that the graph is free from advisories or prove binary reproduct
 Known embedded PLC validators/compiler require their own current regressions even
 if an external dependency override makes npm's graph appear clean. The same
 disposition list handles RustSec maintenance notices as informational reviewed
-risks; this does not invent a CVSS severity for native vulnerabilities. An unknown
-vulnerability severity remains blocked. Native advisory revisions are hashes of
+risks; this does not invent a CVSS severity for native vulnerabilities. Unknown severity blocks unless the exact Rust non-applicability rule above applies. Native advisory revisions are hashes of
 the advisory record, and native component fingerprints bind the package digest,
 source commit, source-lock digest and exact crate path/version.
 
@@ -854,6 +523,11 @@ source commit, source-lock digest and exact crate path/version.
     {
       "tag": "v0.1.48-peer.4",
       "commit": "8848fd2f58ebd70f55be91320210a335686f82c1",
+      "exposure": "local-and-approved-peer"
+    },
+    {
+      "tag": "v0.1.48-peer.5",
+      "commit": "74ae204f41f1bcd7acb3e3b4a16cd2c781aa4b06",
       "exposure": "local-and-approved-peer"
     }
   ],
@@ -1329,7 +1003,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1351,12 +1025,12 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:a85527d27dcc796523b3378c401d8b7338b19f543d90a02170ce777c36465281",
-        "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
-        "reviewer": "independent-review/default_mail_gate_review",
-        "upstreamCheckedOn": "2026-11-19",
-        "supportedFixCheck": "Latest published PDS0.5.61 still declares Nodemailer^6.8.0. Supported PDS0.5.59 resolves6.10.1. No supported mail fix is available.",
-        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval.",
+        "candidateTree": "sha256:c38d55cbc013247a09a57e4a5f7a949db2fb77dc17f18d40e4f1f06b13292d98",
+        "baselineCommit": "74ae204f41f1bcd7acb3e3b4a16cd2c781aa4b06",
+        "reviewer": "@ait-skills-dev",
+        "upstreamCheckedOn": "2026-11-21",
+        "supportedFixCheck": "November 21 registry review: PDS 0.5.64 still requires Nodemailer ^6.8.0. No supported upstream mail fix was available.",
+        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval. Independent November 21 review found no new network input or mail configuration from the Claude delivery changes.",
         "exploitationReview": "Current GitHub metadata reviewed for this finding and known inputs traced. KEV is freshly checked by the gate. Absence from KEV does not establish safety. Known resource/file risks remain disclosed."
       }
     },
@@ -1375,7 +1049,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1397,12 +1071,12 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:a85527d27dcc796523b3378c401d8b7338b19f543d90a02170ce777c36465281",
-        "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
-        "reviewer": "independent-review/default_mail_gate_review",
-        "upstreamCheckedOn": "2026-11-19",
-        "supportedFixCheck": "Latest published PDS0.5.61 still declares Nodemailer^6.8.0. Supported PDS0.5.59 resolves6.10.1. No supported mail fix is available.",
-        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval.",
+        "candidateTree": "sha256:c38d55cbc013247a09a57e4a5f7a949db2fb77dc17f18d40e4f1f06b13292d98",
+        "baselineCommit": "74ae204f41f1bcd7acb3e3b4a16cd2c781aa4b06",
+        "reviewer": "@ait-skills-dev",
+        "upstreamCheckedOn": "2026-11-21",
+        "supportedFixCheck": "November 21 registry review: PDS 0.5.64 still requires Nodemailer ^6.8.0. No supported upstream mail fix was available.",
+        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval. Independent November 21 review found no new network input or mail configuration from the Claude delivery changes.",
         "exploitationReview": "Current GitHub metadata reviewed for this finding and known inputs traced. KEV is freshly checked by the gate. Absence from KEV does not establish safety. Known resource/file risks remain disclosed."
       }
     },
@@ -1495,7 +1169,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1517,12 +1191,12 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:a85527d27dcc796523b3378c401d8b7338b19f543d90a02170ce777c36465281",
-        "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
-        "reviewer": "independent-review/default_mail_gate_review",
-        "upstreamCheckedOn": "2026-11-19",
-        "supportedFixCheck": "Latest published PDS0.5.61 still declares Nodemailer^6.8.0. Supported PDS0.5.59 resolves6.10.1. No supported mail fix is available.",
-        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval.",
+        "candidateTree": "sha256:c38d55cbc013247a09a57e4a5f7a949db2fb77dc17f18d40e4f1f06b13292d98",
+        "baselineCommit": "74ae204f41f1bcd7acb3e3b4a16cd2c781aa4b06",
+        "reviewer": "@ait-skills-dev",
+        "upstreamCheckedOn": "2026-11-21",
+        "supportedFixCheck": "November 21 registry review: PDS 0.5.64 still requires Nodemailer ^6.8.0. No supported upstream mail fix was available.",
+        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval. Independent November 21 review found no new network input or mail configuration from the Claude delivery changes.",
         "exploitationReview": "Current GitHub metadata reviewed for this finding and known inputs traced. KEV is freshly checked by the gate. Absence from KEV does not establish safety. Known resource/file risks remain disclosed."
       }
     },
@@ -1652,7 +1326,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1674,12 +1348,12 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:a85527d27dcc796523b3378c401d8b7338b19f543d90a02170ce777c36465281",
-        "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
-        "reviewer": "independent-review/default_mail_gate_review",
-        "upstreamCheckedOn": "2026-11-19",
-        "supportedFixCheck": "Latest published PDS0.5.61 still declares Nodemailer^6.8.0. Supported PDS0.5.59 resolves6.10.1. No supported mail fix is available.",
-        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval.",
+        "candidateTree": "sha256:c38d55cbc013247a09a57e4a5f7a949db2fb77dc17f18d40e4f1f06b13292d98",
+        "baselineCommit": "74ae204f41f1bcd7acb3e3b4a16cd2c781aa4b06",
+        "reviewer": "@ait-skills-dev",
+        "upstreamCheckedOn": "2026-11-21",
+        "supportedFixCheck": "November 21 registry review: PDS 0.5.64 still requires Nodemailer ^6.8.0. No supported upstream mail fix was available.",
+        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval. Independent November 21 review found no new network input or mail configuration from the Claude delivery changes.",
         "exploitationReview": "Current GitHub metadata reviewed for this finding and known inputs traced. KEV is freshly checked by the gate. Absence from KEV does not establish safety. Known resource/file risks remain disclosed."
       }
     },
@@ -1698,7 +1372,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1720,12 +1394,12 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:a85527d27dcc796523b3378c401d8b7338b19f543d90a02170ce777c36465281",
-        "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
-        "reviewer": "independent-review/default_mail_gate_review",
-        "upstreamCheckedOn": "2026-11-19",
-        "supportedFixCheck": "Latest published PDS0.5.61 still declares Nodemailer^6.8.0. Supported PDS0.5.59 resolves6.10.1. No supported mail fix is available.",
-        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval.",
+        "candidateTree": "sha256:c38d55cbc013247a09a57e4a5f7a949db2fb77dc17f18d40e4f1f06b13292d98",
+        "baselineCommit": "74ae204f41f1bcd7acb3e3b4a16cd2c781aa4b06",
+        "reviewer": "@ait-skills-dev",
+        "upstreamCheckedOn": "2026-11-21",
+        "supportedFixCheck": "November 21 registry review: PDS 0.5.64 still requires Nodemailer ^6.8.0. No supported upstream mail fix was available.",
+        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval. Independent November 21 review found no new network input or mail configuration from the Claude delivery changes.",
         "exploitationReview": "Current GitHub metadata reviewed for this finding and known inputs traced. KEV is freshly checked by the gate. Absence from KEV does not establish safety. Known resource/file risks remain disclosed."
       }
     },
@@ -2074,7 +1748,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer explicitly approved the independently reviewed temporary MCP availability-risk exception on November 19 through December 10. Supported upstream Zod 3 remains vulnerable. Local PDS HTTP responses can reach DID-document array validation without a complete response/work bound, potentially exhausting or terminating MCP or aitty. Existing stdio controls do not establish HTTP-response mitigation. No dependency override, custom validator or partial Lex migration is proposed.",
+      "reason": "Maintainer explicitly approved the independently reviewed temporary MCP availability-risk exception on November 19 through December 10. Supported upstream Zod 3 remains vulnerable. Local PDS HTTP responses can reach DID-document array validation without a complete response/work bound, potentially exhausting or terminating MCP or aitty. Existing stdio controls do not establish HTTP-response mitigation. No dependency override, custom validator or partial Lex migration is proposed. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -2109,12 +1783,12 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:a85527d27dcc796523b3378c401d8b7338b19f543d90a02170ce777c36465281",
-        "baselineCommit": "8848fd2f58ebd70f55be91320210a335686f82c1",
-        "reviewer": "independent-review/default_mail_gate_review",
-        "upstreamCheckedOn": "2026-11-19",
-        "supportedFixCheck": "Latest published API 0.32.2, common-web 0.5.17, lexicon 0.7.19 and XRPC 0.8.18 still declare Zod ^3.23.8. The advisory first patches Zod at 4.6.6. No supported upstream Zod 3 fix was found; complete upstream Lex adoption remains deferred.",
-        "exposureComparison": "Peer.4 suppressed these findings through an unsupported package-wide Zod override. Restoring upstream contracts is mandatory and scan equivalence is not required. MCP and aitty route canonical client requests through localPdsFetch to the configured loopback PDS with redirects rejected. Approved peers can contribute data. Common-web response-controlled collections lack a complete pre-validation work bound; process denial of service remains a residual risk. API/XRPC use fixed-shape scalar validators and Lexicon loads bundled schema documents plus scalar blob shapes, but no non-applicability exemption is claimed for any of the four paths.",
+        "candidateTree": "sha256:c38d55cbc013247a09a57e4a5f7a949db2fb77dc17f18d40e4f1f06b13292d98",
+        "baselineCommit": "74ae204f41f1bcd7acb3e3b4a16cd2c781aa4b06",
+        "reviewer": "@ait-skills-dev",
+        "upstreamCheckedOn": "2026-11-21",
+        "supportedFixCheck": "November 21 registry review: API 0.32.5, common-web 0.5.19, Lexicon 0.7.21 and XRPC 0.8.20 still require Zod ^3.23.8. No complete supported upstream fix was available.",
+        "exposureComparison": "Peer.4 suppressed these findings through an unsupported package-wide Zod override. Restoring upstream contracts is mandatory and scan equivalence is not required. MCP and aitty route canonical client requests through localPdsFetch to the configured loopback PDS with redirects rejected. Approved peers can contribute data. Common-web response-controlled collections lack a complete pre-validation work bound; process denial of service remains a residual risk. API/XRPC use fixed-shape scalar validators and Lexicon loads bundled schema documents plus scalar blob shapes, but no non-applicability exemption is claimed for any of the four paths. Independent November 21 review found no new network input or mail configuration from the Claude delivery changes.",
         "exploitationReview": "Fresh GitHub advisory metadata reviewed November 19; CVE-2023-54404 was absent from the CISA KEV catalog dated November 18. Absence is not proof of no exploitation. The release gate must repeat the fresh lookup. Known memory-exhaustion risk remains disclosed; existing ingress regressions prove only their actual tested surfaces."
       }
     }

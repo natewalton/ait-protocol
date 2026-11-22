@@ -26,7 +26,7 @@ function seed(id) {
 function state(id, extra={}) {
  const dir=path.join(config,'jobs',id.slice(0,8));fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,'state.json'),JSON.stringify({sessionId:id,state:'working',interactiveLineage:true,cwd:project,...extra}))
 }
-function continued(from,to) { fs.appendFileSync(transcript(from),JSON.stringify({type:'continued-in',sessionId:from,continuedInSessionId:to})+'\n') }
+function continued(from,to) { fs.appendFileSync(transcript(from),JSON.stringify({type:'continued-in',sessionId:from,continuedInSessionId:to,timestamp:new Date().toISOString()})+'\n') }
 seed(source);state(child)
 const calls=[], clients=[]
 let registerGate=null, createAccountHook=null
@@ -54,9 +54,9 @@ function environment(id){
  for(const k of ['AIT_MCP_TEST_SESSION_ID','AIT_SESSION_ID','CODEX_SESSION_ID','CLAUDECODE'])delete env[k]
  return env
 }
-async function connect(id,wrapper=false){
+async function connect(id,wrapper=false,extra={}){
  const args=wrapper?[path.join(root,'wrapper.mjs'),'--dangerously-load-development-channels','server:ait-protocol','--resume',id]:[path.join(repo,'mcp/dist/server.js')]
- const transport=new StdioClientTransport({command:process.execPath,args,env:environment(id),cwd:project,stderr:'pipe'})
+ const transport=new StdioClientTransport({command:process.execPath,args,env:{...environment(id),AIT_FIXTURE_PARENT_BIRTH:'Sat Jan  1 00:00:00 2000',...extra},cwd:project,stderr:'pipe'})
  let errors='';transport.stderr?.on('data',b=>errors+=b)
  const client=new Client({name:'claude-background-fixture',version:'1'}), notifications=[]
  client.fallbackNotificationHandler=async n=>{notifications.push(n)}
@@ -65,8 +65,13 @@ async function connect(id,wrapper=false){
 }
 async function call(client,name,args={}){return client.callTool({name,arguments:args})}
 function text(result){return result.content?.map(c=>c.text??'').join('\n')??''}
+function checkpoint(id){
+ const probe=spawnSync(process.execPath,['--input-type=module','-e',`const m=await import(${JSON.stringify(new URL('../dist/storage.js',import.meta.url).href)});console.log(JSON.stringify(m.getNotificationRegistrationCheckpoint().value))`],{env:{...environment(id),AIT_SESSION_ID:id},encoding:'utf8'})
+ assert.equal(probe.status,0,probe.stderr);return JSON.parse(probe.stdout)
+}
+
 try{
- fs.writeFileSync(path.join(root,'wrapper.mjs'),`const timeout=globalThis.setTimeout;globalThis.setTimeout=(fn,ms,...args)=>timeout(fn,ms===30000?300:ms,...args);await import(${JSON.stringify(new URL('../dist/server.js',import.meta.url).href)});`)
+ fs.writeFileSync(path.join(root,'wrapper.mjs'),`if(process.env.AIT_FIXTURE_PARENT_BIRTH){const cp=await import('node:child_process');const m=await import('node:module');const original=cp.default.execFileSync;cp.default.execFileSync=(program,args,...rest)=>program==='ps'?(args.includes('lstart=')?process.env.AIT_FIXTURE_PARENT_BIRTH:'claude --resume '+process.env.CLAUDE_CODE_SESSION_ID):original(program,args,...rest);m.syncBuiltinESMExports()}const timeout=globalThis.setTimeout;globalThis.setTimeout=(fn,ms,...args)=>timeout(fn,ms===30000?300:ms,...args);await import(${JSON.stringify(new URL('../dist/server.js',import.meta.url).href)});`)
  const first=await connect(child)
  let result=await call(first.client,'getAuthorFeed');assert.equal(result.isError,true);assert.match(text(result),/moving this session|continuation record/)
  result=await call(first.client,'join',{handle_hint:'must-not-mint'});assert.equal(result.isError,true);assert.equal(calls.length,0,'pending handover must not create an account or call PDS')
@@ -169,8 +174,8 @@ try{
  fs.appendFileSync(transcript(mismatchSource),JSON.stringify({type:'continued-in',sessionId:randomUUID(),continuedInSessionId:mismatched})+'\n')
  const mismatch=await connect(mismatched);result=await call(mismatch.client,'getAuthorFeed');assert.equal(result.isError,true);assert.match(text(result),/continuation record/);await mismatch.client.close()
  const resolverUrl=new URL('../dist/claudeSession.js',import.meta.url).href
- function resolveProbe(id,code,extra={},command) {
-   const checked=spawnSync(process.execPath,['--input-type=module','-e',`import assert from 'node:assert/strict';import fs from 'node:fs';import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';${command?`cp.execFileSync=()=>${JSON.stringify(command)};syncBuiltinESMExports();`:''}const m=await import(${JSON.stringify(resolverUrl)});${code}`],{env:{...environment(id),...extra},cwd:project,encoding:'utf8'})
+ function resolveProbe(id,code,extra={},command,birth) {
+   const checked=spawnSync(process.execPath,['--input-type=module','-e',`import assert from 'node:assert/strict';import fs from 'node:fs';import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';${command?`cp.execFileSync=(_program,args)=>args.includes('lstart=')?${JSON.stringify(birth??'unknown')}:${JSON.stringify(command)};syncBuiltinESMExports();`:''}const m=await import(${JSON.stringify(resolverUrl)});${code}`],{env:{...environment(id),AIT_FIXTURE_PARENT_BIRTH:'Sat Jan  1 00:00:00 2000',...extra},cwd:project,encoding:'utf8'})
    assert.equal(checked.status,0,checked.stderr+checked.stdout)
  }
  const role=randomUUID()
@@ -220,6 +225,9 @@ try{
  console.log('PASS configuration/project scope, job filenames, UUID canonicalization, conflicts/cycles, native forks and unresolved intermediate continuations')
 
 
+ // The earlier independent cases reuse the same synthetic DID. Start this
+ // ownership journey with a fresh fixture account's claim namespace.
+ fs.rmSync(path.join(store,'claude-delivery-'+createHash('sha256').update(did).digest('hex')),{recursive:true,force:true})
  // Exercise the real push server through its existing registration and sink.
  const old=randomUUID(),next=randomUUID();seed(old)
 
@@ -234,11 +242,11 @@ try{
  releaseRegister()
  await new Promise(r=>setTimeout(r,100))
  registerGate=null
- assert.equal(JSON.parse(fs.readFileSync(identityFile(old))).lastSeenNotificationCursor,'before','late registration must not commit its changed baseline after handover')
+ assert.equal(checkpoint(old),'before','late registration must not commit its changed baseline after handover')
  const notify={uri:`at://${did}/ait.feed.post/new`,cid:'bafyreigogaydx3b5gcfj7byynrzqtzl6slrhxta7jfhy4nkgfjhkpg2jve',author:{did,handle},reason:'mention',record:{text:'after handover'},indexedAt:new Date().toISOString(),cursor:'must-not-commit'}
  const refused=await fetch(registered,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(notify)});assert.equal(refused.status,500)
  assert.equal(original.notifications.length,0,'retired sink must not emit a channel event')
- assert.equal(JSON.parse(fs.readFileSync(identityFile(old))).lastSeenNotificationCursor,'before','retired sink never commits old cursor')
+ assert.equal(checkpoint(old),'before','retired sink never commits old cursor')
  await new Promise(r=>setTimeout(r,700))
  assert.equal(calls.slice(beforeCalls).filter(c=>c.path.endsWith('registerPushTarget')).length,1,'retained parent never steals the callback back')
  await assert.rejects(fetch(registered,{method:'POST',body:JSON.stringify(notify)}),'existing heartbeat closes retired listener')
@@ -254,10 +262,41 @@ try{
  assert.equal(replay.cursor,'before','new runtime registers from the original checkpoint')
  const delivered=await fetch(replay.url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...notify,cursor:'replayed'})})
  assert.equal(delivered.status,200)
- assert.equal(JSON.parse(fs.readFileSync(identityFile(old))).lastSeenNotificationCursor,'replayed')
+ assert.equal(checkpoint(old),'replayed')
  assert(!fs.existsSync(identityFile(next)))
  await restored.client.close()
  console.log('PASS supported foreground channel replays and commits under the original identity')
+
+
+ // Historical identity lineage does not retire a newly resumed Claude process.
+ fs.rmSync(path.join(store,'claude-delivery-'+createHash('sha256').update(did).digest('hex')),{recursive:true,force:true})
+ const resumedOriginal=randomUUID(),formerChild=randomUUID();seed(resumedOriginal)
+ const oldEdge={type:'continued-in',sessionId:resumedOriginal,continuedInSessionId:formerChild,timestamp:'2026-09-16T12:00:00.000Z'}
+ fs.appendFileSync(transcript(resumedOriginal),JSON.stringify(oldEdge)+'\n')
+ const parentCommand='claude --resume '+resumedOriginal,born='Mon Nov 16 12:00:00 2026'
+ resolveProbe(resumedOriginal,`assert.equal(m.isClaudeRuntimeCurrent(),true);`,{},parentCommand,born)
+ resolveProbe(resumedOriginal,`assert.equal(m.isClaudeRuntimeCurrent(),false);`,{},parentCommand,'Tue Sep 15 12:00:00 2026')
+ resolveProbe(resumedOriginal,`assert.equal(m.isClaudeRuntimeCurrent(),false);`,{},'node intermediary',born)
+ for(const invalid of ['unknown','Mon Nov 99 12:00:00 2026','Mon Nov 16 25:00:00 2026'])resolveProbe(resumedOriginal,`assert.equal(m.isClaudeRuntimeCurrent(),false);`,{},parentCommand,invalid)
+ for(const timestamp of [undefined,'bad','2026-09-16T12:00:00','2026-02-30T12:00:00.000Z','2026-11-16T12:00:00.999Z']){
+  fs.writeFileSync(transcript(resumedOriginal),JSON.stringify({...oldEdge,timestamp})+'\n')
+  resolveProbe(resumedOriginal,`assert.equal(m.isClaudeRuntimeCurrent(),false);`,{},parentCommand,born)
+ }
+ fs.writeFileSync(transcript(resumedOriginal),JSON.stringify(oldEdge)+'\n')
+ resolveProbe(resumedOriginal,`assert.equal(m.isClaudeRuntimeCurrent(),true);fs.appendFileSync(${JSON.stringify(transcript(resumedOriginal))},JSON.stringify({...${JSON.stringify(oldEdge)},timestamp:new Date().toISOString()})+'\\n');assert.equal(m.isClaudeRuntimeCurrent(),false);fs.appendFileSync(${JSON.stringify(transcript(resumedOriginal))},JSON.stringify({type:'progress',sessionId:${JSON.stringify(resumedOriginal)}})+'\\n');assert.equal(m.isClaudeRuntimeCurrent(),false);`,{},parentCommand,born)
+ fs.writeFileSync(transcript(resumedOriginal),JSON.stringify(oldEdge)+'\n')
+ const resumedMcp=await connect(resumedOriginal,true,{AIT_FIXTURE_PARENT_BIRTH:born}),resumeCalls=calls.length
+ const resumeDeadline=Date.now()+5000
+ while(!calls.slice(resumeCalls).some(c=>c.path.endsWith('registerPushTarget'))){assert(Date.now()<resumeDeadline,resumedMcp.errors());await new Promise(r=>setTimeout(r,10))}
+ const resumeRegistration=calls.slice(resumeCalls).find(c=>c.path.endsWith('registerPushTarget')).data
+ assert.equal(resumeRegistration.cursor,'before')
+ const restoredDelivery=await fetch(resumeRegistration.url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({uri:`at://${did}/ait.feed.post/resumed`,cid:'bafyreigogaydx3b5gcfj7byynrzqtzl6slrhxta7jfhy4nkgfjhkpg2jve',author:{did,handle},reason:'mention',record:{text:'resumed original'},indexedAt:new Date().toISOString(),cursor:'resumed-delivered'})})
+ assert.equal(restoredDelivery.status,200)
+ assert.equal(resumedMcp.notifications.length,1)
+ assert.equal(checkpoint(resumedOriginal),'resumed-delivered')
+ assert(!fs.existsSync(identityFile(formerChild)))
+ await resumedMcp.client.close()
+ console.log('PASS old handover permits newer verified Claude parent; real MCP registers, channels and commits same identity; conservative unknown/same-second cases and later handover stay retired')
 
  console.log('PASS Claude background consumer journey')
 }finally{

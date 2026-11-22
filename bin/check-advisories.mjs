@@ -18,6 +18,8 @@ const digest = x => /^sha256:[a-f0-9]{64}$/.test(x || '')
 const commit = x => /^[a-f0-9]{40}$/.test(x || '')
 const date = x => /^\d{4}-\d{2}-\d{2}$/.test(x || '') && Number.isFinite(Date.parse(x)) && new Date(x).toISOString().slice(0, 10) === x
 const severity = x => SEVERITIES.includes(x)
+const unscoredNonApplicable = d => d?.ecosystem === 'rust' && d.reviewedSeverity === 'unknown' && d.decision === 'non-applicable'
+const cve = x => typeof x === 'string' && /^CVE-\d{4}-\d{4,}$/.test(x)
 const githubSeverity = x => x === 'medium' ? 'moderate' : x
 const relative = x => text(x) && !path.isAbsolute(x) && !x.split('/').includes('..') && !x.includes('\\')
 
@@ -39,10 +41,22 @@ export function validatePolicy(policy) {
   for (const c of policy.embeddedComponents) if (!WORKSPACES.includes(c.workspace) || !relative(c.location) || !text(c.package) || !text(c.version) || !text(c.integrity) || !Array.isArray(c.regressions) || !c.regressions.length) fail('invalid embedded component coverage')
   const ids = new Set(), dispositionKeys = new Set()
   for (const d of policy.dispositions) {
-    if (!text(d.id) || ids.has(d.id) || !['npm', 'rust'].includes(d.ecosystem || 'npm') || !WORKSPACES.includes(d.workspace) || !text(d.package) || !text(d.version) || !(d.ecosystem === 'rust' ? /^RUSTSEC-\d{4}-\d+$/ : /^GHSA-[a-z0-9-]+$/).test(d.advisory || '') || !severity(d.reviewedSeverity) || !['blocked', 'non-applicable', 'mitigated', 'accepted-risk'].includes(d.decision) || !text(d.owner) || !date(d.reviewedOn) || !date(d.expiresOn) || !text(d.reason) || !Array.isArray(d.exposures) || !d.exposures.length || d.exposures.some(x => !['local', 'local-and-approved-peer'].includes(x)) || !Array.isArray(d.components) || !d.components.length || d.components.some(c => !relative(c.path) || !digest(c.dependencyFingerprint)) || !Array.isArray(d.evidence) || !d.evidence.length || d.evidence.some(x => !/^https:\/\//.test(x)) || !Array.isArray(d.regressions)) fail(`invalid disposition ${d.id || '<unnamed>'}`)
-    if (new Date(d.expiresOn) < new Date(d.reviewedOn) || (HIGH.has(d.reviewedSeverity) && (new Date(d.expiresOn) - new Date(d.reviewedOn)) / 86400000 > 30)) fail(`invalid review period: ${d.id}`)
+    if (!text(d.id) || ids.has(d.id) || !['npm', 'rust'].includes(d.ecosystem || 'npm') || !WORKSPACES.includes(d.workspace) || !text(d.package) || !text(d.version) || !(d.ecosystem === 'rust' ? /^RUSTSEC-\d{4}-\d+$/ : /^GHSA-[a-z0-9-]+$/).test(d.advisory || '') || !(severity(d.reviewedSeverity) || unscoredNonApplicable(d)) || !['blocked', 'non-applicable', 'mitigated', 'accepted-risk'].includes(d.decision) || !text(d.owner) || !date(d.reviewedOn) || !date(d.expiresOn) || !text(d.reason) || !Array.isArray(d.exposures) || !d.exposures.length || d.exposures.some(x => !['local', 'local-and-approved-peer'].includes(x)) || !Array.isArray(d.components) || !d.components.length || d.components.some(c => !relative(c.path) || !digest(c.dependencyFingerprint)) || !Array.isArray(d.evidence) || !d.evidence.length || d.evidence.some(x => !/^https:\/\//.test(x)) || !Array.isArray(d.regressions)) fail(`invalid disposition ${d.id || '<unnamed>'}`)
+    if (new Date(d.expiresOn) < new Date(d.reviewedOn) || ((HIGH.has(d.reviewedSeverity) || d.reviewedSeverity === 'unknown') && (new Date(d.expiresOn) - new Date(d.reviewedOn)) / 86400000 > 30)) fail(`invalid review period: ${d.id}`)
     if (d.decision !== 'blocked' && (!['active', 'withdrawn'].includes(d.advisoryStatus) || !text(d.advisoryRevision))) fail(`missing advisory revision: ${d.id}`)
     if (['non-applicable', 'mitigated'].includes(d.decision) && !d.regressions.length) fail(`missing regression: ${d.id}`)
+    if (d.configuration !== undefined &&
+        (d.configuration !== 'managed-default-json' || d.workspace !== 'pds' ||
+         !d.regressions.some(r => r.path === 'pds/scripts/default-mail-scope-test.mjs' && r.check === 'default-mail-approved-scope'))) fail(`invalid mail configuration scope: ${d.id}`)
+    if (d.decision === 'accepted-risk' && d.reviewedSeverity === 'high') {
+      const a = d.upstreamAcceptance
+      if ((d.ecosystem || 'npm') !== 'npm' || !object(a) || !digest(a.candidateTree) ||
+          !policy.supportedReleases.some(r => r.commit === a.baselineCommit && d.exposures.includes(r.exposure)) ||
+          !text(a.reviewer) || a.reviewer.trim().replace(/^@/, '').toLowerCase() === d.owner.trim().replace(/^@/, '').toLowerCase() ||
+          !date(a.upstreamCheckedOn) || a.upstreamCheckedOn < d.reviewedOn || a.upstreamCheckedOn >= d.expiresOn ||
+          !text(a.supportedFixCheck) || !text(a.exposureComparison) || !text(a.exploitationReview) ||
+          !d.regressions.length) fail(`invalid upstream High acceptance: ${d.id}`)
+    } else if (Object.hasOwn(d, 'upstreamAcceptance')) fail(`unexpected upstream acceptance: ${d.id}`)
     ids.add(d.id)
     for (const c of d.components) {
       const key = JSON.stringify([d.ecosystem || 'npm', d.workspace, d.package, d.version, d.advisory, c.path, c.dependencyFingerprint])
@@ -64,6 +78,16 @@ function git(root, args) {
   if (r.status !== 0) fail(`candidate git check failed: ${r.stderr}`)
   return r.stdout.trim()
 }
+// Exclude only the trusted register so it can name the candidate without a
+// self-referential commit hash. Include path, mode and Git object ID.
+export function candidateTreeFingerprint(root, revision = 'HEAD') {
+  const result = run('git', ['-C', root, 'ls-tree', '--full-tree', '-r', '-z', revision], { encoding: 'buffer' })
+  if (result.status !== 0 || !result.stdout.length) fail('cannot fingerprint candidate tree')
+  const entries = result.stdout.toString('latin1').split('\0')
+  const reviewed = entries.filter(line => line.slice(line.indexOf('\t') + 1) !== 'docs/security.md')
+  return hash(Buffer.from(reviewed.join('\0'), 'latin1'))
+}
+
 export function snapshotCandidate(root) {
   root = fs.realpathSync(root)
   if (fs.realpathSync(git(root, ['rev-parse', '--show-toplevel'])) !== root) fail('candidate must be a complete repository root')
@@ -81,7 +105,7 @@ export function snapshotCandidate(root) {
       if (![2, 3].includes(locks[workspace].lockfileVersion) || !object(locks[workspace].packages) || !object(locks[workspace].packages[''])) fail(`unsupported lockfile: ${name}`)
     }
   }
-  return { root, candidateCommit, locks, lockDigests }
+  return { root, candidateCommit, candidateTree: candidateTreeFingerprint(root, candidateCommit), locks, lockDigests }
 }
 
 // npm's ignored installation is not part of the Git candidate. Check that a
@@ -208,20 +232,51 @@ async function advisoryMetadata(id) {
   if (raw.length > 2 * 1024 * 1024) fail(`oversized advisory metadata: ${id}`)
   const value = JSON.parse(raw)
   if (value.ghsa_id !== id || !severity(githubSeverity(value.severity)) || !text(value.updated_at) || !Object.hasOwn(value, 'withdrawn_at')) fail(`incomplete current advisory: ${id}`)
-  return { severity: githubSeverity(value.severity), advisoryStatus: value.withdrawn_at ? 'withdrawn' : 'active', advisoryRevision: value.updated_at }
+  const cves = Array.isArray(value.identifiers)
+    ? [...new Set([...(value.cve_id ? [value.cve_id] : []), ...value.identifiers.filter(x => x?.type === 'CVE').map(x => x.value)])]
+    : undefined
+  return { severity: githubSeverity(value.severity), advisoryStatus: value.withdrawn_at ? 'withdrawn' : 'active', advisoryRevision: value.updated_at, cves }
+}
+
+async function knownExploitedCves() {
+  const url = 'https://raw.githubusercontent.com/cisagov/kev-data/develop/known_exploited_vulnerabilities.json'
+  const response = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(20_000) })
+  if (!response.ok) fail(`CISA KEV lookup failed: HTTP ${response.status}`)
+  const raw = await response.text()
+  if (raw.length > 8 * 1024 * 1024) fail('oversized CISA KEV catalog')
+  const catalog = JSON.parse(raw)
+  if (!Number.isFinite(Date.parse(catalog.dateReleased)) || Date.parse(catalog.dateReleased) > Date.now() ||
+      !Array.isArray(catalog.vulnerabilities) || !catalog.vulnerabilities.length ||
+      catalog.count !== catalog.vulnerabilities.length ||
+      catalog.vulnerabilities.some(entry => !cve(entry?.cveID))) fail('incomplete CISA KEV catalog')
+  return new Set(catalog.vulnerabilities.map(entry => entry.cveID))
 }
 
 function findDisposition(f, policy) {
   return policy.dispositions.find(d => (d.ecosystem || 'npm') === (f.ecosystem || 'npm') && d.workspace === f.workspace && d.package === f.package && d.version === f.version && d.advisory === f.advisory && d.components.some(c => c.path === f.path && c.dependencyFingerprint === f.dependencyFingerprint))
 }
-export function evaluateFinding(f, policy, exposure, now, metadata, regression) {
+export function evaluateFinding(f, policy, exposure, now, metadata, regression, upstream = {}) {
   const d = findDisposition(f, policy)
   if (!d) return 'no current disposition for this advisory/version/dependency path'
   if (d.decision === 'blocked') return d.reason
+  if (d.configuration && d.configuration !== upstream.configuration) return 'approved mail configuration differs from release scope'
   if (d.reviewedSeverity !== f.severity || metadata.severity !== f.severity || d.advisoryStatus !== metadata.advisoryStatus || d.advisoryRevision !== metadata.advisoryRevision) return 'advisory severity/status/revision changed'
   if (!d.exposures.includes(exposure)) return 'supported exposure differs from reviewed scope'
   if (d.reviewedOn > now || d.expiresOn <= now) return 'decision is future-dated or expired'
-  if (HIGH.has(f.severity) && d.decision === 'accepted-risk') return 'accepted reachable risk cannot satisfy High/Critical policy'
+  if (d.decision === 'accepted-risk') {
+    if (f.severity === 'critical') return 'accepted reachable risk cannot satisfy Critical policy'
+    if (f.severity === 'high') {
+      const a = d.upstreamAcceptance
+      if (!a) return 'accepted reachable risk requires a reviewed upstream High decision'
+      if (a.candidateTree !== upstream.candidateTree) return 'reviewed upstream candidate tree changed'
+      if (!policy.supportedReleases.some(r => r.commit === a.baselineCommit && r.exposure === exposure) ||
+          a.baselineCommit === upstream.candidateCommit) return 'supported baseline does not match candidate exposure'
+      if (a.upstreamCheckedOn > now) return 'upstream check is future-dated'
+      if (!Array.isArray(metadata.cves) || metadata.cves.some(id => !cve(id)) ||
+          !(upstream.exploited instanceof Set)) return 'missing current exploitation evidence'
+      if (metadata.cves.some(id => upstream.exploited.has(id))) return 'CISA KEV lists this advisory as actively exploited'
+    }
+  }
   for (const r of d.regressions) if (!regression(r)) return `current candidate regression missing/blocked: ${r.path}#${r.check}`
   return null
 }
@@ -238,13 +293,17 @@ export async function checkCandidate(root, options = {}) {
   const policyRoot = fs.realpathSync(options.policyRoot || trustedRoot), policy = options.policy || loadPolicy(policyRoot)
   const policyDigest = hash(fs.readFileSync(path.join(policyRoot, 'docs/security.md')))
   validatePolicy(policy)
+  const configuration = options.configuration
+  if (configuration !== undefined && configuration !== 'managed-default-json') fail('unsupported release configuration')
   const before = snapshotCandidate(root), now = new Date().toISOString().slice(0, 10)
   const exposure = policy.supportedReleases.find(r => r.commit === before.candidateCommit)?.exposure || 'local-and-approved-peer'
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ait-advisory-gate-'))
   const blockers = [], findings = [], scannerTotals = {}, verifications = [], regressions = new Map(), decisions = new Map()
   const recordDecision = f => {
     const d = findDisposition(f, policy)
-    decisions.set(d.id, { id: d.id, ecosystem: d.ecosystem || 'npm', decision: d.decision, owner: d.owner, expiresOn: d.expiresOn, components: d.components })
+    decisions.set(d.id, { id: d.id, ecosystem: d.ecosystem || 'npm', advisory: d.advisory, workspace: d.workspace, package: d.package, version: d.version, decision: d.decision, owner: d.owner, expiresOn: d.expiresOn, components: d.components,
+      ...(d.upstreamAcceptance && { upstreamAcceptance: d.upstreamAcceptance }),
+      ...(d.configuration && { configuration: d.configuration }) })
   }
   const regression = r => {
     if (!regressions.has(r.path)) {
@@ -279,11 +338,20 @@ export async function checkCandidate(root, options = {}) {
       else for (const r of c.regressions) if (!regression(r)) blockers.push(`embedded ${c.workspace}/${c.package}: missing/blocked ${r.check}`)
     }
     const metadata = new Map()
+    let exploited
     for (const f of findings) try {
       if (!metadata.has(f.advisory)) metadata.set(f.advisory, Promise.resolve().then(() => (options.metadataReader || advisoryMetadata)(f.advisory)))
       const m = await metadata.get(f.advisory)
       if (!object(m) || !severity(m.severity) || !['active', 'withdrawn'].includes(m.advisoryStatus) || !text(m.advisoryRevision)) fail('invalid current advisory metadata')
-      const reason = evaluateFinding(f, policy, exposure, now, m, regression)
+      // Only an actual High acceptance invokes the external exploitation signal.
+      const reviewed = f.severity === 'high' && findDisposition(f, policy)?.upstreamAcceptance
+      if (reviewed) {
+        exploited ??= Promise.resolve().then(() => (options.knownExploitedReader || knownExploitedCves)())
+      }
+      const reason = evaluateFinding(f, policy, exposure, now, m, regression, {
+        candidateCommit: before.candidateCommit, candidateTree: before.candidateTree, configuration,
+        exploited: reviewed ? await exploited : undefined,
+      })
       if (reason) blockers.push(`${f.severity} ${f.workspace} ${f.package}@${f.version} ${f.advisory} ${f.path}: ${reason}`)
       else recordDecision(f)
     } catch (error) { blockers.push(`${f.advisory}: ${error.message}`) }
@@ -303,9 +371,13 @@ export async function checkCandidate(root, options = {}) {
         for (const f of a.findings) {
           if (!text(f.id) || !text(f.package) || !text(f.version) || !text(f.path)) fail('incomplete native finding identity/path')
           const maintenance = ['unmaintained', 'notice', 'yanked'].includes(f.kind)
-          if (!severity(f.severity) || (maintenance && f.severity !== 'info')) fail(`unknown native severity: ${f.id}`)
+          if ((!severity(f.severity) && f.severity !== 'unknown') || (maintenance && f.severity !== 'info')) fail(`unknown native severity: ${f.id}`)
           if (!text(f.advisoryRevision) || !['active', 'withdrawn'].includes(f.advisoryStatus)) fail(`incomplete current native advisory metadata: ${f.id}`)
           const finding = { ...f, ecosystem: 'rust', workspace: 'appview', advisory: f.id, dependencyFingerprint: nativeDependencyFingerprint(a, f) }
+          // An unscored advisory stays unscored. Only exact reviewed native
+          // non-applicability with a current regression may qualify; acceptance
+          // or an informational maintenance record cannot waive it.
+          if (f.severity === 'unknown' && !unscoredNonApplicable(findDisposition(finding, policy))) fail(`unknown native severity: ${f.id}`)
           const reason = evaluateFinding(finding, policy, exposure, now, f, regression)
           if (reason) blockers.push(`native ${maintenance ? `maintenance (${f.kind})` : f.severity} ${f.package}@${f.version} ${f.id} ${f.path}: ${reason}`)
           else recordDecision(finding)
@@ -313,25 +385,29 @@ export async function checkCandidate(root, options = {}) {
       }
     } catch (error) { blockers.push(`native: ${error.message}`) }
     const after = snapshotCandidate(before.root)
-    if (after.candidateCommit !== before.candidateCommit || JSON.stringify(after.lockDigests) !== JSON.stringify(before.lockDigests)) fail('candidate changed during verification')
+    if (after.candidateCommit !== before.candidateCommit || after.candidateTree !== before.candidateTree || JSON.stringify(after.lockDigests) !== JSON.stringify(before.lockDigests)) fail('candidate changed during verification')
     if (hash(fs.readFileSync(path.join(policyRoot, 'docs/security.md'))) !== policyDigest) fail('trusted policy changed during verification')
-    return { schemaVersion: 1, status: blockers.length ? 'blocked' : 'passed', candidateCommit: before.candidateCommit, exposure, policyDigest, lockDigests: before.lockDigests, scannerTotals, findings, native, verifications, decisions: [...decisions.values()], blockers: [...new Set(blockers)] }
+    return { schemaVersion: 1, status: blockers.length ? 'blocked' : 'passed', candidateCommit: before.candidateCommit, candidateTree: before.candidateTree, exposure, configuration, policyDigest, lockDigests: before.lockDigests, scannerTotals, findings, native, verifications, decisions: [...decisions.values()], blockers: [...new Set(blockers)] }
   } finally { fs.rmSync(home, { recursive: true, force: true }) }
 }
 
 async function main() {
-  const args = process.argv.slice(2); let candidate = trustedRoot, json = false
+  const args = process.argv.slice(2); let candidate = trustedRoot, json = false, configuration
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--candidate' && args[i + 1]) candidate = path.resolve(args[++i])
+    else if (args[i] === '--configuration' && args[i + 1]) configuration = args[++i]
     else if (args[i] === '--json') json = true
     else fail('Usage: bin/check-advisories.sh [--candidate <clean checkout>] [--json]')
   }
-  const result = await checkCandidate(candidate)
+  const result = await checkCandidate(candidate, { configuration })
   if (json) console.log(JSON.stringify(result, null, 2))
   else {
     console.log(`Candidate ${result.candidateCommit}; exposure ${result.exposure}; coverage four npm locks + packaged transport Cargo graph`)
     for (const [workspace, counts] of Object.entries(result.scannerTotals)) console.log(`${workspace}: ${counts.high} High, ${counts.critical} Critical, ${counts.total} affected packages`)
-    for (const d of result.decisions) console.log(`DECISION ${d.id}: ${d.decision}; owner ${d.owner}; expires ${d.expiresOn}`)
+    for (const d of result.decisions) {
+      console.log(`DECISION ${d.id}: ${d.decision}; owner ${d.owner}; expires ${d.expiresOn}`)
+      if (d.upstreamAcceptance) console.log(`UPSTREAM REVIEW ${d.id}: ${JSON.stringify(d.upstreamAcceptance)}`)
+    }
     for (const b of result.blockers) console.error(`BLOCKED: ${b}`)
     if (result.status === 'passed') console.log(`PASS: 0 unresolved release blockers; ${result.findings.length} root advisory/package instances remain under current dispositions. No dependencies changed.`)
   }

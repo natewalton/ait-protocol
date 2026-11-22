@@ -6,7 +6,7 @@ import os from 'node:os'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
-import { WORKSPACES, checkCandidate, parseAudit, validatePolicy, validateInstalledDependencies, dependencyFingerprint, nativeDependencyFingerprint, snapshotCandidate, hash, childEnv } from './check-advisories.mjs'
+import { WORKSPACES, checkCandidate, parseAudit, validatePolicy, validateInstalledDependencies, dependencyFingerprint, nativeDependencyFingerprint, snapshotCandidate, candidateTreeFingerprint, evaluateFinding, hash, childEnv } from './check-advisories.mjs'
 
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ait-advisory-test-'))
 const candidate = path.join(temporary, 'candidate'), trusted = path.join(temporary, 'trusted')
@@ -134,7 +134,6 @@ try {
     const r = await checkCandidate(candidate, options(approved())); assert.equal(r.status, 'passed'); assert.equal(r.findings.length, 1); assert.equal(r.verifications.length, 1); assert.equal(r.verifications[0].candidateCommit, candidateCommit); assert.match(r.verifications[0].testDigest, /^sha256:/)
   })
   for (const [name, change, pattern] of [
-    ['accepted high risk', d => { d.decision = 'accepted-risk'; d.regressions = [] }, /accepted reachable risk/],
     ['severity escalation', d => { d.reviewedSeverity = 'moderate' }, /severity\/status\/revision/],
     ['advisory status change', d => { d.advisoryStatus = 'withdrawn' }, /severity\/status\/revision/],
     ['advisory revision change', d => { d.advisoryRevision = '2026-11-09T00:00:00Z' }, /severity\/status\/revision/],
@@ -144,8 +143,96 @@ try {
     ['absent current regression', d => { d.regressions[0].path = 'bin/absent.mjs' }, /regression missing\/blocked/],
     ['explicit blocked migration is not grandfathered', d => { d.decision = 'blocked'; d.reason = 'proof outstanding' }, /proof outstanding/],
   ]) await test(name, async () => { const p = approved(); change(p.dispositions[0]); await blocked(p, pattern) })
+  await test('default-mail decision requires its exact scope and exposure check', () => {
+    const p = approved()
+    const d = p.dispositions[0]
+    d.configuration = 'managed-default-json'
+    d.workspace = 'pds'
+    d.regressions = [{ path: 'pds/scripts/default-mail-scope-test.mjs', check: 'default-mail-approved-scope' }]
+    assert.doesNotThrow(() => validatePolicy(p))
+    const f = { ...d, path: d.components[0].path, dependencyFingerprint: d.components[0].dependencyFingerprint, severity: d.reviewedSeverity }
+    const now = new Date().toISOString().slice(0, 10)
+    assert.match(evaluateFinding(f, p, 'local-and-approved-peer', now, metadata, () => true), /configuration differs/)
+    assert.equal(evaluateFinding(f, p, 'local-and-approved-peer', now, metadata, () => true, { configuration: 'managed-default-json' }), null)
+    assert.match(evaluateFinding(f, p, 'local-and-approved-peer', now, metadata, () => false, { configuration: 'managed-default-json' }), /regression missing/)
+    d.configuration = 'smtp'
+    assert.throws(() => validatePolicy(p), /invalid mail configuration/)
+  })
+  const candidateTree = candidateTreeFingerprint(candidate)
+  const upstreamHigh = () => {
+    const p = approved()
+    const d = p.dispositions[0]
+    const baselineCommit = '1'.repeat(40)
+    p.supportedReleases.push({ tag: 'v1.0.0', commit: baselineCommit, exposure: 'local-and-approved-peer' })
+    Object.assign(d, { decision: 'accepted-risk', upstreamAcceptance: {
+      candidateTree, baselineCommit, reviewer: '@second-reviewer', upstreamCheckedOn: d.reviewedOn,
+      supportedFixCheck: 'Published fixture packages retain the affected range.',
+      exposureComparison: 'Synthetic baseline and candidate have identical exposure.',
+      exploitationReview: 'Synthetic review of expected impact and exploitation signals.',
+    } })
+    return p
+  }
+  const upstreamMetadata = { ...metadata, cves: ['CVE-2026-12345'] }
+  const upstreamChecks = { metadataReader: async () => upstreamMetadata, knownExploitedReader: async () => new Set() }
+  await test('reviewed upstream High is eligible and remains reported as accepted risk', async () => {
+    const result = await checkCandidate(candidate, options(upstreamHigh(), upstreamChecks))
+    assert.equal(result.status, 'passed')
+    assert.equal(result.candidateTree, candidateTree)
+    assert.equal(result.findings.length, 1)
+    assert.equal(result.decisions[0].decision, 'accepted-risk')
+    assert.equal(result.decisions[0].upstreamAcceptance.reviewer, '@second-reviewer')
+    assert.equal(result.verifications[0].result.status, 'passed')
+  })
+  for (const [name, change, pattern, overrides] of [
+    ['changed candidate tree', (p, a) => { a.candidateTree = hash('different tree') }, /candidate tree changed/],
+    ['future upstream review blocks', (p, a) => { a.upstreamCheckedOn = new Date(Date.now() + 86400000).toISOString().slice(0, 10) }, /upstream check is future-dated/],
+    ['approved High still needs regression', p => { p.dispositions[0].regressions[0].path = 'bin/absent.mjs' }, /regression missing/],
+    ['known exploitation blocks approval', () => {}, /actively exploited/, { knownExploitedReader: async () => new Set(upstreamMetadata.cves) }],
+    ['catalog failure blocks approval', () => {}, /unavailable/, { knownExploitedReader: async () => { throw Error('catalog unavailable') } }],
+    ['missing current CVE mapping blocks approval', () => {}, /missing current exploitation evidence/, { metadataReader: async () => metadata }],
+  ]) await test(name, async () => {
+    const p = upstreamHigh()
+    change(p, p.dispositions[0].upstreamAcceptance)
+    await blocked(p, pattern, { ...upstreamChecks, ...overrides })
+  })
+  for (const [name, change] of [
+    ['High acceptance requires a supported baseline', p => { p.supportedReleases = [] }],
+    ['High acceptance requires an independent reviewer', (p, a) => { a.reviewer = ' @FIXTURE ' }],
+    ['High acceptance requires regression evidence', p => { p.dispositions[0].regressions = [] }],
+  ]) await test(name, () => {
+    const p = upstreamHigh()
+    change(p, p.dispositions[0].upstreamAcceptance)
+    assert.throws(() => validatePolicy(p), /invalid upstream High acceptance/)
+  })
+  await test('Critical accepted risk remains blocking', async () => {
+    const p = approved()
+    Object.assign(p.dispositions[0], { reviewedSeverity: 'critical', decision: 'accepted-risk' })
+    const a = audit()
+    for (const v of Object.values(a.vulnerabilities)) v.severity = 'critical'
+    a.vulnerabilities.leaf.via[0].severity = 'critical'
+    a.metadata.vulnerabilities.high = 0
+    a.metadata.vulnerabilities.critical = 2
+    await blocked(p, /cannot satisfy Critical/, {
+      auditRunner: w => ({ status: 0, stdout: JSON.stringify(w === 'plc' ? a : empty()) }),
+      metadataReader: async () => ({ ...metadata, severity: 'critical' }),
+    })
+  })
+  await test('candidate fingerprint ignores only the self-referencing register', () => {
+    const commitFile = (file, contents) => {
+      fs.writeFileSync(path.join(candidate, file), contents)
+      git('add', file)
+      git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'change')
+    }
+    try {
+      commitFile('docs/security.md', 'updated approval only')
+      assert.equal(candidateTreeFingerprint(candidate), candidateTree)
+      commitFile('bin/regression.mjs', 'changed executable')
+      assert.notEqual(candidateTreeFingerprint(candidate), candidateTree)
+    } finally { git('reset', '--hard', candidateCommit) }
+  })
   await test('immutable historical mapping alone selects narrower exposure', async () => { const p = approved(); p.dispositions[0].exposures = ['local']; p.supportedReleases.push({ tag: 'v1.0.0', commit: candidateCommit, exposure: 'local' }); assert.equal((await checkCandidate(candidate, options(p))).status, 'passed') })
   for (const [name, change, pattern] of [
+    ['unreviewed High risk rejection', d => { d.decision = 'accepted-risk' }, /invalid upstream High acceptance/],
     ['owner required', d => { delete d.owner }, /invalid disposition/],
     ['primary evidence required', d => { d.evidence = [] }, /invalid disposition/],
     ['High validity capped at 30 days', d => { d.reviewedOn = '2026-01-01'; d.expiresOn = '2026-03-01' }, /review period/],
@@ -180,6 +267,7 @@ try {
   const nativeLock = structuredClone(lock); nativeLock.packages[''].dependencies[nativePolicy.package] = nativePolicy.url; nativeLock.packages[`node_modules/${nativePolicy.package}`] = { version: nativePolicy.version, resolved: nativePolicy.url }
   fs.writeFileSync(path.join(candidate, 'appview/package-lock.json'), JSON.stringify(nativeLock)); git('add', '.'); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'native fixture')
   const nativeCommit = git('rev-parse', 'HEAD')
+  const installedNative=path.join(candidate,'appview/node_modules',nativePolicy.package);fs.mkdirSync(installedNative,{recursive:true});fs.writeFileSync(path.join(installedNative,'package.json'),JSON.stringify({version:nativePolicy.version}));const installedPackages=structuredClone(nativeLock.packages);delete installedPackages[''];fs.writeFileSync(path.join(candidate,'appview/node_modules/.package-lock.json'),JSON.stringify({lockfileVersion:3,packages:installedPackages}))
   const notice = { id: 'RUSTSEC-2026-0001', package: 'fixture-crate', version: '1.0.0', path: 'Cargo.lock#fixture-crate@1.0.0', severity: 'info', kind: 'unmaintained', advisoryStatus: 'active', advisoryRevision: `sha256:${'4'.repeat(64)}` }
   const artifact = { package: nativePolicy.package, version: nativePolicy.version, digest: nativePolicy.digest, sourceCommit: nativePolicy.sourceCommit, lockDigest: nativePolicy.lockDigest, findings: [notice] }
   function nativeOptions(p, a = artifact) { return options(p, { auditRunner: w => { const e = empty(); if (w === 'appview') e.metadata.dependencies.prod = e.metadata.dependencies.total = 3; return { status: 0, stdout: JSON.stringify(e) } }, nativeRunner: () => ({ status: 0, stdout: JSON.stringify({ schemaVersion: 1, candidateCommit: nativeCommit, status: 'complete', artifacts: [a], errors: [] }) }) }) }
@@ -188,6 +276,13 @@ try {
   await test('current native maintenance decision uses the same disposition model', async () => { const p = nativeBase(), d = disposition(); Object.assign(d, { id: 'native-notice', ecosystem: 'rust', workspace: 'appview', package: notice.package, version: notice.version, advisory: notice.id, reviewedSeverity: 'info', advisoryRevision: notice.advisoryRevision, decision: 'accepted-risk', regressions: [], components: [{ path: notice.path, dependencyFingerprint: nativeDependencyFingerprint(artifact, notice) }] }); p.dispositions = [d]; assert.equal((await checkCandidate(candidate, nativeOptions(p))).status, 'passed') })
   await test('native advisory without known severity stays blocked', async () => { const a = structuredClone(artifact); Object.assign(a.findings[0], { kind: 'vulnerability', severity: 'unknown' }); const r = await checkCandidate(candidate, nativeOptions(nativeBase(), a)); assert.equal(r.status, 'blocked'); assert.match(r.blockers.join('\n'), /unknown native severity/) })
   await test('native unsoundness cannot inherit an informational maintenance decision', async () => { const a = structuredClone(artifact); Object.assign(a.findings[0], { kind: 'unsound', severity: 'unknown' }); const r = await checkCandidate(candidate, nativeOptions(nativeBase(), a)); assert.equal(r.status, 'blocked'); assert.match(r.blockers.join('\n'), /unknown native severity/) })
+  const unsoundArtifact = () => { const a=structuredClone(artifact);Object.assign(a.findings[0],{kind:'unsound',severity:'unknown'});return a }
+  const unscoredPolicy = (a=unsoundArtifact()) => { const p=nativeBase(),d=disposition();Object.assign(d,{id:'native-unscored',ecosystem:'rust',workspace:'appview',package:notice.package,version:notice.version,advisory:notice.id,reviewedSeverity:'unknown',advisoryRevision:notice.advisoryRevision,decision:'non-applicable',components:[{path:notice.path,dependencyFingerprint:nativeDependencyFingerprint(a,a.findings[0])}]});p.dispositions=[d];return p }
+  await test('unscored native finding may qualify only as exact verified non-applicability',async()=>{const a=unsoundArtifact(),p=unscoredPolicy(a);const r=await checkCandidate(candidate,nativeOptions(p,a));assert.equal(r.status,'passed',r.blockers.join('\n'))})
+  await test('unscored native risk acceptance and npm decisions are invalid',()=>{for(const change of [{decision:'accepted-risk'},{ecosystem:'npm'},{decision:'mitigated'}]){const p=unscoredPolicy();Object.assign(p.dispositions[0],change);assert.throws(()=>validatePolicy(p),/invalid disposition/)}})
+  await test('unscored native non-applicability requires a regression and at most 30 days',()=>{const p=unscoredPolicy();p.dispositions[0].regressions=[];assert.throws(()=>validatePolicy(p),/missing regression/);const q=unscoredPolicy();q.dispositions[0].expiresOn='2099-01-01';assert.throws(()=>validatePolicy(q),/invalid review period/)})
+  await test('unscored native failed current regression blocks',async()=>{const a=unsoundArtifact(),p=unscoredPolicy(a);const o=nativeOptions(p,a);o.regressionRunner=()=>({status:1,stdout:JSON.stringify({schemaVersion:1,candidateCommit:nativeCommit,status:'blocked',checks:[{id:'bound',status:'blocked'}],errors:['feature present']})});const r=await checkCandidate(candidate,o);assert.equal(r.status,'blocked');assert.match(r.blockers.join('\n'),/regression missing\/blocked/)})
+  await test('unscored native changed artifact identity or advisory revision blocks',async()=>{for(const change of [{digest:'sha256:'+'9'.repeat(64)},{sourceCommit:'9'.repeat(40)},{lockDigest:'sha256:'+'9'.repeat(64)}]){const a=unsoundArtifact(),p=unscoredPolicy(a);Object.assign(a,change);const r=await checkCandidate(candidate,nativeOptions(p,a));assert.equal(r.status,'blocked')}const a=unsoundArtifact(),p=unscoredPolicy(a);a.findings[0].advisoryRevision='changed';const r=await checkCandidate(candidate,nativeOptions(p,a));assert.equal(r.status,'blocked');assert.match(r.blockers.join('\n'),/advisory severity\/status\/revision changed/)})
   await test('native artifact/source-lock mismatch fails closed', async () => { const a = structuredClone(artifact); a.lockDigest = `sha256:${'9'.repeat(64)}`; const r = await checkCandidate(candidate, nativeOptions(nativeBase(), a)); assert.equal(r.status, 'blocked'); assert.match(r.blockers.join('\n'), /omitted a shipped binding|identity mismatch/) })
   await test('native tests also preserve candidate cleanliness', () => assert.equal(git('status', '--porcelain'), ''))
 } finally { fs.rmSync(temporary, { recursive: true, force: true }) }

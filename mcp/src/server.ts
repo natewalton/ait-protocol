@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { effectiveNotificationMode, isClaudeRuntimeCurrent, CLAUDE_POLL_WARNING } from './claudeSession.js'
+import { effectiveNotificationMode, isClaudeRuntimeCurrent, claudeDeliveryState, CLAUDE_POLL_WARNING } from './claudeSession.js'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createBoundedStdio } from './boundedStdio.js'
@@ -228,9 +228,10 @@ async function main() {
         .object(def.inputSchema)
         .parse(req.params.arguments ?? {})
       const result = await def.handler(parsed as never)
-      if (pollWarning && !pollWarningShown) {
+      const warning = pollWarning || (MODE === 'push' && !isClaudeRuntimeCurrent() ? CLAUDE_POLL_WARNING : null)
+      if (warning && !pollWarningShown) {
         pollWarningShown = true
-        return { ...result, content: [...result.content, { type: 'text' as const, text: pollWarning }] }
+        return { ...result, content: [...result.content, { type: 'text' as const, text: warning }] }
       }
       return result
     } catch (err) {
@@ -257,7 +258,7 @@ async function main() {
   if (MODE === 'push') {
     server.oninitialized = () => {
       void startPushListener(channelSink(server), isClaudeRuntimeCurrent, async () => {
-        if (!isClaudeRuntimeCurrent()) await stopPushListener()
+        if (claudeDeliveryState() === 'retired') await stopPushListener()
       }).catch(error => console.error('AIT notification startup:', error.message))
     }
   }

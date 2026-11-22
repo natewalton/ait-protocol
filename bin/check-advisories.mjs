@@ -18,6 +18,7 @@ const digest = x => /^sha256:[a-f0-9]{64}$/.test(x || '')
 const commit = x => /^[a-f0-9]{40}$/.test(x || '')
 const date = x => /^\d{4}-\d{2}-\d{2}$/.test(x || '') && Number.isFinite(Date.parse(x)) && new Date(x).toISOString().slice(0, 10) === x
 const severity = x => SEVERITIES.includes(x)
+const unscoredNonApplicable = d => d?.ecosystem === 'rust' && d.reviewedSeverity === 'unknown' && d.decision === 'non-applicable'
 const cve = x => typeof x === 'string' && /^CVE-\d{4}-\d{4,}$/.test(x)
 const githubSeverity = x => x === 'medium' ? 'moderate' : x
 const relative = x => text(x) && !path.isAbsolute(x) && !x.split('/').includes('..') && !x.includes('\\')
@@ -40,8 +41,8 @@ export function validatePolicy(policy) {
   for (const c of policy.embeddedComponents) if (!WORKSPACES.includes(c.workspace) || !relative(c.location) || !text(c.package) || !text(c.version) || !text(c.integrity) || !Array.isArray(c.regressions) || !c.regressions.length) fail('invalid embedded component coverage')
   const ids = new Set(), dispositionKeys = new Set()
   for (const d of policy.dispositions) {
-    if (!text(d.id) || ids.has(d.id) || !['npm', 'rust'].includes(d.ecosystem || 'npm') || !WORKSPACES.includes(d.workspace) || !text(d.package) || !text(d.version) || !(d.ecosystem === 'rust' ? /^RUSTSEC-\d{4}-\d+$/ : /^GHSA-[a-z0-9-]+$/).test(d.advisory || '') || !severity(d.reviewedSeverity) || !['blocked', 'non-applicable', 'mitigated', 'accepted-risk'].includes(d.decision) || !text(d.owner) || !date(d.reviewedOn) || !date(d.expiresOn) || !text(d.reason) || !Array.isArray(d.exposures) || !d.exposures.length || d.exposures.some(x => !['local', 'local-and-approved-peer'].includes(x)) || !Array.isArray(d.components) || !d.components.length || d.components.some(c => !relative(c.path) || !digest(c.dependencyFingerprint)) || !Array.isArray(d.evidence) || !d.evidence.length || d.evidence.some(x => !/^https:\/\//.test(x)) || !Array.isArray(d.regressions)) fail(`invalid disposition ${d.id || '<unnamed>'}`)
-    if (new Date(d.expiresOn) < new Date(d.reviewedOn) || (HIGH.has(d.reviewedSeverity) && (new Date(d.expiresOn) - new Date(d.reviewedOn)) / 86400000 > 30)) fail(`invalid review period: ${d.id}`)
+    if (!text(d.id) || ids.has(d.id) || !['npm', 'rust'].includes(d.ecosystem || 'npm') || !WORKSPACES.includes(d.workspace) || !text(d.package) || !text(d.version) || !(d.ecosystem === 'rust' ? /^RUSTSEC-\d{4}-\d+$/ : /^GHSA-[a-z0-9-]+$/).test(d.advisory || '') || !(severity(d.reviewedSeverity) || unscoredNonApplicable(d)) || !['blocked', 'non-applicable', 'mitigated', 'accepted-risk'].includes(d.decision) || !text(d.owner) || !date(d.reviewedOn) || !date(d.expiresOn) || !text(d.reason) || !Array.isArray(d.exposures) || !d.exposures.length || d.exposures.some(x => !['local', 'local-and-approved-peer'].includes(x)) || !Array.isArray(d.components) || !d.components.length || d.components.some(c => !relative(c.path) || !digest(c.dependencyFingerprint)) || !Array.isArray(d.evidence) || !d.evidence.length || d.evidence.some(x => !/^https:\/\//.test(x)) || !Array.isArray(d.regressions)) fail(`invalid disposition ${d.id || '<unnamed>'}`)
+    if (new Date(d.expiresOn) < new Date(d.reviewedOn) || ((HIGH.has(d.reviewedSeverity) || d.reviewedSeverity === 'unknown') && (new Date(d.expiresOn) - new Date(d.reviewedOn)) / 86400000 > 30)) fail(`invalid review period: ${d.id}`)
     if (d.decision !== 'blocked' && (!['active', 'withdrawn'].includes(d.advisoryStatus) || !text(d.advisoryRevision))) fail(`missing advisory revision: ${d.id}`)
     if (['non-applicable', 'mitigated'].includes(d.decision) && !d.regressions.length) fail(`missing regression: ${d.id}`)
     if (d.configuration !== undefined &&
@@ -370,9 +371,13 @@ export async function checkCandidate(root, options = {}) {
         for (const f of a.findings) {
           if (!text(f.id) || !text(f.package) || !text(f.version) || !text(f.path)) fail('incomplete native finding identity/path')
           const maintenance = ['unmaintained', 'notice', 'yanked'].includes(f.kind)
-          if (!severity(f.severity) || (maintenance && f.severity !== 'info')) fail(`unknown native severity: ${f.id}`)
+          if ((!severity(f.severity) && f.severity !== 'unknown') || (maintenance && f.severity !== 'info')) fail(`unknown native severity: ${f.id}`)
           if (!text(f.advisoryRevision) || !['active', 'withdrawn'].includes(f.advisoryStatus)) fail(`incomplete current native advisory metadata: ${f.id}`)
           const finding = { ...f, ecosystem: 'rust', workspace: 'appview', advisory: f.id, dependencyFingerprint: nativeDependencyFingerprint(a, f) }
+          // An unscored advisory stays unscored. Only exact reviewed native
+          // non-applicability with a current regression may qualify; acceptance
+          // or an informational maintenance record cannot waive it.
+          if (f.severity === 'unknown' && !unscoredNonApplicable(findDisposition(finding, policy))) fail(`unknown native severity: ${f.id}`)
           const reason = evaluateFinding(finding, policy, exposure, now, f, regression)
           if (reason) blockers.push(`native ${maintenance ? `maintenance (${f.kind})` : f.severity} ${f.package}@${f.version} ${f.id} ${f.path}: ${reason}`)
           else recordDecision(finding)

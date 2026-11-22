@@ -11,7 +11,7 @@ export function verifyMailScope(candidate, env = process.env) {
   assert.ok(!env.PDS_EMAIL_SMTP_URL && !env.PDS_MODERATION_EMAIL_SMTP_URL,
     'approval does not cover configured SMTP')
   const reviewed = {
-    'bin/install.sh': 'c73772f04b67ea60970c143dfd49190dcc29d580472c3cd5c4990ae54789fbc3',
+    'bin/install.sh': '71d3273c6085f71a9e4092723730299ddb8daa894ea132cef0e6ce539100fc57',
     'pds/launcher.js': '68d5ce1cb794e48e76fce5b7ee2b23777a2354f0e9eeaad08d7e0df80e2b9f92',
     'appview/src/peerNetwork.mjs': '874f6d592e5836b1fad89c371bc230dd23b7e02d3cd80f9581cdaabae7737e58',
   }

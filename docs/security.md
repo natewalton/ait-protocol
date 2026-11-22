@@ -40,7 +40,7 @@ severity, and checks fresh GitHub advisory status/revision. A changed version,
 dependency ancestry, advisory status/severity, component identity, exposure or
 expiry invalidates an old decision. It audits the exact packaged native source
 lock separately. Missing tooling, unknown severity or incomplete coverage blocks.
-It performs no dependency repair. Coverage is the four npm locks and the packaged transport Cargo graph. Other embedded native components, including SQLite within better-sqlite3, and externally maintained Node/PostgreSQL/OpenSSL remain outside these lockfile advisory audits. Native vulnerabilities with unknown or unsupported scoring block rather than receiving a guessed severity.
+It performs no dependency repair. Coverage is the four npm locks and the packaged transport Cargo graph. Other embedded native components, including SQLite within better-sqlite3, and externally maintained Node/PostgreSQL/OpenSSL remain outside these lockfile advisory audits. Native findings retain unknown severity when no supported score exists. They block unless an independently reviewed, exact-artifact non-applicability decision passes its current regression. Unknown severity can never qualify as accepted risk or informational maintenance; no severity is guessed.
 
 Publication requires a fresh result for the exact candidate and artifact. The
 PR/release job supplies the trusted checkout; repository maintainer review must
@@ -356,6 +356,414 @@ remain useful explanations; they never authorize publication. A real approved
 disposition needs its exact advisory revision/status and actual current passing
 regressions. High/Critical validity is at most 30 days; expiry requires renewed
 evidence at the next check. Removing a scanner finding removes its exception.
+
+### Proposed unscored native non-applicability rule (2026-11-21)
+
+Policy-code proposal, not an activated exception. The whole native lock remains
+in the audit. Only a Rust finding with an exact reviewed `non-applicable`
+disposition may retain `reviewedSeverity: "unknown"`; npm decisions, accepted
+risk, mitigation and informational borrowing cannot use it. Artifact/source-lock
+fingerprints, advisory revision, supported exposure, current regression and an
+expiry no more than 30 days after review remain required. Changed identity or
+failed evidence blocks. The heapless finding has no active new disposition in
+this proposal; Nate must decide after independent review.
+
+### Heapless assessments for the proposed rule
+
+Unactivated proposal. The native audit retains nine individually identified
+unknown-severity findings. Four affected APIs are absent from the locked source;
+five have affected source but no production caller in this exact artifact.
+Symbol absence is supplementary, not the proof. The existing immutable-addon
+regression binds package/loader/addon bytes and target to the independently
+reviewed source/build assessment.
+
+Source d50c2b7de23ac8872db630056897742518d9706d; Cargo.lock SHA256
+3423a54d6c121664edc1f6b6af7339183e23a1fbcc3c1322b5f408ec72194653.
+Artifact tarball SHA256 ea3d644d3523480be02708f434c41340905f8cc7668e07dfd7f843a6080fd3b3;
+addon SHA256 e56045238f76664184eb17a33717bafcdbdc1792bffbd52a34aa9d36deaa2bad.
+
+Function-specific assessment:
+
+The lock entry binds Heapless 0.7.17 to crates.io checksum
+`cdc6457c0eb62c71aac4bc17216026d8410337c4126773b9c5daba343f17964f`.
+The exact target-resolved Cargo graph contains 355 packages, but only Postcard
+1.1.3 has a dependency edge to Heapless. Postcard's non-test source exposes
+Heapless `Vec<u8>` serialization helpers and generic `Vec`/`String` size
+implementations. No resolved downstream source calls `postcard::to_vec`,
+`postcard::to_vec_cobs`, or `HVec`, and Postcard does not use any affected
+Heapless type or method below. An unstripped clean locked build from the exact
+source contains no symbol name with `heapless`; this is supplemental
+confirmation because inlining and symbol stripping make name absence
+insufficient by itself and the rebuilt bytes are not the published bytes.
+
+| Advisory | Exact 0.7.17 source and trigger | Exact artifact reachability |
+| --- | --- | --- |
+| 0574 | **Affected source exists** under the older name `FindMut::pop`: after `DerefMut` sets `maybe_changed`, `pop` removes the value but leaves `maybe_changed` set, so its destructor removes/reinserts again. The 0.9.4 fix clears that flag before popping. | No Postcard reference to `SortedLinkedList`, `FindMut`, or `find_mut`; no path into the artifact. |
+| 0575 | **Affected source exists**: `spsc::Queue`/`Consumer::peek` reads the head with `Ordering::Relaxed`. Trigger requires concurrent producer/consumer use of `peek`. | No Postcard reference to `spsc`, `Queue`, `Consumer`, or `peek`; no path into the artifact. |
+| 0576 | **Affected API is absent**: `IndexMap::truncate` does not exist anywhere in 0.7.17 `indexmap.rs`. | No callable function exists. |
+| 0577 | **Some affected source exists**: `Deque::clear`, `HistoryBuffer::{clear,write}`, `IndexMap::clear`, and `Vec::IntoIter::drop`; `IndexMap::{retain,truncate}` are absent. The trigger is a panic while dropping a generic element during one of those operations. | Postcard uses none of `Deque`, `HistoryBuffer`, or production `IndexMap`; its only concrete production Heapless buffer is `Vec<u8>` and it never creates or consumes Heapless `Vec::IntoIter`. `u8` has no panicking destructor. |
+| 0578 | **Affected API is absent**: 0.7.17 has no `zeroize` feature, dependency, implementation, or reference. The implementation first exists in the 0.9 line behind the `zeroize` feature. | No callable function exists; the exact build also lacks the feature. |
+| 0579 | **Affected API is absent**: 0.7.17 `Deque` has no `TryFrom` implementation. In 0.9.3 the full-array path sets `back = NS`; 0.9.4 fixes it to `back = 0` when full. | No callable function exists. RustSec specifically bounds this affected function to `>=0.9.2, <0.9.4`. |
+| 0580 | **Affected source exists**: the `cas` feature compiles 0.7.17 `pool::cas::Stack`, whose concurrent Treiber stack operations are within RustSec's `<0.8.0` range. Trigger requires concurrent pool use. | No Postcard reference to `pool`, `Pool`, or its stack operations; no path into the artifact. |
+| 0581 | **Affected API is absent**: `Deque::make_contiguous` does not exist in 0.7.17. | No callable function exists. |
+| 0582 | **Affected source exists**: 0.7.17 `IndexMap::insert` stores a 16-bit hash and 16-bit index in `NonZeroU32`. The upstream proof uses capacity `1 << 17`, inserts indices `0..=u16::MAX`, and makes the terminal index and hash both `u16::MAX`, producing the forbidden zero representation. | Postcard's `FnvIndexMap` references are test-only; no production map is instantiated, much less a 65,536-entry map. |
+
+Exact source-file SHA-256 values used for those findings:
+
+- `sorted_linked_list.rs`: `6c9c4635a7f7961a0411258bd720195a2b9a32e519095b929bbbc190abd4e7f7`
+- `spsc.rs`: `8dc44f55d2e7f2ed5c3e603671d7b21cdf0816951f25a66e9f85cfbdc24d56c1`
+- `indexmap.rs`: `2cc09da8e1d1b5b66310866e7e7589d819572c24ff000feb80712a0a5e610a00`
+- `deque.rs`: `a25568cfa4433249f2c4e47c496556550d4e4a25ab7d47e64a574a21d461d14c`
+- `histbuf.rs`: `0bb055beb205a5d7d384a2fc8d56bdd33211d438250e29780974f1006448d6e9`
+- `vec.rs`: `8eb189473f94845e70a1432c8c0cf3cac320cfefa65a710ca1be9c15e3b91a22`
+- `pool/cas.rs`: `168258fe8c0f2724de9d344b4dce662ad7ffd66de4c686a547243f846f4274b2`
+
+This is nine function-specific determinations, not a family waiver. Five
+records (0574, 0575, 0577, 0580, and 0582) describe source that is genuinely
+affected but unreachable from this exact artifact. Four (0576, 0578, 0579,
+and 0581) name APIs absent from the locked source. Any dependency, feature,
+target, source, loader, or addon-byte change invalidates the determination.
+
+
+Reproduce using the pinned source and published crate sources:
+
+```sh
+cargo tree --locked --target aarch64-apple-darwin -p number0_iroh -e features -i heapless@0.7.17
+cargo build --locked --release --target aarch64-apple-darwin -p number0_iroh -vv
+```
+
+The exact build passed all 28 package tests. Supported Postcard and full latest-compatible Cargo updates retain heapless 0.7. Forcing 0.9 violates the declared ^0.7 requirement. No unsupported override or feature-filtered native audit was adopted.
+
+The following nine records are proposals outside the active policy block:
+
+```json
+[
+  {
+    "id": "rust-RUSTSEC-2026-0578-experimental3-darwin-arm64",
+    "ecosystem": "rust",
+    "workspace": "appview",
+    "package": "heapless",
+    "version": "0.7.17",
+    "advisory": "RUSTSEC-2026-0578",
+    "reviewedSeverity": "unknown",
+    "advisoryStatus": "active",
+    "advisoryRevision": "sha256:e871fa606e1192d66ef7fa660bbdf59bc9e6be896fe7607c0b067425e00a0bf1",
+    "decision": "non-applicable",
+    "owner": "@ait-developer",
+    "reviewedOn": "2026-11-21",
+    "expiresOn": "2026-12-10",
+    "reason": "PROPOSED, pending independent review and maintainer approval. The locked 0.7.17 source has no zeroize feature, dependency or implementation; affected SortedLinkedList::zeroize is absent. This determination binds only experimental.3 macOS ARM source/lock/features/loader/addon. It does not fix the crate or assign a severity.",
+    "exposures": [
+      "local-and-approved-peer"
+    ],
+    "components": [
+      {
+        "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:heapless@0.7.17",
+        "dependencyFingerprint": "sha256:417650ee7c137d8b90b83b76041dac2192105179fa95a2d5abb99aa64be83e01"
+      }
+    ],
+    "evidence": [
+      "https://rustsec.org/advisories/RUSTSEC-2026-0578.html",
+      "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d",
+      "https://docs.rs/crate/heapless/0.7.17/source/"
+    ],
+    "regressions": [
+      {
+        "path": "bin/chrono-macos-artifact-test.mjs",
+        "check": "heapless-unaffected-artifact"
+      }
+    ]
+  },
+  {
+    "id": "rust-RUSTSEC-2026-0579-experimental3-darwin-arm64",
+    "ecosystem": "rust",
+    "workspace": "appview",
+    "package": "heapless",
+    "version": "0.7.17",
+    "advisory": "RUSTSEC-2026-0579",
+    "reviewedSeverity": "unknown",
+    "advisoryStatus": "active",
+    "advisoryRevision": "sha256:6fabb957ee40f7f1c4a22166ddcde0d825c8937b4b05f210433d229ca818a629",
+    "decision": "non-applicable",
+    "owner": "@ait-developer",
+    "reviewedOn": "2026-11-21",
+    "expiresOn": "2026-12-10",
+    "reason": "PROPOSED, pending independent review and maintainer approval. Locked 0.7.17 Deque has no TryFrom implementation. RustSec bounds the affected function to >=0.9.2,<0.9.4. This determination binds only experimental.3 macOS ARM source/lock/features/loader/addon. It does not fix the crate or assign a severity.",
+    "exposures": [
+      "local-and-approved-peer"
+    ],
+    "components": [
+      {
+        "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:heapless@0.7.17",
+        "dependencyFingerprint": "sha256:417650ee7c137d8b90b83b76041dac2192105179fa95a2d5abb99aa64be83e01"
+      }
+    ],
+    "evidence": [
+      "https://rustsec.org/advisories/RUSTSEC-2026-0579.html",
+      "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d",
+      "https://docs.rs/crate/heapless/0.7.17/source/"
+    ],
+    "regressions": [
+      {
+        "path": "bin/chrono-macos-artifact-test.mjs",
+        "check": "heapless-unaffected-artifact"
+      }
+    ]
+  },
+  {
+    "id": "rust-RUSTSEC-2026-0576-experimental3-darwin-arm64",
+    "ecosystem": "rust",
+    "workspace": "appview",
+    "package": "heapless",
+    "version": "0.7.17",
+    "advisory": "RUSTSEC-2026-0576",
+    "reviewedSeverity": "unknown",
+    "advisoryStatus": "active",
+    "advisoryRevision": "sha256:f4daa6ca4a95ba854248b0ee5bbb2f91332d7a89458fba8a8e886b526ccfcd46",
+    "decision": "non-applicable",
+    "owner": "@ait-developer",
+    "reviewedOn": "2026-11-21",
+    "expiresOn": "2026-12-10",
+    "reason": "PROPOSED, pending independent review and maintainer approval. IndexMap::truncate does not exist in locked heapless 0.7.17. This determination binds only experimental.3 macOS ARM source/lock/features/loader/addon. It does not fix the crate or assign a severity.",
+    "exposures": [
+      "local-and-approved-peer"
+    ],
+    "components": [
+      {
+        "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:heapless@0.7.17",
+        "dependencyFingerprint": "sha256:417650ee7c137d8b90b83b76041dac2192105179fa95a2d5abb99aa64be83e01"
+      }
+    ],
+    "evidence": [
+      "https://rustsec.org/advisories/RUSTSEC-2026-0576.html",
+      "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d",
+      "https://docs.rs/crate/heapless/0.7.17/source/"
+    ],
+    "regressions": [
+      {
+        "path": "bin/chrono-macos-artifact-test.mjs",
+        "check": "heapless-unaffected-artifact"
+      }
+    ]
+  },
+  {
+    "id": "rust-RUSTSEC-2026-0581-experimental3-darwin-arm64",
+    "ecosystem": "rust",
+    "workspace": "appview",
+    "package": "heapless",
+    "version": "0.7.17",
+    "advisory": "RUSTSEC-2026-0581",
+    "reviewedSeverity": "unknown",
+    "advisoryStatus": "active",
+    "advisoryRevision": "sha256:14e8bbda46f0d01300a0bb0e0e0856c8faa4aa90de2e0dbd87c85084bb9937e2",
+    "decision": "non-applicable",
+    "owner": "@ait-developer",
+    "reviewedOn": "2026-11-21",
+    "expiresOn": "2026-12-10",
+    "reason": "PROPOSED, pending independent review and maintainer approval. Deque::make_contiguous does not exist in locked heapless 0.7.17. This determination binds only experimental.3 macOS ARM source/lock/features/loader/addon. It does not fix the crate or assign a severity.",
+    "exposures": [
+      "local-and-approved-peer"
+    ],
+    "components": [
+      {
+        "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:heapless@0.7.17",
+        "dependencyFingerprint": "sha256:417650ee7c137d8b90b83b76041dac2192105179fa95a2d5abb99aa64be83e01"
+      }
+    ],
+    "evidence": [
+      "https://rustsec.org/advisories/RUSTSEC-2026-0581.html",
+      "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d",
+      "https://docs.rs/crate/heapless/0.7.17/source/"
+    ],
+    "regressions": [
+      {
+        "path": "bin/chrono-macos-artifact-test.mjs",
+        "check": "heapless-unaffected-artifact"
+      }
+    ]
+  },
+  {
+    "id": "rust-RUSTSEC-2026-0580-experimental3-darwin-arm64",
+    "ecosystem": "rust",
+    "workspace": "appview",
+    "package": "heapless",
+    "version": "0.7.17",
+    "advisory": "RUSTSEC-2026-0580",
+    "reviewedSeverity": "unknown",
+    "advisoryStatus": "active",
+    "advisoryRevision": "sha256:c422c98b259a8b84d41b99b4f52529b154c3a16d2308f1c3923ebfc7c6c8043c",
+    "decision": "non-applicable",
+    "owner": "@ait-developer",
+    "reviewedOn": "2026-11-21",
+    "expiresOn": "2026-12-10",
+    "reason": "PROPOSED, pending independent review and maintainer approval. Affected cas Treiber stack is available in source, but Postcard has no pool/Pool/stack use. No concurrent pool operation is reachable in this exact artifact. This determination binds only experimental.3 macOS ARM source/lock/features/loader/addon. It does not fix the crate or assign a severity.",
+    "exposures": [
+      "local-and-approved-peer"
+    ],
+    "components": [
+      {
+        "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:heapless@0.7.17",
+        "dependencyFingerprint": "sha256:417650ee7c137d8b90b83b76041dac2192105179fa95a2d5abb99aa64be83e01"
+      }
+    ],
+    "evidence": [
+      "https://rustsec.org/advisories/RUSTSEC-2026-0580.html",
+      "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d",
+      "https://docs.rs/crate/heapless/0.7.17/source/"
+    ],
+    "regressions": [
+      {
+        "path": "bin/chrono-macos-artifact-test.mjs",
+        "check": "heapless-unaffected-artifact"
+      }
+    ]
+  },
+  {
+    "id": "rust-RUSTSEC-2026-0577-experimental3-darwin-arm64",
+    "ecosystem": "rust",
+    "workspace": "appview",
+    "package": "heapless",
+    "version": "0.7.17",
+    "advisory": "RUSTSEC-2026-0577",
+    "reviewedSeverity": "unknown",
+    "advisoryStatus": "active",
+    "advisoryRevision": "sha256:a8489832de83b93d05e6ab5fc4805b0b47565ad7dc7d02ad5c55795fd34a891d",
+    "decision": "non-applicable",
+    "owner": "@ait-developer",
+    "reviewedOn": "2026-11-21",
+    "expiresOn": "2026-12-10",
+    "reason": "PROPOSED, pending independent review and maintainer approval. Affected Deque/HistoryBuffer/IndexMap clearing and Vec::IntoIter dropping exist, but Postcard uses none of those paths. Its concrete Heapless serialization buffer is Vec<u8>; u8 has no panicking destructor. No affected iterator is created. This determination binds only experimental.3 macOS ARM source/lock/features/loader/addon. It does not fix the crate or assign a severity.",
+    "exposures": [
+      "local-and-approved-peer"
+    ],
+    "components": [
+      {
+        "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:heapless@0.7.17",
+        "dependencyFingerprint": "sha256:417650ee7c137d8b90b83b76041dac2192105179fa95a2d5abb99aa64be83e01"
+      }
+    ],
+    "evidence": [
+      "https://rustsec.org/advisories/RUSTSEC-2026-0577.html",
+      "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d",
+      "https://docs.rs/crate/heapless/0.7.17/source/"
+    ],
+    "regressions": [
+      {
+        "path": "bin/chrono-macos-artifact-test.mjs",
+        "check": "heapless-unaffected-artifact"
+      }
+    ]
+  },
+  {
+    "id": "rust-RUSTSEC-2026-0574-experimental3-darwin-arm64",
+    "ecosystem": "rust",
+    "workspace": "appview",
+    "package": "heapless",
+    "version": "0.7.17",
+    "advisory": "RUSTSEC-2026-0574",
+    "reviewedSeverity": "unknown",
+    "advisoryStatus": "active",
+    "advisoryRevision": "sha256:2dcbe6d9f61c8049585f1340c251e272e3ada2eea85311d588e2c96fa7138101",
+    "decision": "non-applicable",
+    "owner": "@ait-developer",
+    "reviewedOn": "2026-11-21",
+    "expiresOn": "2026-12-10",
+    "reason": "PROPOSED, pending independent review and maintainer approval. Affected FindMut::pop exists in 0.7.17, but its only compiled dependency consumer Postcard has no SortedLinkedList/FindMut/find_mut use. No path into the exact artifact. This determination binds only experimental.3 macOS ARM source/lock/features/loader/addon. It does not fix the crate or assign a severity.",
+    "exposures": [
+      "local-and-approved-peer"
+    ],
+    "components": [
+      {
+        "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:heapless@0.7.17",
+        "dependencyFingerprint": "sha256:417650ee7c137d8b90b83b76041dac2192105179fa95a2d5abb99aa64be83e01"
+      }
+    ],
+    "evidence": [
+      "https://rustsec.org/advisories/RUSTSEC-2026-0574.html",
+      "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d",
+      "https://docs.rs/crate/heapless/0.7.17/source/"
+    ],
+    "regressions": [
+      {
+        "path": "bin/chrono-macos-artifact-test.mjs",
+        "check": "heapless-unaffected-artifact"
+      }
+    ]
+  },
+  {
+    "id": "rust-RUSTSEC-2026-0575-experimental3-darwin-arm64",
+    "ecosystem": "rust",
+    "workspace": "appview",
+    "package": "heapless",
+    "version": "0.7.17",
+    "advisory": "RUSTSEC-2026-0575",
+    "reviewedSeverity": "unknown",
+    "advisoryStatus": "active",
+    "advisoryRevision": "sha256:936981025cb7bb9b35edb1d99a6209a9c848b101a9d12762e916505ec232fa45",
+    "decision": "non-applicable",
+    "owner": "@ait-developer",
+    "reviewedOn": "2026-11-21",
+    "expiresOn": "2026-12-10",
+    "reason": "PROPOSED, pending independent review and maintainer approval. Affected SPSC peek ordering exists, but Postcard has no spsc/Queue/Consumer/peek use. Concurrent queue use cannot be reached from the exact artifact. This determination binds only experimental.3 macOS ARM source/lock/features/loader/addon. It does not fix the crate or assign a severity.",
+    "exposures": [
+      "local-and-approved-peer"
+    ],
+    "components": [
+      {
+        "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:heapless@0.7.17",
+        "dependencyFingerprint": "sha256:417650ee7c137d8b90b83b76041dac2192105179fa95a2d5abb99aa64be83e01"
+      }
+    ],
+    "evidence": [
+      "https://rustsec.org/advisories/RUSTSEC-2026-0575.html",
+      "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d",
+      "https://docs.rs/crate/heapless/0.7.17/source/"
+    ],
+    "regressions": [
+      {
+        "path": "bin/chrono-macos-artifact-test.mjs",
+        "check": "heapless-unaffected-artifact"
+      }
+    ]
+  },
+  {
+    "id": "rust-RUSTSEC-2026-0582-experimental3-darwin-arm64",
+    "ecosystem": "rust",
+    "workspace": "appview",
+    "package": "heapless",
+    "version": "0.7.17",
+    "advisory": "RUSTSEC-2026-0582",
+    "reviewedSeverity": "unknown",
+    "advisoryStatus": "active",
+    "advisoryRevision": "sha256:7f99f51a9df4147ea94f4063fce331b7e4b0c72a1bbdf2a66f50635ae02a3dd2",
+    "decision": "non-applicable",
+    "owner": "@ait-developer",
+    "reviewedOn": "2026-11-21",
+    "expiresOn": "2026-12-10",
+    "reason": "PROPOSED, pending independent review and maintainer approval. Affected large IndexMap insert invariant exists, but Postcard FnvIndexMap references are test-only and no production Heapless map is instantiated. This determination binds only experimental.3 macOS ARM source/lock/features/loader/addon. It does not fix the crate or assign a severity.",
+    "exposures": [
+      "local-and-approved-peer"
+    ],
+    "components": [
+      {
+        "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:heapless@0.7.17",
+        "dependencyFingerprint": "sha256:417650ee7c137d8b90b83b76041dac2192105179fa95a2d5abb99aa64be83e01"
+      }
+    ],
+    "evidence": [
+      "https://rustsec.org/advisories/RUSTSEC-2026-0582.html",
+      "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d",
+      "https://docs.rs/crate/heapless/0.7.17/source/"
+    ],
+    "regressions": [
+      {
+        "path": "bin/chrono-macos-artifact-test.mjs",
+        "check": "heapless-unaffected-artifact"
+      }
+    ]
+  }
+]
+```
 
 ### Reviewing upstream High risk
 

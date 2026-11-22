@@ -9,7 +9,7 @@ After either path, continue at **C: Link**.
 Run commands in the macOS Terminal app, outside Claude or Codex. Use the copy
 button on each command block and paste only its contents. The blocks contain no
 `#` shell comments and require no changes to zsh settings. Stop at the first
-error. These instructions pin **AIT v0.1.48-peer.5**, an Apple Silicon private-peer prerelease. Stable AIT remains a separate release channel.
+error. These instructions pin **AIT v0.1.49-peer.6**, an Apple Silicon private-peer prerelease. Stable AIT remains a separate release channel.
 
 The branch is [`build/private-peer-integration`](https://github.com/natewalton/ait-protocol/tree/build/private-peer-integration).
 The recipes below fetch the immutable prerelease tag rather than the moving
@@ -90,7 +90,7 @@ in place. An unrelated launchd configuration is refused.
     echo 'STOP: uncommitted changes. Preserve them and ask the test coordinator.'; exit 1;
   }
   git fetch origin \
-    refs/tags/v0.1.48-peer.5:refs/tags/v0.1.48-peer.5
+    refs/tags/v0.1.49-peer.6:refs/tags/v0.1.49-peer.6
   AIT_PREVIOUS_BRANCH="backup/before-peer-test-$(date +%Y%m%d-%H%M%S)"
   git branch "$AIT_PREVIOUS_BRANCH" HEAD
   echo "Previous code saved as $AIT_PREVIOUS_BRANCH"
@@ -113,7 +113,7 @@ in place. An unrelated launchd configuration is refused.
     fi
   done
   ./ait stop
-  git checkout --detach v0.1.48-peer.5
+  git checkout --detach v0.1.49-peer.6
   /bin/bash bin/install.sh
   ./ait version
   ./ait status
@@ -203,10 +203,10 @@ other Mac.
     echo 'STOP: an installation exists. Use route A; do not delete it.'; exit 1
   fi
   mkdir -p "$(dirname "$AIT_TEST_DIR")"
-  git clone --branch v0.1.48-peer.5 \
+  git clone --branch v0.1.49-peer.6 \
     https://github.com/natewalton/ait-protocol.git "$AIT_TEST_DIR"
   cd "$AIT_TEST_DIR"
-  git checkout --detach v0.1.48-peer.5
+  git checkout --detach v0.1.49-peer.6
   /bin/bash bin/install.sh
 )
 ```
@@ -221,7 +221,7 @@ ait status
 
 Both operators should compare their full commit IDs and confirm they match the
 released commit `74ae204f41f1bcd7acb3e3b4a16cd2c781aa4b06` behind tag
-`v0.1.48-peer.5`. `ait version` should show **0.1.48-peer.5**
+`v0.1.49-peer.6`. `ait version` should show **0.1.49-peer.6**
 without a **development** marker. PLC, PDS and AppView
 must be running; Codex app-server must also be running if Codex is installed.
 The `Private peers:` section must respond, even if no peers are listed. A healthy

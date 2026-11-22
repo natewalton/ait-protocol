@@ -1,4 +1,4 @@
-import { isClaudeRuntimeCurrent } from './claudeSession.js'
+import { isClaudeRuntimeCurrent, claimClaudeDelivery } from './claudeSession.js'
 import { displayHandle } from './handles.js'
 // Push delivery bridge for the MCP server (step 6 of specs/notification-push.md).
 //
@@ -148,7 +148,7 @@ export async function tryRegister(
   timeoutMs = REGISTER_TIMEOUT_MS,
 ): Promise<void> {
   try {
-    if (!canRegister() || !isClaudeRuntimeCurrent() || !listenerUrl || !getIdentity()) return
+    if (!listenerUrl || !getIdentity() || !claimClaudeDelivery(getNotificationRegistrationCheckpoint()) || !canRegister() || !isClaudeRuntimeCurrent()) return
   } catch (error) {
     // A late native handover may not have an identity yet. Keep the existing
     // listener/heartbeat alive so the next beat can resolve the same UUID.

@@ -83,6 +83,11 @@ await push.stopPushListener()
 
 // Handover during the awaited channel write must leave the durable cursor for
 // the new runtime, even if the old transport accepted the notification.
+const cp = (await import('node:child_process')).default
+const { syncBuiltinESMExports } = await import('node:module')
+const realExec = cp.execFileSync
+cp.execFileSync = (program, args, ...rest) => program === 'ps' ? (args.includes('lstart=') ? 'Sat Jan  1 00:00:00 2000' : 'claude --resume ' + SESSION) : realExec(program, args, ...rest)
+syncBuiltinESMExports()
 delete process.env.AIT_MCP_TEST_SESSION_ID
 process.env.CLAUDE_CODE_SESSION_ID = SESSION
 process.env.CLAUDE_CONFIG_DIR = join(process.env.XDG_DATA_HOME, 'claude')
@@ -90,15 +95,33 @@ const project = join(process.env.CLAUDE_CONFIG_DIR, 'projects', 'fixture')
 mkdirSync(project, { recursive: true })
 const transcript = join(project, `${SESSION}.jsonl`)
 writeFileSync(transcript, JSON.stringify({ type: 'user', sessionId: SESSION }) + '\n')
+let writeStarted = false
 const lateSink = channelSink({
   async notification() {
+    writeStarted = true
     appendFileSync(transcript, JSON.stringify({ type: 'continued-in', sessionId: SESSION, continuedInSessionId: randomUUID() }) + '\n')
   },
 })
 let retired = false
 await lateSink({ ...view, uri: 'at://late', cursor: 'must-not-commit' }).catch(() => { retired = true })
-check('(e) handover during channel write does not commit the old cursor', retired && storage.getNotificationRegistrationCheckpoint().value === 'cursor-1')
+check('(e) handover during channel write does not commit the old cursor', writeStarted && retired && storage.getNotificationRegistrationCheckpoint().value === 'cursor-1')
 
+// A resumed original may claim the same DID while this write is pending.
+// This must be fenced independently of native outgoing continuation history.
+writeFileSync(transcript, JSON.stringify({ type: 'user', sessionId: SESSION }) + '\n')
+const competingDir = join(process.env.XDG_DATA_HOME, 'ait-mcp', 'claude-delivery-' + createHash('sha256').update('did:plc:channeltest').digest('hex'))
+mkdirSync(competingDir, { recursive: true })
+let claimedDuringWrite = false
+const fencedSink = channelSink({ async notification() {
+  claimedDuringWrite = true
+  writeFileSync(join(competingDir, `978307200000-978307200000-9999-${randomUUID()}.claim`), JSON.stringify({version:1,checkpoint:{kind:'cursor',value:'cursor-1'}}))
+} })
+let fenced = false
+await fencedSink({ ...view, uri: 'at://fenced', cursor: 'must-not-commit-owner' }).catch(() => { fenced = true })
+check('(f) a newer owner during channel write prevents cursor commit', claimedDuringWrite && fenced && storage.getNotificationRegistrationCheckpoint().value === 'cursor-1')
+
+cp.execFileSync = realExec
+syncBuiltinESMExports()
 rmSync(process.env.XDG_DATA_HOME, { recursive: true, force: true })
 if (failures) process.exit(1)
 console.log('\nall ok')

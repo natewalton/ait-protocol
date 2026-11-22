@@ -308,6 +308,7 @@ EOF
   for f in plc/package.json plc/package-lock.json pds/package.json pds/package-lock.json appview/package.json appview/package-lock.json mcp/package.json mcp/package-lock.json; do
     : > "$dir/$f"
   done
+  cp "$REPO/pds/package.json" "$dir/pds/package.json"
   cp "$REPO/appview/.env.example" "$dir/appview/.env.example"
   cp "$REPO/mcp/.env.example" "$dir/mcp/.env.example"
   mkdir -p "$dir/pg/bin"

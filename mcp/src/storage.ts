@@ -45,6 +45,8 @@ import {
   randomBytes,
 } from 'node:crypto'
 import type { Identity } from './session.js'
+import { ownerDirectory, readCheckpoint } from './claudeDelivery.js'
+import { commitClaudeDeliveryCursor } from './claudeSession.js'
 import { claudeRuntimeUuid, resolveClaudeIdentity, claudeIdentityUuid, ClaudeHandoverPending } from './claudeSession.js'
 
 export const STORAGE_DIR = path.join(
@@ -335,6 +337,10 @@ export function getNotificationRegistrationCheckpoint(): NotificationRegistratio
     return { kind: 'none', value: null }
   }
   const disk = readDiskShape(identityPath(uuid))
+  if (disk?.did && process.env.AIT_NOTIFICATION_MODE === 'push' && !process.env.AIT_MCP_TEST_SESSION_ID) {
+    const delivery = readCheckpoint(ownerDirectory(path.dirname(identityPath(uuid)), disk.did))
+    if (delivery !== null) return delivery
+  }
   const cursor = disk?.lastSeenNotificationCursor
   if (cursor) return { kind: 'cursor', value: cursor }
   const since = disk?.lastSeenNotificationAt
@@ -361,6 +367,11 @@ function rewriteCursor(
 // callers never complete out of order and no client-side cursor comparison is
 // needed (opaque cursors must not be parsed here).
 export function updateLastSeenNotificationCursor(cursor: string): void {
+  const delivery = commitClaudeDeliveryCursor(undefined, cursor)
+  if (delivery !== null) {
+    if (!delivery) throw new Error('Claude delivery owner changed; notification remains replayable')
+    return
+  }
   let uuid: string
   try {
     uuid = resolveSessionUuid()
@@ -380,6 +391,8 @@ export function compareAndSwapNotificationCursor(
   expected: string | null,
   cursor: string,
 ): boolean {
+  const delivery = commitClaudeDeliveryCursor(expected, cursor)
+  if (delivery !== null) return delivery
   let uuid: string
   try {
     uuid = resolveSessionUuid()

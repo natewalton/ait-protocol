@@ -435,6 +435,10 @@ The exact build passed all 28 package tests. Supported Postcard and full latest-
 
 Nate approved the nine individual determinations after independent review on November 22, 2026. The active records below expire December 10, 2026.
 
+### URL origin analysis for experimental.3
+
+The November 22 audit identified [RUSTSEC-2026-0592](https://github.com/RustSec/advisory-db/blob/main/crates/url/RUSTSEC-2026-0592.md) in url 2.5.8. Independent review of the 355 target-resolved crate directories and FFI found no caller or function reference to Url::origin or quirks::origin outside the url crate. The active determination covers only the exact experimental.3 macOS ARM artifact and expires December 10, 2026. The audit retains unknown severity. The next native build can take the compatible upstream url 2.5.9 patch.
+
 ### Reviewing upstream High risk
 
 Use the existing `accepted-risk` decision and add `upstreamAcceptance` with the
@@ -2151,6 +2155,41 @@ source commit, source-lock digest and exact crate path/version.
         {
           "path": "bin/chrono-macos-artifact-test.mjs",
           "check": "heapless-unaffected-artifact"
+        }
+      ]
+    },
+    {
+      "id": "rust-RUSTSEC-2026-0592-experimental3-darwin-arm64",
+      "ecosystem": "rust",
+      "workspace": "appview",
+      "package": "url",
+      "version": "2.5.8",
+      "advisory": "RUSTSEC-2026-0592",
+      "reviewedSeverity": "unknown",
+      "advisoryStatus": "active",
+      "advisoryRevision": "sha256:35db8680c21f7f91be34e095802e29d6897cca83d3da8b7a1f86f8dc0a662562",
+      "decision": "non-applicable",
+      "owner": "@ait-developer",
+      "reviewedOn": "2026-11-22",
+      "expiresOn": "2026-12-10",
+      "reason": "Nate approved this exact-artifact determination after independent AIT Skills review. The exact macOS ARM artifact contains url 2.5.8, but the locked target dependency sources and FFI contain no caller of Url::origin or quirks::origin. Bind this determination to the reviewed artifact bytes and locked source graph. The advisory remains unscored.",
+      "exposures": [
+        "local-and-approved-peer"
+      ],
+      "components": [
+        {
+          "path": "appview/node_modules/@natewalton/iroh-direct/Cargo.lock:url@2.5.8",
+          "dependencyFingerprint": "sha256:337b08425800775f78a7b79b0e39a6b6d87091e0b77e8e740ee8dda147a09439"
+        }
+      ],
+      "evidence": [
+        "https://github.com/RustSec/advisory-db/blob/main/crates/url/RUSTSEC-2026-0592.md",
+        "https://github.com/natewalton/iroh-ffi/tree/d50c2b7de23ac8872db630056897742518d9706d"
+      ],
+      "regressions": [
+        {
+          "path": "bin/chrono-macos-artifact-test.mjs",
+          "check": "chrono-macos-artifact"
         }
       ]
     }

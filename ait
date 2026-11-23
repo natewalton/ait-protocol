@@ -285,7 +285,10 @@ Prerequisites: the installer-owned checkout, a clean tree, no active AIT
 sessions, and services fully ready or fully stopped.
 Changes: fetches one latest immutable full SemVer release, verifies its tag,
 commit, VERSION, and installer digest, rebuilds, and restores service state.
-It preserves environment files, data, and skill-link targets.
+It preserves environment files, data, and skill-link targets. The first PDS
+0.4 to 0.5 update creates and reports a private, quiescent rollback copy before
+dependencies change; after the 0.5 PDS starts, fix forward or restore that copy
+with the old release rather than running old code on migrated data.
 Refuses: development/package-manager checkouts, drafts, prereleases, mutable
 releases, divergence, downgrades, dirty state, active sessions, partial
 services, and a live update owner.

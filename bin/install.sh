@@ -8,6 +8,8 @@ ENV_TARGETS=("$REPO/plc/.env" "$REPO/pds/.env" "$REPO/appview/.env" "$REPO/mcp/.
 ENV_NAMES=(plc.env pds.env appview.env mcp.env)
 CLI_LINK=""
 BREW_PREFIX=""
+PDS_UPGRADE_LOCK="${XDG_STATE_HOME:-$HOME/.local/state}/ait-protocol/update.lock"
+PDS_UPGRADE_LOCK_OWNED=0
 
 # shellcheck source=bin/lib-service-pids.sh
 . "$REPO/bin/lib-service-pids.sh"
@@ -274,7 +276,343 @@ drop_database() {
   "$dropdb_path" --if-exists plc_directory
 }
 
-install_dependencies() {
+release_pds_upgrade_lock() {
+  if [ "$PDS_UPGRADE_LOCK_OWNED" -eq 1 ]; then
+    [ "$(sed -n '1p' "$PDS_UPGRADE_LOCK/pid" 2>/dev/null || true)" != "$$" ] || rm -f "$PDS_UPGRADE_LOCK/pid"
+    rmdir "$PDS_UPGRADE_LOCK" 2>/dev/null || true
+    PDS_UPGRADE_LOCK_OWNED=0
+  fi
+}
+
+acquire_pds_upgrade_lock() {
+  local pid
+  mkdir -p "$(dirname "$PDS_UPGRADE_LOCK")" || { echo "error: could not create AIT state directory" >&2; return 1; }
+  if mkdir "$PDS_UPGRADE_LOCK" 2>/dev/null; then
+    if ! printf '%s\n' "$$" > "$PDS_UPGRADE_LOCK/pid"; then
+      rmdir "$PDS_UPGRADE_LOCK" 2>/dev/null || true
+      echo "error: could not record the PDS upgrade lock" >&2
+      return 1
+    fi
+    PDS_UPGRADE_LOCK_OWNED=1
+    return 0
+  fi
+  pid="$(sed -n '1p' "$PDS_UPGRADE_LOCK/pid" 2>/dev/null || true)"
+  if [ "$pid" = "$PPID" ] && kill -0 "$pid" 2>/dev/null; then return 0; fi
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    echo "error: another AIT update is running (pid $pid)" >&2
+  else
+    echo "error: stale AIT update lock at $PDS_UPGRADE_LOCK; remove it after confirming no update is running" >&2
+  fi
+  return 1
+}
+
+pds_storage_paths() {
+  local state_root="$1" backup="$2" stage="$3"
+  (
+    cd "$REPO/pds"
+    set -a
+    # shellcheck disable=SC1091
+    . ./.env
+    set +a
+    node - "$PWD" "$REPO/pds/.env" "${PDS_DATA_DIRECTORY:-}" \
+      "${PDS_BLOBSTORE_DISK_LOCATION:-}" "${PDS_BLOBSTORE_DISK_TMP_LOCATION:-}" \
+      "$state_root" "$backup" "$stage" \
+      "${PDS_ACCOUNT_DB_LOCATION:-}" "${PDS_SEQUENCER_DB_LOCATION:-}" \
+      "${PDS_DID_CACHE_DB_LOCATION:-}" "${PDS_ACTOR_STORE_DIRECTORY:-}" \
+      "${PDS_BLOBSTORE_S3_BUCKET:-}" <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+const [base, envFile, dataValue, blobValue, blobTempValue, stateValue, backupValue, stageValue,
+  account, sequencer, didCache, actors, s3] = process.argv.slice(2);
+const values = process.argv.slice(2);
+if (values.some(value => /[\r\n\t\0]/.test(value))) {
+  console.error('error: configured PDS paths may not contain control characters');
+  process.exit(1);
+}
+if (!dataValue) {
+  console.error('error: PDS_DATA_DIRECTORY must be set for the PDS 0.5 upgrade');
+  process.exit(1);
+}
+if (!blobValue && !s3) {
+  console.error('error: PDS_BLOBSTORE_DISK_LOCATION must be set for the PDS 0.5 upgrade');
+  process.exit(1);
+}
+if (s3) { console.error('error: automatic PDS 0.5 rollback copy does not support an S3 blobstore'); process.exit(1); }
+const absoluteRaw = value => path.isAbsolute(value) ? value : `${base}/${value}`;
+const physical = value => {
+  let existing = absoluteRaw(value);
+  const tail = [];
+  while (true) {
+    try {
+      fs.lstatSync(existing);
+      break;
+    } catch (err) {
+      if (err?.code !== 'ENOENT') throw err;
+    }
+    const parent = path.dirname(existing);
+    if (parent === existing) throw Error(`cannot resolve ${value}`);
+    tail.unshift(path.basename(existing));
+    existing = parent;
+  }
+  return path.join(fs.realpathSync.native(existing), ...tail);
+};
+const effective = value => physical(path.resolve(base, value));
+const namedPhysical = (name, value) => {
+  try { return physical(value); }
+  catch (err) {
+    console.error(`error: could not resolve ${name}: ${absoluteRaw(value)}`);
+    process.exit(1);
+  }
+};
+const unambiguous = (name, value) => {
+  const raw = namedPhysical(name, value);
+  let normalized;
+  try { normalized = effective(value); }
+  catch (err) {
+    console.error(`error: could not resolve ${name}: ${absoluteRaw(value)}`);
+    process.exit(1);
+  }
+  if (raw !== normalized) {
+    console.error(`error: ${name} resolves differently before and after PDS path normalization; remove the symlink/.. ambiguity`);
+    process.exit(1);
+  }
+  return normalized;
+};
+const within = (candidate, root) => candidate === root || candidate.startsWith(root + path.sep);
+const data = unambiguous('PDS_DATA_DIRECTORY', dataValue);
+const blobs = unambiguous('PDS_BLOBSTORE_DISK_LOCATION', blobValue);
+const hasPayload = (name, value) => {
+  let stat;
+  try { stat = fs.statSync(value); }
+  catch (err) { if (err?.code === 'ENOENT') return false; throw err; }
+  if (!stat.isDirectory()) {
+    console.error(`error: ${name} is not a directory: ${value}`); process.exit(1);
+  }
+  let directory;
+  try { directory = fs.opendirSync(value); }
+  catch (err) {
+    console.error(`error: could not inspect configured PDS storage: ${value}`);
+    process.exit(1);
+  }
+  try { return directory.readSync() !== null; }
+  finally { directory.closeSync(); }
+};
+for (const [name, value] of Object.entries({ PDS_ACCOUNT_DB_LOCATION: account, PDS_SEQUENCER_DB_LOCATION: sequencer, PDS_DID_CACHE_DB_LOCATION: didCache, PDS_ACTOR_STORE_DIRECTORY: actors })) {
+  if (!value) continue;
+  const resolved = unambiguous(name, value);
+  if (!within(resolved, data)) {
+    console.error(`error: ${name} resolves outside PDS_DATA_DIRECTORY; refusing an incomplete rollback copy`);
+    process.exit(1);
+  }
+}
+if (blobTempValue) {
+  const temp = unambiguous('PDS_BLOBSTORE_DISK_TMP_LOCATION', blobTempValue);
+  if (!within(temp, blobs)) {
+    console.error('error: PDS_BLOBSTORE_DISK_TMP_LOCATION resolves outside PDS_BLOBSTORE_DISK_LOCATION; refusing an incomplete rollback copy');
+    process.exit(1);
+  }
+}
+const env = fs.realpathSync.native(envFile);
+const state = namedPhysical('PDS rollback root', stateValue);
+const backup = namedPhysical('PDS rollback copy', backupValue);
+const stage = namedPhysical('PDS rollback staging', stageValue);
+const accountDb = account ? unambiguous('PDS_ACCOUNT_DB_LOCATION', account) : namedPhysical('PDS account database', path.resolve(base, path.join(dataValue, 'account.sqlite')));
+const external = !within(blobs, data);
+const payload = hasPayload('PDS_DATA_DIRECTORY', data) || (external && hasPayload('PDS_BLOBSTORE_DISK_LOCATION', blobs));
+process.stdout.write([data, blobs, env, state, backup, stage, external ? 1 : 0, payload ? 1 : 0, accountDb].join('\t'));
+NODE
+  )
+}
+
+pds_processes_stopped() {
+  local listeners pid cmd cwd
+  listeners="$(service_pids pds || true)"
+  [ -z "$listeners" ] || { echo "error: PDS port 2583 is held by pid(s) $listeners; stop AIT before rebuilding" >&2; return 1; }
+  for pid in $(pgrep -f 'run-pds\.sh|launcher\.js' 2>/dev/null || true); do
+    [ "$pid" = "$$" ] && continue
+    cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    cwd="$(service_cwd "$pid")"
+    case "$cwd:$cmd" in
+      */pds:*run-pds.sh*|*/pds:*node*launcher.js*)
+        echo "error: PDS process pid $pid is still active before listener bind (${cwd:-unknown directory})" >&2
+        return 1
+        ;;
+    esac
+  done
+}
+
+copy_pds_directory() {
+  local source="$1" destination="$2" links
+  mkdir -p "$destination" || { echo "error: could not create PDS rollback directory: $destination" >&2; return 1; }
+  [ ! -e "$source" ] || {
+    [ -d "$source" ] || { echo "error: PDS backup source is not a directory: $source" >&2; return 1; }
+    links="$(find "$source" -type l -print -quit)" || { echo "error: could not inspect PDS backup source: $source" >&2; return 1; }
+    [ -z "$links" ] || { echo "error: PDS backup source contains a symlink: $source" >&2; return 1; }
+    cp -pR "$source/." "$destination/" || { echo "error: could not copy PDS backup source: $source" >&2; return 1; }
+  }
+}
+
+pds_backup_matches() {
+  local backup="$1" data="$2" blobs="$3" external="$4"
+  [ -f "$backup/COMPLETE" ] && [ -f "$backup/pds.env" ] && [ -d "$backup/data" ] || return 1
+  cmp -s "$REPO/pds/.env" "$backup/pds.env" || return 1
+  if [ -d "$data" ]; then
+    diff -qr "$data" "$backup/data" >/dev/null 2>&1 || return 1
+  else
+    [ -z "$(find "$backup/data" -mindepth 1 -print -quit)" ] || return 1
+  fi
+  if [ "$external" -eq 1 ]; then
+    [ -d "$backup/external-blobs" ] || return 1
+    if [ -d "$blobs" ]; then
+      diff -qr "$blobs" "$backup/external-blobs" >/dev/null 2>&1 || return 1
+    else
+      [ -z "$(find "$backup/external-blobs" -mindepth 1 -print -quit)" ] || return 1
+    fi
+  else
+    [ ! -e "$backup/external-blobs" ] || return 1
+  fi
+}
+
+pds_backup_complete() {
+  local backup="$1" target="$2" external="$3"
+  [ -f "$backup/COMPLETE" ] && [ -f "$backup/pds.env" ] && [ -d "$backup/data" ] && [ -f "$backup/RESTORE.txt" ] || return 1
+  grep -Fqx 'installed=0.4.226' "$backup/RESTORE.txt" || return 1
+  grep -Fqx "target=$target" "$backup/RESTORE.txt" || return 1
+  if [ "$external" -eq 1 ]; then [ -d "$backup/external-blobs" ]; else [ ! -e "$backup/external-blobs" ]; fi
+}
+
+pds_account_migrated_05() {
+  local account_db="$1"
+  [ -f "$account_db" ] || return 1
+  node --no-warnings - "$account_db" <<'NODE'
+const { DatabaseSync } = require('node:sqlite');
+let db;
+try {
+  db = new DatabaseSync(process.argv[2], { readOnly: true });
+  const migration = db.prepare("SELECT 1 AS present FROM kysely_migration WHERE name = '008'").get();
+  const table = db.prepare("SELECT 1 AS present FROM sqlite_schema WHERE type = 'table' AND name = 'account_email_auth_factor'").get();
+  process.exit(migration?.present === 1 && table?.present === 1 ? 0 : 1);
+} catch (err) {
+  console.error(`error: could not inspect PDS account migration state: ${err.message}`);
+  process.exit(2);
+} finally { db?.close(); }
+NODE
+}
+
+pds_backup_paths_disjoint() {
+  local source destination
+  for destination in "$1" "$2" "$3"; do
+    for source in "$4" "$5" "$6"; do
+      case "$destination/" in "$source/"*)
+        echo "error: PDS rollback destination overlaps configured source: $destination" >&2
+        return 1
+        ;;
+      esac
+      case "$source/" in "$destination/"*)
+        echo "error: configured PDS source overlaps rollback destination: $source" >&2
+        return 1
+        ;;
+      esac
+    done
+  done
+}
+
+prepare_pds_upgrade() {
+  local installed target paths data blobs env_source external=1 state_root backup stage payload=0 account_db migration_state
+  local state_value backup_value stage_value
+  target="$(node -p "require(process.argv[1]).dependencies['@atproto/pds']" "$REPO/pds/package.json" 2>/dev/null)" || {
+    echo "error: could not read the target PDS version" >&2
+    return 1
+  }
+  installed="$(node -p "require(process.argv[1]).version" "$REPO/pds/node_modules/@atproto/pds/package.json" 2>/dev/null || true)"
+  case "$target" in 0.5.*) ;; *) return 0 ;; esac
+  case "$installed" in 0.5.*) return 0 ;; esac
+  state_value="$REPO/pds/data"
+  backup_value="$state_value/pds-0.4.226-before-$target"
+  stage_value="$backup_value.tmp"
+  paths="$(pds_storage_paths "$state_value" "$backup_value" "$stage_value")" || return 1
+  IFS=$'\t' read -r data blobs env_source state_root backup stage external payload account_db <<< "$paths"
+  pds_backup_paths_disjoint "$state_root" "$backup" "$stage" "$data" "$blobs" "$env_source" || return 1
+
+  acquire_pds_upgrade_lock || return 1
+  pds_processes_stopped || return 1
+
+  migration_state=1
+  if pds_account_migrated_05 "$account_db"; then migration_state=0; else migration_state=$?; fi
+  [ "$migration_state" -ne 2 ] || return 1
+  if [ "$migration_state" -eq 0 ]; then
+    if pds_backup_complete "$backup" "$target" "$external"; then
+      echo "PDS rollback copy: $backup (pre-migration copy preserved; current data is already on PDS 0.5)"
+    else
+      echo "warning: PDS migration 008 is already applied but its pre-migration rollback copy is unavailable; continuing the 0.5 fix-forward rebuild" >&2
+    fi
+    return 0
+  fi
+  case "$installed" in
+    0.4.226) [ "$payload" -eq 1 ] || return 0 ;;
+    *)
+      [ "$payload" -eq 0 ] && return 0
+      if [ -e "$backup" ] && pds_backup_matches "$backup" "$data" "$blobs" "$external"; then
+        echo "PDS rollback copy: $backup (existing verified copy)"
+        return 0
+      fi
+      echo "error: cannot prove the installed PDS version for existing configured data; refusing the 0.5 rebuild" >&2
+      return 1
+      ;;
+  esac
+  mkdir -p "$state_value" || { echo "error: could not create PDS rollback root: $state_value" >&2; return 1; }
+  paths="$(pds_storage_paths "$state_value" "$backup_value" "$stage_value")" || return 1
+  IFS=$'\t' read -r data blobs env_source state_root backup stage external payload account_db <<< "$paths"
+  pds_backup_paths_disjoint "$state_root" "$backup" "$stage" "$data" "$blobs" "$env_source" || return 1
+  chmod 700 "$state_root" || { echo "error: could not make PDS rollback root private: $state_root" >&2; return 1; }
+  if [ -e "$backup" ]; then
+    if pds_backup_matches "$backup" "$data" "$blobs" "$external"; then
+      echo "PDS rollback copy: $backup (existing verified copy)"
+      return 0
+    fi
+    echo "error: existing PDS rollback copy differs from the configured data: $backup" >&2
+    echo "  preserve or move that copy before retrying; it was not changed" >&2
+    return 1
+  fi
+
+  echo "Saving PDS rollback copy before upgrade..."
+  rm -rf "$stage" || { echo "error: could not clear incomplete PDS rollback staging: $stage" >&2; return 1; }
+  mkdir -p "$stage" || { echo "error: could not create PDS rollback staging: $stage" >&2; return 1; }
+  chmod 700 "$stage" || { echo "error: could not make PDS rollback staging private: $stage" >&2; return 1; }
+  cp -p "$env_source" "$stage/pds.env" || { echo "error: could not copy PDS environment" >&2; return 1; }
+  chmod 600 "$stage/pds.env" || { echo "error: could not make copied PDS environment private" >&2; return 1; }
+  copy_pds_directory "$data" "$stage/data" || { rm -rf "$stage" || echo "warning: incomplete PDS rollback staging remains at $stage" >&2; return 1; }
+  if [ "$external" -eq 1 ]; then
+    copy_pds_directory "$blobs" "$stage/external-blobs" || { rm -rf "$stage" || echo "warning: incomplete PDS rollback staging remains at $stage" >&2; return 1; }
+  fi
+  if ! {
+    printf 'installed=%s\ntarget=%s\ndata=%s\nblobs=%s\nexternal_blobs=%s\n' "$installed" "$target" "$data" "$blobs" "$external"
+    printf '\nRestore only with the old release while AIT is stopped.\n'
+    printf 'This copy restores PDS only, not PLC or other service state.\n'
+    printf 'Restoring it discards writes made after the 0.5 PDS first starts and may disagree with later PLC history; prefer fix-forward after writes.\n'
+    printf 'ait uninstall removes this rollback copy with the managed checkout.\n'
+  } > "$stage/RESTORE.txt"; then
+    echo "error: could not write PDS rollback instructions" >&2
+    return 1
+  fi
+  chmod 600 "$stage/RESTORE.txt" || { echo "error: could not make PDS rollback instructions private" >&2; return 1; }
+  touch "$stage/COMPLETE" || { echo "error: could not complete PDS rollback staging" >&2; return 1; }
+  chmod 600 "$stage/COMPLETE" || { echo "error: could not make PDS rollback marker private" >&2; return 1; }
+  pds_backup_matches "$stage" "$data" "$blobs" "$external" || {
+    echo "error: PDS rollback copy did not match its quiescent source" >&2
+    rm -rf "$stage" || echo "warning: incomplete PDS rollback staging remains at $stage" >&2
+    return 1
+  }
+  mv "$stage" "$backup" || { echo "error: could not publish PDS rollback copy: $backup" >&2; return 1; }
+  echo "PDS rollback copy: $backup"
+  echo "After the 0.5 PDS starts, do not run old code against migrated data; restore this untouched copy with the old release or fix forward."
+}
+
+install_dependencies() (
+  trap 'release_pds_upgrade_lock' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  prepare_pds_upgrade || return 1
   npm --prefix "$REPO/plc" ci || return 1
   npm --prefix "$REPO/pds" ci || return 1
   npm --prefix "$REPO/appview" ci || return 1
@@ -282,7 +620,7 @@ install_dependencies() {
   npm --prefix "$REPO/appview" run build || return 1
   npm --prefix "$REPO/mcp" run build || return 1
   "$REPO/bin/check-single-lexicon.sh" || return 1
-}
+)
 
 rebuild_only() {
   local target

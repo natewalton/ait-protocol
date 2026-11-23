@@ -5,6 +5,7 @@ import * as path from 'node:path'
 import * as os from 'node:os'
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
+import { ownerDirectory, describeOwner, ownerEligible, publishOwner, readCheckpoint, commitCheckpoint, type DeliveryOwner, type Checkpoint } from './claudeDelivery.js'
 
 const SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const uuid = (value: unknown): string | null => typeof value === 'string' && SHAPE.test(value.toLowerCase()) ? value.toLowerCase() : null
@@ -17,11 +18,13 @@ const identityFile = (id: string) => path.join(directory(), `identity-${createHa
 const bindingFile = (id: string) => path.join(directory(), `claude-thread-${id}.json`)
 export const CLAUDE_POLL_WARNING = 'AIT account preserved. Automatic mentions are unavailable in this worker; use listNotifications. Pending notifications remain available.'
 
+const parentPid = process.ppid
 let command: string | undefined
 export function claudeParentCommand(): string {
+  if (process.ppid !== parentPid) return ''
   if (command !== undefined) return command
-  try { command = execFileSync('ps', ['-o', 'command=', '-p', String(process.ppid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }) }
-  catch { command = '' }
+  try { command = execFileSync('ps', ['-o', 'command=', '-p', String(parentPid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }) }
+  catch { return '' }
   return command
 }
 export function claudeRuntimeUuid(): string | null {
@@ -81,24 +84,25 @@ export function claudeIdentityUuid(id: string): string {
     id = binding.identity
   }
 }
-interface Continuation { type: string; sessionId: string; continuedInSessionId: string }
+interface Continuation { type: string; sessionId: string; continuedInSessionId: string; timestamp?: unknown }
+interface ContinuationEdge { next: string; at: number | null }
 interface Candidate { id: string; file: string }
-interface ReadState { size: number; mtime: number; ino: number; next: string | null }
+interface ReadState { size: number; mtime: number; ino: number; edge: ContinuationEdge | null }
 const reads = new Map<string, ReadState>()
 // Fixed memory blocks; only candidate metadata is decoded. A growing file is
 // read from its previous size, not scanned again. Misses are not persisted.
-function continuedTo(candidate: Candidate): string | null {
+function continuation(candidate: Candidate): ContinuationEdge | null {
   let stat: fs.Stats
   try { stat = fs.lstatSync(candidate.file) }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error }
   if (!stat.isFile() || stat.isSymbolicLink()) return null
   const key = candidate.file
   const previous = reads.get(key)
-  if (previous?.size === stat.size && previous.mtime === stat.mtimeMs && previous.ino === stat.ino) return previous.next
+  if (previous?.size === stat.size && previous.mtime === stat.mtimeMs && previous.ino === stat.ino) return previous.edge
   const unchangedPrefix = previous?.ino === stat.ino && previous.size < stat.size
   const lower = unchangedPrefix ? Math.max(0, previous!.size - 8192) : 0
   const fd = fs.openSync(candidate.file, 'r'), block = Buffer.allocUnsafe(65536 + 8192)
-  let position = stat.size, suffix: Buffer = Buffer.alloc(0), next = unchangedPrefix ? previous!.next : null
+  let position = stat.size, suffix: Buffer = Buffer.alloc(0), edge = unchangedPrefix ? previous!.edge : null
   try {
     while (position > lower) {
       const n = Math.min(position - lower, 65536); position -= n
@@ -111,15 +115,42 @@ function continuedTo(candidate: Candidate): string | null {
           try { value = JSON.parse(line) as Continuation } catch { continue }
           if (value.type === 'continued-in' && uuid(value.sessionId) === candidate.id && uuid(value.continuedInSessionId)) {
             if (uuid(value.continuedInSessionId) === candidate.id) throw new Error('Claude continuation points to itself')
-            next = uuid(value.continuedInSessionId); position = lower; break
+            const timestamp = typeof value.timestamp === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.timestamp) ? Date.parse(value.timestamp) : NaN
+            edge = { next: uuid(value.continuedInSessionId)!, at: Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value.timestamp ? timestamp : null }; position = lower; break
           }
         }
       }
       suffix = Buffer.from(block.subarray(0, Math.min(read, 8192)))
     }
   } finally { fs.closeSync(fd) }
-  reads.set(key, { size: stat.size, mtime: stat.mtimeMs, ino: stat.ino, next })
-  return next
+  reads.set(key, { size: stat.size, mtime: stat.mtimeMs, ino: stat.ino, edge })
+  return edge
+}
+function continuedTo(candidate: Candidate): string | null {
+  return continuation(candidate)?.next ?? null
+}
+// A transcript edge records historical account lineage. Only an edge from this
+// Claude process's lifetime can retire its delivery. MCP reconnect time is not
+// evidence: the owning Claude process may still be the retired original.
+let parentBirth: number | undefined
+function claudeParentBirth(): number | null {
+  if (process.ppid !== parentPid) return null
+  if (parentBirth !== undefined) return parentBirth
+  if (!/^(?:\S*\/)?claude(?:\s|$)/.test(claudeParentCommand().trim())) return null
+  try {
+    const output = execFileSync('ps', ['-o', 'lstart=', '-p', String(parentPid)], {
+      encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' },
+    }).trim()
+    const match = /^(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat) +(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +(\d{1,2}) +(\d{2}):(\d{2}):(\d{2}) +(\d{4})$/.exec(output)
+    if (!match) return null
+    const [, month, day, hour, minute, second, year] = match
+    const value = Date.UTC(Number(year), ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].indexOf(month), Number(day), Number(hour), Number(minute), Number(second))
+    // ps prints whole seconds. Same-second continuations stay conservative.
+    const parsed = new Date(value)
+    if (Number.isFinite(value) && value <= Date.now() && parsed.getUTCFullYear() === Number(year) && parsed.getUTCDate() === Number(day) && parsed.getUTCHours() === Number(hour) && parsed.getUTCMinutes() === Number(minute) && parsed.getUTCSeconds() === Number(second)) parentBirth = value
+  } catch { /* Unknown process birth cannot authorize reclaiming delivery. */ }
+  return parentBirth ?? null
 }
 function entries(dir: string): fs.Dirent[] {
   try { return fs.readdirSync(dir, { withFileTypes: true }) }
@@ -229,16 +260,88 @@ export function resolveClaudeIdentity(id: string): string {
   if (state.interactiveLineage && !state.forkParentSessionId) throw new ClaudeHandoverPending()
   return id
 }
+const owners = new Map<string, DeliveryOwner>()
+let ownershipWarning: string | undefined
+function deliveryOwner(runtime: string): DeliveryOwner | null {
+  const root = claudeIdentityUuid(runtime), file = identityFile(root)
+  if (!fs.existsSync(file)) return null // A session that has not joined can keep waiting.
+  const did: unknown = JSON.parse(fs.readFileSync(file, 'utf8')).did
+  if (typeof did !== 'string' || !did.startsWith('did:')) throw new Error('Claude delivery identity has no valid DID')
+  const dir = ownerDirectory(directory(), did), key = dir + runtime
+  const cached = owners.get(key)
+  if (cached) return cached
+  const born = claudeParentBirth()
+  if (born === null) throw new Error('cannot verify the owning Claude process; resume through ait resume to enable automatic mentions')
+  let epoch = born
+  const binding = readClaudeBinding(runtime)
+  if (binding) for (const source of candidates().filter(candidate => candidate.id === binding.source)) {
+    const edge = continuation(source)
+    if (edge?.next === runtime && edge.at !== null) epoch = Math.max(epoch, edge.at)
+  }
+  if (epoch > Date.now()) throw new Error('Claude handover time is in the future; check the machine clock before resuming automatic mentions')
+  const owner = describeOwner(dir, runtime, born, parentPid, epoch)
+  owners.set(key, owner)
+  return owner
+}
+function ownershipUnavailable(error: unknown): false {
+  const message = error instanceof Error ? error.message : String(error)
+  if (ownershipWarning !== message) {
+    ownershipWarning = message
+    console.error('AIT automatic mentions unavailable: ' + message)
+  }
+  return false
+}
 const ownTranscripts = new Map<string, Candidate[]>()
-export function isClaudeRuntimeCurrent(): boolean {
-  if (process.env.AIT_MCP_TEST_SESSION_ID || process.env.AIT_NOTIFICATION_MODE === 'codex') return true
-  const runtime = claudeRuntimeUuid()
-  if (!runtime) return false
+type DeliveryState = 'current' | 'retired' | 'unavailable'
+function nativeRuntimeState(runtime: string): DeliveryState {
+  if (process.ppid !== parentPid) return 'retired'
   const key = config() + runtime
   const own = ownTranscripts.get(key) ?? candidates().filter(candidate => candidate.id === runtime)
   if (own.length) ownTranscripts.set(key, own)
-  for (const candidate of own) if (continuedTo(candidate)) return false
-  return true
+  for (const candidate of own) {
+    const edge = continuation(candidate)
+    if (!edge) continue
+    const born = claudeParentBirth()
+    if (edge.at === null || born === null) return 'unavailable'
+    if (edge.at >= born) return 'retired'
+  }
+  return 'current'
+}
+export function claudeDeliveryState(): DeliveryState {
+  if (process.env.AIT_MCP_TEST_SESSION_ID || process.env.AIT_NOTIFICATION_MODE === 'codex') return 'current'
+  try {
+    const runtime = claudeRuntimeUuid()
+    if (!runtime) return 'unavailable'
+    const native = nativeRuntimeState(runtime)
+    if (native !== 'current') return native
+    const owner = deliveryOwner(runtime)
+    return owner === null || ownerEligible(owner) ? 'current' : 'retired'
+  } catch (error) { ownershipUnavailable(error); return 'unavailable' }
+}
+export function isClaudeRuntimeCurrent(): boolean { return claudeDeliveryState() === 'current' }
+// Called only by the existing push registration path, after identity resolution.
+// Publishing is atomic; readers never observe a half-written owner record.
+export function claimClaudeDelivery(initial: Checkpoint): boolean {
+  if (process.env.AIT_MCP_TEST_SESSION_ID || process.env.AIT_NOTIFICATION_MODE === 'codex') return true
+  try {
+    const runtime = claudeRuntimeUuid()
+    if (!runtime || nativeRuntimeState(runtime) !== 'current') return false
+    const owner = deliveryOwner(runtime)
+    if (!owner) return false
+    publishOwner(owner, initial)
+    return isClaudeRuntimeCurrent()
+  } catch (error) { return ownershipUnavailable(error) }
+}
+// Return null only before this account has delivery state. Once a claim exists,
+// a stale runtime must never fall back to rewriting the credential-file cursor.
+export function commitClaudeDeliveryCursor(expected: string | null | undefined, cursor: string): boolean | null {
+  if (process.env.AIT_MCP_TEST_SESSION_ID || process.env.AIT_NOTIFICATION_MODE !== 'push') return null
+  const runtime = claudeRuntimeUuid()
+  if (!runtime) return false
+  const owner = deliveryOwner(runtime)
+  if (!owner || readCheckpoint(owner.dir) === null) return null
+  if (!isClaudeRuntimeCurrent()) return false
+  return commitCheckpoint(owner, expected, cursor) && isClaudeRuntimeCurrent()
 }
 export function claudeContinuedSessions(): Binding[] {
   const result: Binding[] = []

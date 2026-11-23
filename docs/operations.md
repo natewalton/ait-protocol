@@ -58,17 +58,30 @@ Before identity preparation or a service start attempt, a failed stable update p
 
 The upstream PDS upgrade from 0.4.226 to 0.5.59 requires Node.js 22.19 or later
 (Node.js 24 for the peer variant). It adds the account email-factor table;
-existing accounts retain their current authentication settings. Before adopting
-this migration, exit AIT sessions, stop its services, and preserve a complete
-quiescent copy of the PDS data and blob directories configured in `pds/.env`,
-together with the matching environment secrets. Keep that copy untouched.
+existing accounts retain their current authentication settings. On this first
+crossing, `ait update` stops AIT and, before replacing dependencies, makes a
+private rollback copy of `pds/.env` plus the complete configured PDS data and
+blob directories. Database or actor-store overrides outside the configured data
+directory, and S3 blobstores, refuse this automatic crossing rather than making
+an incomplete copy. The same refusal applies when a symlink combined with `..`
+would make PDS and the shell select different physical storage, or when the data
+directory is not configured. Ordinary parent paths and ordinary symlinks remain
+supported. The command announces the copy before a potentially large blob copy,
+then prints its final path. Keep it untouched; normal `ait uninstall` removes it
+with the managed checkout. If dependency installation is interrupted before
+migration, a retry reuses that completed copy only while its environment, data
+and blob bytes still match. After migration `008` has applied, a retry recognizes
+the migrated account schema, preserves the original rollback copy, and rebuilds
+forward rather than requiring migrated data to match its pre-migration bytes.
 
 The tested rollback restores that pre-upgrade data copy and its old release
-together. It does not establish that old code can downgrade migrated data, and
-restoring the old copy excludes writes made after the upgrade. If new writes
-have occurred, preserve the migrated data and fix forward. Automated upgrade
-tests verify account DIDs, signing keys, passwords, access/refresh tokens,
-confirmation tokens, record CIDs, blob bytes and new writes across restart.
+together. Old code is not supported against migrated data, and restoring the
+old copy excludes writes made after the upgrade and restores only PDS, not later
+PLC or other service state. Once the 0.5 PDS has started, preserve the migrated
+data and fix forward unless you explicitly accept losing every post-upgrade
+write. Automated upgrade tests verify account DIDs, signing keys,
+passwords, access/refresh tokens, confirmation tokens, record CIDs, blob bytes
+and new writes across restart.
 
 If the reported error specifically requires Codex 0.166.0 or newer, upgrade Codex, verify its version, then run `ait start`. That prerequisite failure does not itself require another AIT release. Diagnose other failures from their reported error.
 

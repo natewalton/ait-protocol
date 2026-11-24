@@ -107,27 +107,29 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
     const key = await idResolver.did.resolveAtprotoKey(did)
     const { creates, commit } = await verifyRepoCar(assertRepoCarBounds(await getRepo(did, controller.signal)), did, key)
     const previousSnapshot = snapshots.get(did)
-    const historical = backfill || commit.cid.equals(previousSnapshot?.cid)
+    const previousRevision = previousSnapshot?.rev ?? ''
     const base = { ...meta, did, commit: commit.cid, blocks: commit.newBlocks, rev: commit.rev }
     const present = new Set()
     // Authenticate and validate every selected record before admitting this
     // snapshot, including its identity/account metadata.
     const records = []
-    const skipped = []
+    const skipped = new Map()
     for (const entry of creates) {
       if (!collections.has(entry.collection)) continue
       const uri = AtUri.make(did, entry.collection, entry.rkey)
       const bytes = commit.newBlocks.get(entry.cid)
       assert(bytes, `Verified snapshot is missing ${uri}`)
       const record = ipldToLex(cborToLexRecord(bytes))
-      if (!validateRecord(entry.collection, record, historical)) {
-        skipped.push(uri.toString())
+      const uriString = uri.toString()
+      const previousCid = previousSnapshot?.skipped.get(uriString)
+      if (!validateRecord(entry.collection, record, backfill || entry.cid.equals(previousCid))) {
+        skipped.set(uriString, entry.cid)
         continue
       }
-      present.add(uri.toString())
+      present.add(uriString)
       records.push({ ...base, ...entry, uri, event: 'create', record })
     }
-    if (commit.rev < (previousSnapshot?.rev ?? '')) return
+    if (commit.rev < previousRevision) return
     await account(did, doc, true, undefined, meta)
     for (const record of records) await project(record)
     const previous = db.prepare(
@@ -141,10 +143,13 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       const uri = new AtUri(row.uri)
       await project({ ...base, event: 'delete', uri, collection: uri.collection, rkey: uri.rkey })
     }
-    snapshots.set(did, { rev: commit.rev, cid: commit.cid })
-    // The initial snapshot already reported the same omitted history.
-    for (const uri of backfill ? skipped : []) {
-      console.error(`feed ${source}: skipped ${uri}: post text exceeds 1000 graphemes`)
+    // Retain only omissions from this accepted snapshot. A later snapshot
+    // can carry them forward even when its signed root changes.
+    snapshots.set(did, { rev: commit.rev, skipped })
+    for (const [uri, cid] of skipped) {
+      if (!cid.equals(previousSnapshot?.skipped.get(uri))) {
+        console.error(`feed ${source}: skipped ${uri}: post text exceeds 1000 graphemes`)
+      }
     }
   }
 

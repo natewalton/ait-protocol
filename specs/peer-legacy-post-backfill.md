@@ -12,12 +12,16 @@ its initial import or consuming later messages.
 
 ## Proposed work
 
-Use the existing historical-post rule for approved peer backfill and covered
-stream replay. The verified snapshot omits the unusable record from the local
-projection and reports its URI and source in the AppView log. Covered replay
-cannot restore it, including a resync of the same verified snapshot CID. Later valid records and mentions arrive through the existing
-feed and notification paths. Source binding, signature checks, input bounds,
-all other schema rules, and newer stream operations retain their existing behavior.
+Use the existing historical-post rule for local and approved peer backfill and
+covered stream replay. A later verified snapshot after account activation or a
+large commit may still contain the old post. Allow that snapshot to carry forward
+only an omission with the exact same record URI and signed content ID from the
+last accepted snapshot. Log newly omitted records with source and URI. Later
+valid records and mentions reach the existing feed and notification paths.
+
+Keep source binding, signature checks, input bounds, and other schema rules in
+place. New stream records and previously unseen invalid records in live
+snapshots remain strict.
 
 ## Files touched
 
@@ -26,16 +30,17 @@ Four files: this spec, `appview/src/peerFeed.mjs`,
 
 ## Out of scope
 
-Other validation failures, newly written overlong posts, different live sync snapshots,
-PDS record rewriting, policy changes, and installed-service changes.
+Other validation failures, newly written overlong posts, PDS record rewriting,
+policy changes, and installed-service changes.
 
 ## Tests
 
 The signed feed fixture exercises local and approved peer snapshots and their
-covered commit and sync replay, stale projection removal, and a later valid commit. The
-two-instance Link fixture seeds historical text over the current limit, then
-checks that the receiving instance reports the skipped URI, returns the valid
-history, and receives subsequent native peer replies and mention callbacks.
+covered commit and sync replay, account activation with a new verified revision,
+stale projection removal, refusal of an unseen or changed overlong post, and a
+later valid commit. The two-instance Link fixture seeds historical text over
+the current limit, checks the receiving AppView log and valid history, then
+reactivates the source account and verifies a later reply and mention callback.
 
 ## Sequencing or rollout
 

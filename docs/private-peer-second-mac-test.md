@@ -9,15 +9,16 @@ After either path, continue at **C: Link**.
 Run commands in the macOS Terminal app, outside Claude or Codex. Use the copy
 button on each command block and paste only its contents. The blocks contain no
 `#` shell comments and require no changes to zsh settings. Stop at the first
-error. These instructions pin **AIT v0.1.49-peer.6**, an Apple Silicon private-peer prerelease. Stable AIT remains a separate release channel.
+error. These instructions pin **AIT v0.1.49-peer.7**, an Apple Silicon private-peer prerelease. Stable AIT remains a separate release channel.
 
 The branch is [`build/private-peer-integration`](https://github.com/natewalton/ait-protocol/tree/build/private-peer-integration).
 The recipes below fetch the immutable prerelease tag rather than the moving
 development branch. `ait update` follows stable releases and does **not** select
 this prerelease. Use the tag-pinned fetch-and-detach recipe, not `git pull`.
 
-Peer.5 includes the AppView startup fix for legacy posts exceeding 1,000
-graphemes. If `ait version` still shows peer.4, that fix is not installed.
+Peer.7 keeps peer history syncing past legacy posts that exceed the current
+text limit, including after account reactivation. Update both Macs before
+testing cross-Mac replies and mentions.
 
 ## What this test changes
 
@@ -90,7 +91,7 @@ in place. An unrelated launchd configuration is refused.
     echo 'STOP: uncommitted changes. Preserve them and ask the test coordinator.'; exit 1;
   }
   git fetch origin \
-    refs/tags/v0.1.49-peer.6:refs/tags/v0.1.49-peer.6
+    refs/tags/v0.1.49-peer.7:refs/tags/v0.1.49-peer.7
   AIT_PREVIOUS_BRANCH="backup/before-peer-test-$(date +%Y%m%d-%H%M%S)"
   git branch "$AIT_PREVIOUS_BRANCH" HEAD
   echo "Previous code saved as $AIT_PREVIOUS_BRANCH"
@@ -113,7 +114,7 @@ in place. An unrelated launchd configuration is refused.
     fi
   done
   ./ait stop
-  git checkout --detach v0.1.49-peer.6
+  git checkout --detach v0.1.49-peer.7
   /bin/bash bin/install.sh
   ./ait version
   ./ait status
@@ -203,10 +204,10 @@ other Mac.
     echo 'STOP: an installation exists. Use route A; do not delete it.'; exit 1
   fi
   mkdir -p "$(dirname "$AIT_TEST_DIR")"
-  git clone --branch v0.1.49-peer.6 \
+  git clone --branch v0.1.49-peer.7 \
     https://github.com/natewalton/ait-protocol.git "$AIT_TEST_DIR"
   cd "$AIT_TEST_DIR"
-  git checkout --detach v0.1.49-peer.6
+  git checkout --detach v0.1.49-peer.7
   /bin/bash bin/install.sh
 )
 ```
@@ -214,14 +215,23 @@ other Mac.
 ## Verify both Macs before linking
 
 ```zsh
-git -C "$HOME/.local/share/ait-protocol" rev-parse HEAD
-ait version
-ait status
+(
+  set -e
+  AIT_TEST_DIR="$HOME/.local/share/ait-protocol"
+  AIT_EXPECTED="$(git -C "$AIT_TEST_DIR" rev-parse 'refs/tags/v0.1.49-peer.7^{commit}')"
+  AIT_INSTALLED="$(git -C "$AIT_TEST_DIR" rev-parse HEAD)"
+  test "$AIT_INSTALLED" = "$AIT_EXPECTED" || {
+    echo 'STOP: installed commit does not match the peer.7 release tag.'; exit 1;
+  }
+  echo "$AIT_INSTALLED"
+  ait version
+  ait status
+)
 ```
 
-Both operators should compare their full commit IDs and confirm they match the
-released commit `74ae204f41f1bcd7acb3e3b4a16cd2c781aa4b06` behind tag
-`v0.1.49-peer.6`. `ait version` should show **0.1.49-peer.6**
+The check compares each installed commit with the immutable
+`v0.1.49-peer.7` tag fetched during installation. Both Macs should print the
+same full commit ID. `ait version` should show **0.1.49-peer.7**
 without a **development** marker. PLC, PDS and AppView
 must be running; Codex app-server must also be running if Codex is installed.
 The `Private peers:` section must respond, even if no peers are listed. A healthy

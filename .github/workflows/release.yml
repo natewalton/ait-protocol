@@ -27,6 +27,7 @@ jobs:
       accepted_upstream: ${{ steps.dispositions.outputs.accepted_upstream }}
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -41,6 +42,62 @@ jobs:
             pds/package-lock.json
             appview/package-lock.json
             mcp/package-lock.json
+      - name: Verify release candidate identity
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            printf '%s' "$RELEASE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+          else
+            printf '%s' "$RELEASE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-peer\.[1-9][0-9]*$'
+            test "$(uname -m)" = arm64
+          fi
+          test "$(cat VERSION)" = "$RELEASE_VERSION"
+          git fetch --quiet origin "$GITHUB_REF_NAME"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/remotes/origin/$GITHUB_REF_NAME")"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Verify successful preparation for publication
+        if: inputs.operation == 'publish'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          const { GITHUB_REPOSITORY: repo, GITHUB_REPOSITORY_ID: repositoryId,
+            GITHUB_REF_NAME: branch, GITHUB_SHA: sha } = process.env;
+          const api = (...args) => JSON.parse(execFileSync('gh',
+            ['api', '--method', 'GET', '--paginate', '--slurp', ...args],
+            { encoding: 'utf8', timeout: 30000 }));
+          const runs = api(`repos/${repo}/actions/workflows/release.yml/runs`,
+            '-f', 'event=workflow_dispatch', '-f', `branch=${branch}`,
+            '-f', `head_sha=${sha}`, '-f', 'status=success').flatMap(page => page.workflow_runs);
+          const successful = (jobs, name, required) => jobs.some(job => job.name === name &&
+            job.conclusion === 'success' && required.every(step => job.steps.some(
+              result => result.name === step && result.conclusion === 'success')));
+          for (const run of runs) {
+            if (!Number.isSafeInteger(run.id) || run.id <= 0 ||
+                !Number.isSafeInteger(run.run_attempt) || run.run_attempt <= 0 ||
+                run.path !== '.github/workflows/release.yml' || run.event !== 'workflow_dispatch' ||
+                run.head_sha !== sha || run.head_branch !== branch ||
+                String(run.head_repository?.id) !== repositoryId ||
+                String(run.repository?.id) !== repositoryId ||
+                run.status !== 'completed' || run.conclusion !== 'success') continue;
+            const jobs = api(`repos/${repo}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs`)
+              .flatMap(page => page.jobs);
+            if (successful(jobs, 'validate', ['Verify release candidate identity',
+                'Assess supported releases during preparation', 'Validate candidate and run gates',
+                'Verify and report release dispositions']) &&
+                successful(jobs, 'release', ['Prepare exact release asset',
+                'Gate immutable release settings and ancestry', 'Refuse migration-surface changes',
+                'Prepare inspected draft'])) {
+              console.log(`Reusing preparation run ${run.id}, attempt ${run.run_attempt}, for ${sha}`);
+              process.exit(0);
+            }
+          }
+          throw Error('No successful release preparation for this commit and channel. Run prepare first.');
+          NODE
       - name: Assess supported releases during preparation
         if: inputs.operation == 'prepare'
         env:
@@ -74,19 +131,9 @@ jobs:
           }
           NODE
       - name: Validate candidate and run gates
-        env:
-          RELEASE_VERSION: ${{ inputs.version }}
+        if: inputs.operation == 'prepare'
         run: |
           set -euo pipefail
-          if [ "$GITHUB_REF" = refs/heads/main ]; then
-            printf '%s' "$RELEASE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
-          else
-            printf '%s' "$RELEASE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-peer\.[1-9][0-9]*$'
-            test "$(uname -m)" = arm64
-          fi
-          test "$(cat VERSION)" = "$RELEASE_VERSION"
-          git fetch --quiet origin "$GITHUB_REF_NAME"
-          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/remotes/origin/$GITHUB_REF_NAME")"
           for f in install.sh ait bin/install.sh bin/update.sh bin/uninstall.sh \
             bin/lib-mcp-holders.sh bin/lib-service-pids.sh \
             bin/ait-update-test.sh bin/ait-uninstall-test.sh; do
@@ -147,6 +194,15 @@ jobs:
           node bin/check-advisories-test.mjs
           node bin/security-workflow-test.mjs
           node bin/check-native-advisories-test.mjs
+      - name: Build candidate for fresh advisory regressions
+        if: inputs.operation == 'publish'
+        run: |
+          set -euo pipefail
+          for workspace in plc pds appview mcp; do
+            npm --prefix "$workspace" ci --prefer-offline --no-audit
+          done
+          npm --prefix appview run build
+          npm --prefix mcp run build
       - name: Verify and report release dispositions
         id: dispositions
         env:
@@ -296,8 +352,8 @@ jobs:
           node - "$draft_json" "$(git rev-parse HEAD)" "$(shasum -a 256 "$RELEASE_ASSET" | awk '{print $1}')" <<'NODE'
           const [raw, expectedCommit, expectedDigest] = process.argv.slice(2);
           const r = JSON.parse(raw);
-          const a = (r.assets || []).find(x => x.name === 'install.sh');
-          if (!r.draft || r.prerelease !== (process.env.GITHUB_REF_NAME === 'build/private-peer-integration') || r.target_commitish !== expectedCommit || !a || a.digest !== `sha256:${expectedDigest}`) process.exit(1);
+          const [a] = r.assets || [];
+          if (!r.draft || r.prerelease !== (process.env.GITHUB_REF_NAME === 'build/private-peer-integration') || r.target_commitish !== expectedCommit || r.tag_name !== process.env.RELEASE_TAG || r.assets?.length !== 1 || a?.name !== 'install.sh' || a.digest !== `sha256:${expectedDigest}`) process.exit(1);
           const accepted = JSON.parse(process.env.ACCEPTED_UPSTREAM);
           if (!Array.isArray(accepted) || accepted.some(line => typeof line !== 'string' || !r.body?.split('\n').includes(line))) process.exit(1);
           NODE
@@ -320,8 +376,8 @@ jobs:
           node - "$draft_json" "$(git rev-parse HEAD)" "$(shasum -a 256 "$RELEASE_ASSET" | awk '{print $1}')" <<'NODE'
           const [raw, expectedCommit, expectedDigest] = process.argv.slice(2);
           const r = JSON.parse(raw);
-          const a = (r.assets || []).find(x => x.name === 'install.sh');
-          if (!r.draft || r.prerelease !== (process.env.GITHUB_REF_NAME === 'build/private-peer-integration') || r.target_commitish !== expectedCommit || !a || a.digest !== `sha256:${expectedDigest}`) process.exit(1);
+          const [a] = r.assets || [];
+          if (!r.draft || r.prerelease !== (process.env.GITHUB_REF_NAME === 'build/private-peer-integration') || r.target_commitish !== expectedCommit || r.tag_name !== process.env.RELEASE_TAG || r.assets?.length !== 1 || a?.name !== 'install.sh' || a.digest !== `sha256:${expectedDigest}`) process.exit(1);
           const accepted = JSON.parse(process.env.ACCEPTED_UPSTREAM);
           if (!Array.isArray(accepted) || accepted.some(line => typeof line !== 'string' || !r.body?.split('\n').includes(line))) process.exit(1);
           NODE
@@ -340,6 +396,6 @@ jobs:
           if (r.tag_name !== expectedTag || r.draft || r.prerelease !== (process.env.GITHUB_REF_NAME === 'build/private-peer-integration') || r.immutable !== true || r.target_commitish !== expectedCommit || r.html_url !== `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/tag/${expectedTag}`) process.exit(1);
           const accepted = JSON.parse(process.env.ACCEPTED_UPSTREAM);
           if (!Array.isArray(accepted) || accepted.some(line => typeof line !== 'string' || !r.body?.split('\n').includes(line))) process.exit(1);
-          const a = (r.assets || []).find(x => x.name === 'install.sh');
-          if (!a || a.digest !== `sha256:${expected}`) process.exit(1);
+          const [a] = r.assets || [];
+          if (r.assets?.length !== 1 || a?.name !== 'install.sh' || a.digest !== `sha256:${expected}`) process.exit(1);
           NODE

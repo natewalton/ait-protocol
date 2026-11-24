@@ -44,8 +44,14 @@ expiry invalidates an old decision. It audits the exact packaged native source
 lock separately. Missing tooling, unknown severity or incomplete coverage blocks.
 It performs no dependency repair. Coverage is the four npm locks and the packaged transport Cargo graph. Other embedded native components, including SQLite within better-sqlite3, and externally maintained Node/PostgreSQL/OpenSSL remain outside these lockfile advisory audits. Native findings retain unknown severity when no supported score exists. They block unless an independently reviewed, exact-artifact non-applicability decision passes its current regression. Unknown severity can never qualify as accepted risk or informational maintenance; no severity is guessed.
 
-Publication requires a fresh result for the exact candidate and artifact. The
-PR/release job supplies the trusted checkout; repository maintainer review must
+Publication requires a fresh advisory result and current security regressions for
+the exact candidate. The release workflow reuses the compatibility and
+integration results only from a successful preparation run for the same
+repository, channel and commit. It regenerates the installer and checks the
+draft asset digest before publication. If preparation evidence is missing or the
+candidate changed, run preparation again.
+
+The PR/release job supplies the trusted checkout; repository maintainer review must
 protect policy/checker/workflow changes. Candidate regressions run without
 publication/reporting credentials. No schedules, security issues, automatic
 updates or alert-setting changes are introduced. A pass is valid at check time,

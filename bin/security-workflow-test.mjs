@@ -26,6 +26,18 @@ const prepare = step(release, 'Prepare inspected draft');
 const relevance = step(security, 'Determine security relevance');
 const validate = step(release, 'Validate candidate and run gates');
 const dispositions = step(release, 'Verify and report release dispositions');
+const preparationProof = step(release, 'Verify successful preparation for publication');
+const publishBuild = step(release, 'Build candidate for fresh advisory regressions');
+const identity = step(release, 'Verify release candidate identity');
+assert.match(release, /- name: Validate candidate and run gates\n        if: inputs\.operation == 'prepare'/);
+assert.match(release, /- name: Verify successful preparation for publication\n        if: inputs\.operation == 'publish'/);
+assert.match(release, /- name: Build candidate for fresh advisory regressions\n        if: inputs\.operation == 'publish'/);
+assert.match(release, /- name: Verify and report release dispositions\n        id: dispositions/);
+assert.match(identity, /test "\$\(git rev-parse HEAD\)" = "\$GITHUB_SHA"/);
+assert.match(publishBuild, /for workspace in plc pds appview mcp/);
+assert.match(publishBuild, /npm --prefix appview run build/);
+assert.match(publishBuild, /npm --prefix mcp run build/);
+assert.doesNotMatch(publishBuild, /peer-link-test|upgrade-compatibility-test|check-advisories-test/);
 const securityValidate = step(security, 'Test candidate security boundaries');
 for (const block of [validate, securityValidate]) {
   assert.match(block, /git archive b4ea412c50caf3a21f5e270f65b20906dc76f0de pds/);
@@ -49,7 +61,7 @@ assert.match(validate, /node bin\/security-workflow-test\.mjs/);
 assert.ok(release.indexOf('bin/check-advisories.sh --candidate') > release.indexOf('node pds/scripts/default-mail-scope-test.mjs'));
 assert.match(releaseJob, /ACCEPTED_UPSTREAM: \$\{\{ needs\.validate\.outputs\.accepted_upstream \}\}/);
 assert.match(release, /permissions:\n  contents: read/);
-assert.match(release, /validate:[\s\S]*?permissions:\n      contents: read/);
+assert.match(release, /validate:[\s\S]*?permissions:\n      contents: read\n      actions: read/);
 assert.equal((security.match(/^  pull_request:/gm) || []).length, 1);
 assert.ok(!/pull_request_target|schedule:|issues: write|contents: write/.test(security));
 assert.match(security, /permissions:\n  contents: read/);
@@ -57,7 +69,7 @@ assert.match(security, /persist-credentials: false/);
 assert.ok(!/pull_request:\n\s+paths:/.test(security), 'path-filtered required checks can remain pending');
 assert.match(security, /if: steps\.changes\.outputs\.relevant == 'true'/);
 assert.match(security, /bin\/check-advisories\.sh --candidate "\$GITHUB_WORKSPACE"/);
-console.log('ok - actual workflow DAG requires fresh validation for prepare and publish; PR is read-only and always reports');
+console.log('ok - workflow requires candidate tests at preparation and fresh advisory gates at publication');
 
 const scratch = mkdtempSync(path.join(tmpdir(), 'ait-workflow-test-'));
 const head = 'a'.repeat(40), other = 'b'.repeat(40);
@@ -77,7 +89,8 @@ const record = () => ({ id: 91, tag_name: state.apiTag || process.env.RELEASE_TA
   draft: state.draft, prerelease: state.wrongChannel ? !state.peer : state.peer, immutable: true,
   html_url: 'https://github.com/'+process.env.GITHUB_REPOSITORY+'/releases/tag/'+process.env.RELEASE_TAG,
   body: state.releaseNotes || '',
-  assets: [{ name:'install.sh', digest:'sha256:'+(state.badDigest ? '0'.repeat(64) : process.env.DIGEST) }] });
+  assets: [{ name:'install.sh', digest:'sha256:'+(state.badDigest ? '0'.repeat(64) : process.env.DIGEST) },
+    ...(state.extraAsset ? [{ name:'extra.sh' }] : [])] });
 if (command === 'git') {
   if (args[0] === 'rev-parse') output(args[1] === 'HEAD' ? process.env.HEAD : state.moved ? '${other}' : process.env.HEAD);
   else if (args[0] === 'diff') output(state.paths || '');
@@ -89,6 +102,20 @@ if (command === 'git') {
     else output(JSON.stringify(record()));
   } else if (args[0] === 'release' && args[1] === 'create') { state.draft = true; state.mutations++; if (args.includes('--notes-file')) state.releaseNotes = fs.readFileSync(args[args.indexOf('--notes-file') + 1], 'utf8'); save(); }
   else if (args[0] === 'release' && args[1] === 'edit') { state.draft = false; state.mutations++; save(); }
+  else if (args[0] === 'api' && args.includes('repos/fixture/ait/actions/workflows/release.yml/runs')) {
+    const run = { id: 852, run_attempt: 2, path: '.github/workflows/release.yml', event: 'workflow_dispatch',
+      head_sha: process.env.HEAD, head_branch: process.env.GITHUB_REF_NAME, repository: { id: 44 },
+      head_repository: { id: 44 }, status: 'completed', conclusion: 'success', ...state.run };
+    output(JSON.stringify([{workflow_runs: []}, {workflow_runs: state.noPreparation ? [] : [run]}]));
+  } else if (args[0] === 'api' && args.includes('repos/fixture/ait/actions/runs/852/attempts/2/jobs')) {
+    const job = (name, steps) => ({ name, conclusion: 'success',
+      steps: steps.map(name => ({ name, conclusion: state.skippedStep === name ? 'skipped' : 'success' })) });
+    output(JSON.stringify([{ jobs: [job('validate', ['Verify release candidate identity',
+      'Assess supported releases during preparation', 'Validate candidate and run gates',
+      'Verify and report release dispositions'])] }, { jobs: [job('release',
+      ['Prepare exact release asset', 'Gate immutable release settings and ancestry',
+       'Refuse migration-surface changes', 'Prepare inspected draft'])] }]));
+  }
   else if (args[0] === 'api' && args[1].endsWith('/releases/latest')) {
     if (args.includes('--jq')) output(state.changedStableLatest && !state.draft ? '18' : '17'); else output(JSON.stringify(record()));
   } else if (args[0] === 'api' && args[1].endsWith('/releases/91')) output(JSON.stringify(record()));
@@ -105,6 +132,7 @@ if (command === 'git') {
     const result = spawnSync('/bin/bash', [script], { encoding: 'utf8', timeout: 10000,
       env: { PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: directory,
         GITHUB_REF_NAME: peer ? 'build/private-peer-integration' : 'main', GITHUB_REPOSITORY: 'fixture/ait',
+        GITHUB_REPOSITORY_ID: '44', GITHUB_SHA: head,
         RELEASE_TAG: peer ? 'v0.1.46-peer.3' : 'v0.1.46', RELEASE_ASSET: asset, RUNNER_TEMP: directory,
         ACCEPTED_UPSTREAM: JSON.stringify(overrides.accepted || []), STATE: stateFile, CALLS: callsFile, HEAD: head, DIGEST: digest, BASE_SHA: other, GITHUB_OUTPUT: path.join(directory, 'output') },
     });
@@ -113,6 +141,25 @@ if (command === 'git') {
       calls: readFileSync(callsFile, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse), directory };
   }
   for (const peer of [false, true]) {
+    const proof = runBlock(preparationProof, peer);
+    assert.equal(proof.status, 0, proof.stderr);
+    assert.match(proof.stdout, /Reusing preparation run 852, attempt 2/);
+    for (const [label, overrides] of Object.entries({
+      missing: { noPreparation: true }, wrongCommit: { run: { head_sha: other } },
+      wrongBranch: { run: { head_branch: 'different-branch' } },
+      wrongRepository: { run: { head_repository: { id: 45 } } },
+      wrongWorkflow: { run: { path: '.github/workflows/security.yml' } },
+      wrongEvent: { run: { event: 'pull_request' } },
+      failed: { run: { conclusion: 'failure' } },
+      testsSkipped: { skippedStep: 'Validate candidate and run gates' },
+      publishedInstead: { skippedStep: 'Prepare inspected draft' },
+      noMigrationCheck: { skippedStep: 'Refuse migration-surface changes' },
+    })) {
+      const refused = runBlock(preparationProof, peer, overrides);
+      assert.notEqual(refused.status, 0, label);
+      assert.match(refused.stderr, /No successful release preparation/, label);
+      assert.equal(refused.state.mutations, 0);
+    }
     const good = runBlock(publish, peer);
     assert.equal(good.status, 0, good.stderr); assert.equal(good.state.mutations, 1);
     const edit = good.calls.find(c => c[0] === 'gh' && c[2] === 'edit');
@@ -121,7 +168,8 @@ if (command === 'git') {
     assert.ok(edit.includes(peer ? '--latest=false' : '--latest=true'));
     if (peer) assert.equal(good.calls.filter(c => c.includes('--jq') && c.includes('.id')).length, 2, 'peer verifies stable latest before/after');
     for (const [label, overrides] of Object.entries({ movedSource: { moved: true }, wrongDraftTarget: { viewTarget: other },
-      wrongApiTarget: { apiTarget: other }, wrongDigest: { badDigest: true }, publishedAlready: { draft: false }, wrongChannel: { wrongChannel: true } })) {
+      wrongApiTarget: { apiTarget: other }, wrongTag: { apiTag: 'v0.0.0' }, wrongDigest: { badDigest: true },
+      extraAsset: { extraAsset: true }, publishedAlready: { draft: false }, wrongChannel: { wrongChannel: true } })) {
       const bad = runBlock(publish, peer, overrides);
       assert.notEqual(bad.status, 0, `${label} must fail`);
       assert.equal(bad.state.mutations, 0, `${label} must block before gh mutation`);

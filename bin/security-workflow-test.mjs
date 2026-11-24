@@ -92,8 +92,19 @@ const record = () => ({ id: 91, tag_name: state.apiTag || process.env.RELEASE_TA
   assets: [{ name:'install.sh', digest:'sha256:'+(state.badDigest ? '0'.repeat(64) : process.env.DIGEST) },
     ...(state.extraAsset ? [{ name:'extra.sh' }] : [])] });
 if (command === 'git') {
-  if (args[0] === 'rev-parse') output(args[1] === 'HEAD' ? process.env.HEAD : state.moved ? '${other}' : process.env.HEAD);
-  else if (args[0] === 'diff') output(state.paths || '');
+  if (args[0] === 'rev-parse') {
+    if (args[1] === 'HEAD') output(process.env.HEAD);
+    else if (args[1].startsWith('refs/ait-release-published/')) output(state.wrongPublishedTag ? '${other}' : process.env.HEAD);
+    else output(state.moved ? '${other}' : process.env.HEAD);
+  }
+  else if (args[0] === 'ls-remote' && args.at(-1).startsWith('refs/heads/')) {
+    output((state.remoteMoved ? '${other}' : process.env.HEAD)+'\\t'+args.at(-1));
+  } else if (args[0] === 'ls-remote' && args.at(-1).startsWith('refs/tags/')) {
+    if (state.tagLookupFailed) process.exit(128);
+    process.exit(state.existingTag ? 0 : 2);
+  } else if (args[0] === 'fetch' && args.at(-1).includes(':refs/ait-release-published/')) {
+    if (state.missingPublishedTag) process.exit(128);
+  } else if (args[0] === 'diff') output(state.paths || '');
   else fail('Unexpected git call '+args.join(' '));
 } else if (command === 'gh') {
   if (args[0] === 'release' && args[1] === 'view') {
@@ -108,7 +119,8 @@ if (command === 'git') {
       head_repository: { id: 44 }, status: 'completed', conclusion: 'success', ...state.run };
     output(JSON.stringify([{workflow_runs: []}, {workflow_runs: state.noPreparation ? [] : [run]}]));
   } else if (args[0] === 'api' && args.includes('repos/fixture/ait/actions/runs/852/attempts/2/jobs')) {
-    const job = (name, steps) => ({ name, conclusion: 'success',
+    const job = (name, steps) => ({ name, conclusion: 'success', run_attempt: state.jobAttempt ?? 2,
+      head_sha: state.jobHead || process.env.HEAD,
       steps: steps.map(name => ({ name, conclusion: state.skippedStep === name ? 'skipped' : 'success' })) });
     output(JSON.stringify([{ jobs: [job('validate', ['Verify release candidate identity',
       'Assess supported releases during preparation', 'Validate candidate and run gates',
@@ -149,6 +161,7 @@ if (command === 'git') {
       wrongBranch: { run: { head_branch: 'different-branch' } },
       wrongRepository: { run: { head_repository: { id: 45 } } },
       wrongWorkflow: { run: { path: '.github/workflows/security.yml' } },
+      wrongJobCommit: { jobHead: other }, wrongJobAttempt: { jobAttempt: 1 },
       wrongEvent: { run: { event: 'pull_request' } },
       failed: { run: { conclusion: 'failure' } },
       testsSkipped: { skippedStep: 'Validate candidate and run gates' },
@@ -167,12 +180,17 @@ if (command === 'git') {
     assert.ok(edit.includes(peer ? '--prerelease=true' : '--prerelease=false'));
     assert.ok(edit.includes(peer ? '--latest=false' : '--latest=true'));
     if (peer) assert.equal(good.calls.filter(c => c.includes('--jq') && c.includes('.id')).length, 2, 'peer verifies stable latest before/after');
-    for (const [label, overrides] of Object.entries({ movedSource: { moved: true }, wrongDraftTarget: { viewTarget: other },
+    for (const [label, overrides] of Object.entries({ movedSource: { moved: true }, movedRemote: { remoteMoved: true }, existingTag: { existingTag: true }, tagLookupFailure: { tagLookupFailed: true }, wrongDraftTarget: { viewTarget: other },
       wrongApiTarget: { apiTarget: other }, wrongTag: { apiTag: 'v0.0.0' }, wrongDigest: { badDigest: true },
       extraAsset: { extraAsset: true }, publishedAlready: { draft: false }, wrongChannel: { wrongChannel: true } })) {
       const bad = runBlock(publish, peer, overrides);
       assert.notEqual(bad.status, 0, `${label} must fail`);
       assert.equal(bad.state.mutations, 0, `${label} must block before gh mutation`);
+    }
+    for (const options of [{ missingPublishedTag: true }, { wrongPublishedTag: true }]) {
+      const bad = runBlock(publish, peer, options);
+      assert.notEqual(bad.status, 0, 'published tag must resolve to the prepared commit');
+      assert.equal(bad.state.mutations, 1, 'tag readback happens after publication');
     }
     const draft = runBlock(prepare, peer);
     assert.equal(draft.status, 0, draft.stderr); assert.equal(draft.state.mutations, 1);

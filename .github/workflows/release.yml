@@ -73,8 +73,8 @@ jobs:
           const runs = api(`repos/${repo}/actions/workflows/release.yml/runs`,
             '-f', 'event=workflow_dispatch', '-f', `branch=${branch}`,
             '-f', `head_sha=${sha}`, '-f', 'status=success').flatMap(page => page.workflow_runs);
-          const successful = (jobs, name, required) => jobs.some(job => job.name === name &&
-            job.conclusion === 'success' && required.every(step => job.steps.some(
+          const successful = (jobs, attempt, name, required) => jobs.some(job => job.name === name &&
+            job.run_attempt === attempt && job.head_sha === sha && job.conclusion === 'success' && required.every(step => job.steps.some(
               result => result.name === step && result.conclusion === 'success')));
           for (const run of runs) {
             if (!Number.isSafeInteger(run.id) || run.id <= 0 ||
@@ -86,10 +86,10 @@ jobs:
                 run.status !== 'completed' || run.conclusion !== 'success') continue;
             const jobs = api(`repos/${repo}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs`)
               .flatMap(page => page.jobs);
-            if (successful(jobs, 'validate', ['Verify release candidate identity',
+            if (successful(jobs, run.run_attempt, 'validate', ['Verify release candidate identity',
                 'Assess supported releases during preparation', 'Validate candidate and run gates',
                 'Verify and report release dispositions']) &&
-                successful(jobs, 'release', ['Prepare exact release asset',
+                successful(jobs, run.run_attempt, 'release', ['Prepare exact release asset',
                 'Gate immutable release settings and ancestry', 'Refuse migration-surface changes',
                 'Prepare inspected draft'])) {
               console.log(`Reusing preparation run ${run.id}, attempt ${run.run_attempt}, for ${sha}`);
@@ -381,6 +381,16 @@ jobs:
           const accepted = JSON.parse(process.env.ACCEPTED_UPSTREAM);
           if (!Array.isArray(accepted) || accepted.some(line => typeof line !== 'string' || !r.body?.split('\n').includes(line))) process.exit(1);
           NODE
+          branch_ref="refs/heads/$GITHUB_REF_NAME"
+          remote_branch="$(git ls-remote --exit-code --refs origin "$branch_ref")"
+          test "$remote_branch" = "$(git rev-parse HEAD)"$'\t'"$branch_ref"
+          tag_ref="refs/tags/$RELEASE_TAG"
+          if git ls-remote --exit-code --refs origin "$tag_ref" >/dev/null; then
+            echo "release tag already exists: $RELEASE_TAG" >&2
+            exit 1
+          else
+            test "$?" -eq 2
+          fi
           if [ "$GITHUB_REF_NAME" = build/private-peer-integration ]; then
             latest_before="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.id')"
             gh release edit "$RELEASE_TAG" --draft=false --prerelease=true --latest=false
@@ -399,3 +409,5 @@ jobs:
           const [a] = r.assets || [];
           if (r.assets?.length !== 1 || a?.name !== 'install.sh' || a.digest !== `sha256:${expected}`) process.exit(1);
           NODE
+          git fetch --quiet origin "$tag_ref:refs/ait-release-published/$RELEASE_TAG"
+          test "$(git rev-parse "refs/ait-release-published/$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"

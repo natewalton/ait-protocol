@@ -1003,7 +1003,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry. Nate renewed this decision for the Node 26 candidate in PR #86 on 2026-11-24 through the original December 10 expiry.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1025,7 +1025,7 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:c38d55cbc013247a09a57e4a5f7a949db2fb77dc17f18d40e4f1f06b13292d98",
+        "candidateTree": "sha256:3f78749ec3cf71cae1fda030f60aed9ad26ea8b82a83061802c727fc2b83e615",
         "baselineCommit": "74ae204f41f1bcd7acb3e3b4a16cd2c781aa4b06",
         "reviewer": "@ait-skills-dev",
         "upstreamCheckedOn": "2026-11-21",
@@ -1049,7 +1049,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry. Nate renewed this decision for the Node 26 candidate in PR #86 on 2026-11-24 through the original December 10 expiry.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1071,7 +1071,7 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:c38d55cbc013247a09a57e4a5f7a949db2fb77dc17f18d40e4f1f06b13292d98",
+        "candidateTree": "sha256:3f78749ec3cf71cae1fda030f60aed9ad26ea8b82a83061802c727fc2b83e615",
         "baselineCommit": "74ae204f41f1bcd7acb3e3b4a16cd2c781aa4b06",
         "reviewer": "@ait-skills-dev",
         "upstreamCheckedOn": "2026-11-21",
@@ -1169,7 +1169,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry. Nate renewed this decision for the Node 26 candidate in PR #86 on 2026-11-24 through the original December 10 expiry.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1191,7 +1191,7 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:c38d55cbc013247a09a57e4a5f7a949db2fb77dc17f18d40e4f1f06b13292d98",
+        "candidateTree": "sha256:3f78749ec3cf71cae1fda030f60aed9ad26ea8b82a83061802c727fc2b83e615",
         "baselineCommit": "74ae204f41f1bcd7acb3e3b4a16cd2c781aa4b06",
         "reviewer": "@ait-skills-dev",
         "upstreamCheckedOn": "2026-11-21",
@@ -1326,7 +1326,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry. Nate renewed this decision for the Node 26 candidate in PR #86 on 2026-11-24 through the original December 10 expiry.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1348,7 +1348,7 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:c38d55cbc013247a09a57e4a5f7a949db2fb77dc17f18d40e4f1f06b13292d98",
+        "candidateTree": "sha256:3f78749ec3cf71cae1fda030f60aed9ad26ea8b82a83061802c727fc2b83e615",
         "baselineCommit": "74ae204f41f1bcd7acb3e3b4a16cd2c781aa4b06",
         "reviewer": "@ait-skills-dev",
         "upstreamCheckedOn": "2026-11-21",
@@ -1372,7 +1372,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry. Nate renewed this decision for the Node 26 candidate in PR #86 on 2026-11-24 through the original December 10 expiry.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1394,7 +1394,7 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:c38d55cbc013247a09a57e4a5f7a949db2fb77dc17f18d40e4f1f06b13292d98",
+        "candidateTree": "sha256:3f78749ec3cf71cae1fda030f60aed9ad26ea8b82a83061802c727fc2b83e615",
         "baselineCommit": "74ae204f41f1bcd7acb3e3b4a16cd2c781aa4b06",
         "reviewer": "@ait-skills-dev",
         "upstreamCheckedOn": "2026-11-21",
@@ -1748,7 +1748,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer explicitly approved the independently reviewed temporary MCP availability-risk exception on November 19 through December 10. Supported upstream Zod 3 remains vulnerable. Local PDS HTTP responses can reach DID-document array validation without a complete response/work bound, potentially exhausting or terminating MCP or aitty. Existing stdio controls do not establish HTTP-response mitigation. No dependency override, custom validator or partial Lex migration is proposed. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry.",
+      "reason": "Maintainer explicitly approved the independently reviewed temporary MCP availability-risk exception on November 19 through December 10. Supported upstream Zod 3 remains vulnerable. Local PDS HTTP responses can reach DID-document array validation without a complete response/work bound, potentially exhausting or terminating MCP or aitty. Existing stdio controls do not establish HTTP-response mitigation. No dependency override, custom validator or partial Lex migration is proposed. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry. Nate renewed this decision for the Node 26 candidate in PR #86 on 2026-11-24 through the original December 10 expiry.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1783,7 +1783,7 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:c38d55cbc013247a09a57e4a5f7a949db2fb77dc17f18d40e4f1f06b13292d98",
+        "candidateTree": "sha256:3f78749ec3cf71cae1fda030f60aed9ad26ea8b82a83061802c727fc2b83e615",
         "baselineCommit": "74ae204f41f1bcd7acb3e3b4a16cd2c781aa4b06",
         "reviewer": "@ait-skills-dev",
         "upstreamCheckedOn": "2026-11-21",

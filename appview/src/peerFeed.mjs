@@ -108,6 +108,7 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
     const { creates, commit } = await verifyRepoCar(assertRepoCarBounds(await getRepo(did, controller.signal)), did, key)
     const previousSnapshot = snapshots.get(did)
     const previousRevision = previousSnapshot?.rev ?? ''
+    const initialBackfill = backfill && !previousSnapshot
     const base = { ...meta, did, commit: commit.cid, blocks: commit.newBlocks, rev: commit.rev }
     const present = new Set()
     // Authenticate and validate every selected record before admitting this
@@ -122,7 +123,7 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       const record = ipldToLex(cborToLexRecord(bytes))
       const uriString = uri.toString()
       const previousCid = previousSnapshot?.skipped.get(uriString)
-      if (!validateRecord(entry.collection, record, backfill || entry.cid.equals(previousCid))) {
+      if (!validateRecord(entry.collection, record, initialBackfill || entry.cid.equals(previousCid))) {
         skipped.set(uriString, entry.cid)
         continue
       }

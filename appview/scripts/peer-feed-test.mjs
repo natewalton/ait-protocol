@@ -500,8 +500,8 @@ test('account activation resync imports newer valid records past the same histor
     [{ text: 'valid history' }, { text: 'written before activation' }])
 })
 
-for (const operation of ['create', 'update']) {
-  test(`activation resync rejects an overlong record it has not previously skipped: ${operation}`, { timeout: 5000 }, async t => {
+for (const [trigger, operation] of [['sync', 'create'], ['sync', 'update'], ['catch-up', 'create']]) {
+  test(`${trigger} rejects an overlong record it has not previously skipped: ${operation}`, { timeout: 5000 }, async t => {
     const initial = await signed(A, [post('legacy', 'a'.repeat(1001)), post('kept', 'valid history')])
     const rkey = operation === 'create' ? 'new' : 'legacy'
     const updated = await initial.repo.applyWrites([{ ...post(rkey, 'b'.repeat(1001)), action: operation }], initial.signer)
@@ -509,7 +509,8 @@ for (const operation of ['create', 'update']) {
     let reads = 0
     const f = await fixture(t, { repos: [initial], pages: { '': { repos: [listing(initial)] } },
       getRepo: async () => reads++ === 0 ? initial.car : car,
-      messages: [{ $type: `${METHOD}#sync`, did: A, seq: 1, time: TIME, rev: updated.commit.rev, blocks: car }] })
+      messages: trigger === 'catch-up' ? [{ $type: `${METHOD}#info`, name: 'OutdatedCursor' }]
+        : [{ $type: `${METHOD}#sync`, did: A, seq: 1, time: TIME, rev: updated.commit.rev, blocks: car }] })
     assert.match((await failed(f.feed)).message, /1000 graphemes/)
     assert.equal(f.feed.getCursor(), 0)
     assert.deepEqual(f.db.prepare('SELECT text FROM posts').all(), [{ text: 'valid history' }])

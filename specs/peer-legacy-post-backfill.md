@@ -12,16 +12,17 @@ its initial import or consuming later messages.
 
 ## Proposed work
 
-Use the existing historical-post rule for local and approved peer backfill and
-covered stream replay. A later verified snapshot after account activation or a
-large commit may still contain the old post. Allow that snapshot to carry forward
-only an omission with the exact same record URI and signed content ID from the
-last accepted snapshot. Log newly omitted records with source and URI. Later
+Use the existing historical-post rule for each actor's first verified backfill and
+covered stream replay on local and approved peer feeds. A later verified
+snapshot after account activation, a large commit, or cursor expiration may
+still contain the old post. Carry forward an omission only if its record URI
+and signed content ID match the last accepted snapshot. Log newly omitted records with source and URI. Later
 valid records and mentions reach the existing feed and notification paths.
 
 Keep source binding, signature checks, input bounds, and other schema rules in
 place. New stream records and previously unseen invalid records in live
-snapshots remain strict.
+snapshots remain strict. A newly written overlong record can still stop a live
+feed. This change covers historical recovery.
 
 ## Files touched
 

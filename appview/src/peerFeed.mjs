@@ -15,7 +15,7 @@ const LIST = 'com.atproto.sync.listRepos'
 const lexicons = new Lexicons([...schemas, ...AIT_LEXICONS])
 const collections = new Set(['ait.feed.post', 'ait.graph.follow', 'ait.actor.profile'])
 
-// A signed local historical post may predate enforcement of the text limit.
+// A signed historical post may predate enforcement of the text limit.
 // Only excuse that specific failure, and still validate every other field.
 function validateRecord(collection, record, allowOverlongPost) {
   try {
@@ -35,7 +35,7 @@ function validateRecord(collection, record, allowOverlongPost) {
 export function createVerifiedFeed({ db, idResolver, service, agent, getJson, getRepo,
   source = 'local', isApprovedSource = () => true,
   onError = error => console.error(`feed ${source}:`, error) }) {
-  const snapshotRevisions = new Map()
+  const snapshots = new Map()
   let cursor = 0
   let running
   let status = { state: 'starting' }
@@ -106,6 +106,8 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
     doc ??= await boundDocument(did)
     const key = await idResolver.did.resolveAtprotoKey(did)
     const { creates, commit } = await verifyRepoCar(assertRepoCarBounds(await getRepo(did, controller.signal)), did, key)
+    const previousSnapshot = snapshots.get(did)
+    const historical = backfill || commit.cid.equals(previousSnapshot?.cid)
     const base = { ...meta, did, commit: commit.cid, blocks: commit.newBlocks, rev: commit.rev }
     const present = new Set()
     // Authenticate and validate every selected record before admitting this
@@ -118,14 +120,14 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       const bytes = commit.newBlocks.get(entry.cid)
       assert(bytes, `Verified snapshot is missing ${uri}`)
       const record = ipldToLex(cborToLexRecord(bytes))
-      if (!validateRecord(entry.collection, record, source === 'local' && backfill)) {
+      if (!validateRecord(entry.collection, record, historical)) {
         skipped.push(uri.toString())
         continue
       }
       present.add(uri.toString())
       records.push({ ...base, ...entry, uri, event: 'create', record })
     }
-    if (commit.rev < (snapshotRevisions.get(did) ?? '')) return
+    if (commit.rev < (previousSnapshot?.rev ?? '')) return
     await account(did, doc, true, undefined, meta)
     for (const record of records) await project(record)
     const previous = db.prepare(
@@ -139,9 +141,10 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       const uri = new AtUri(row.uri)
       await project({ ...base, event: 'delete', uri, collection: uri.collection, rkey: uri.rkey })
     }
-    snapshotRevisions.set(did, commit.rev)
-    for (const uri of skipped) {
-      console.error(`feed local: skipped ${uri}: post text exceeds 1000 graphemes`)
+    snapshots.set(did, { rev: commit.rev, cid: commit.cid })
+    // The initial snapshot already reported the same omitted history.
+    for (const uri of backfill ? skipped : []) {
+      console.error(`feed ${source}: skipped ${uri}: post text exceeds 1000 graphemes`)
     }
   }
 
@@ -208,11 +211,11 @@ export function createVerifiedFeed({ db, idResolver, service, agent, getJson, ge
       assert(car.root.equals(message.commit) && root.did === did && root.rev === message.rev,
         `Commit envelope does not match authenticated root for ${did}`)
       if (!expected.length) await verifyProofs(message.blocks, [], did, await idResolver.did.resolveAtprotoKey(did))
-      const covered = root.rev <= (snapshotRevisions.get(did) ?? '')
+      const covered = root.rev <= (snapshots.get(did)?.rev ?? '')
       for (const event of events) {
         if (event.event === 'create' || event.event === 'update') {
           event.record = ipldToLex(event.record)
-          validateRecord(event.collection, event.record, source === 'local' && covered)
+          validateRecord(event.collection, event.record, covered)
         }
       }
       if (!covered) {

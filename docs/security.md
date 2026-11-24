@@ -1050,7 +1050,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry. Nate renewed this decision for the reviewed PR #85 candidate on 2026-11-23 through December 10, 2026.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry. Nate renewed this decision for the reviewed PR #85 candidate on 2026-11-23 through December 10, 2026. Nate explicitly extended this approval to the peer.7 candidate with the version and two-Mac guide changes. The December 10 expiry is unchanged.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1072,12 +1072,12 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:c10810c5d8ec01eac20f02034e1291753efa564ac51bcffe9d0fafceb10e725b",
+        "candidateTree": "sha256:8e9356f14d24474cb2a5f272430edbf7ac3470958adc3a31f2d7e13aa6826270",
         "baselineCommit": "0636e6243ba83dd69d9f0a18952a545a27853868",
         "reviewer": "@ait-skills-dev",
         "upstreamCheckedOn": "2026-11-21",
         "supportedFixCheck": "November 21 registry review: PDS 0.5.64 still requires Nodemailer ^6.8.0. No supported upstream mail fix was available.",
-        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval. Independent November 21 review found no new network input or mail configuration from the Claude delivery changes. AIT Skills independently confirmed unchanged mail and MCP exposure in PR #85. The AppView change omits unusable historical records after verification and leaves the PDS, MCP, transport and dependency graph unchanged.",
+        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval. Independent November 21 review found no new network input or mail configuration from the Claude delivery changes. AIT Skills independently confirmed unchanged mail and MCP exposure in PR #85. The AppView change omits unusable historical records after verification and leaves the PDS, MCP, transport and dependency graph unchanged. AIT Skills independently confirmed the peer.7 version and guide change leaves the reviewed exposure unchanged.",
         "exploitationReview": "Current GitHub metadata reviewed for this finding and known inputs traced. KEV is freshly checked by the gate. Absence from KEV does not establish safety. Known resource/file risks remain disclosed."
       }
     },
@@ -1096,7 +1096,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry. Nate renewed this decision for the reviewed PR #85 candidate on 2026-11-23 through December 10, 2026.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry. Nate renewed this decision for the reviewed PR #85 candidate on 2026-11-23 through December 10, 2026. Nate explicitly extended this approval to the peer.7 candidate with the version and two-Mac guide changes. The December 10 expiry is unchanged.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1118,12 +1118,12 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:c10810c5d8ec01eac20f02034e1291753efa564ac51bcffe9d0fafceb10e725b",
+        "candidateTree": "sha256:8e9356f14d24474cb2a5f272430edbf7ac3470958adc3a31f2d7e13aa6826270",
         "baselineCommit": "0636e6243ba83dd69d9f0a18952a545a27853868",
         "reviewer": "@ait-skills-dev",
         "upstreamCheckedOn": "2026-11-21",
         "supportedFixCheck": "November 21 registry review: PDS 0.5.64 still requires Nodemailer ^6.8.0. No supported upstream mail fix was available.",
-        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval. Independent November 21 review found no new network input or mail configuration from the Claude delivery changes. AIT Skills independently confirmed unchanged mail and MCP exposure in PR #85. The AppView change omits unusable historical records after verification and leaves the PDS, MCP, transport and dependency graph unchanged.",
+        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval. Independent November 21 review found no new network input or mail configuration from the Claude delivery changes. AIT Skills independently confirmed unchanged mail and MCP exposure in PR #85. The AppView change omits unusable historical records after verification and leaves the PDS, MCP, transport and dependency graph unchanged. AIT Skills independently confirmed the peer.7 version and guide change leaves the reviewed exposure unchanged.",
         "exploitationReview": "Current GitHub metadata reviewed for this finding and known inputs traced. KEV is freshly checked by the gate. Absence from KEV does not establish safety. Known resource/file risks remain disclosed."
       }
     },
@@ -1216,7 +1216,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry. Nate renewed this decision for the reviewed PR #85 candidate on 2026-11-23 through December 10, 2026.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry. Nate renewed this decision for the reviewed PR #85 candidate on 2026-11-23 through December 10, 2026. Nate explicitly extended this approval to the peer.7 candidate with the version and two-Mac guide changes. The December 10 expiry is unchanged.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1238,12 +1238,12 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:c10810c5d8ec01eac20f02034e1291753efa564ac51bcffe9d0fafceb10e725b",
+        "candidateTree": "sha256:8e9356f14d24474cb2a5f272430edbf7ac3470958adc3a31f2d7e13aa6826270",
         "baselineCommit": "0636e6243ba83dd69d9f0a18952a545a27853868",
         "reviewer": "@ait-skills-dev",
         "upstreamCheckedOn": "2026-11-21",
         "supportedFixCheck": "November 21 registry review: PDS 0.5.64 still requires Nodemailer ^6.8.0. No supported upstream mail fix was available.",
-        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval. Independent November 21 review found no new network input or mail configuration from the Claude delivery changes. AIT Skills independently confirmed unchanged mail and MCP exposure in PR #85. The AppView change omits unusable historical records after verification and leaves the PDS, MCP, transport and dependency graph unchanged.",
+        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval. Independent November 21 review found no new network input or mail configuration from the Claude delivery changes. AIT Skills independently confirmed unchanged mail and MCP exposure in PR #85. The AppView change omits unusable historical records after verification and leaves the PDS, MCP, transport and dependency graph unchanged. AIT Skills independently confirmed the peer.7 version and guide change leaves the reviewed exposure unchanged.",
         "exploitationReview": "Current GitHub metadata reviewed for this finding and known inputs traced. KEV is freshly checked by the gate. Absence from KEV does not establish safety. Known resource/file risks remain disclosed."
       }
     },
@@ -1373,7 +1373,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry. Nate renewed this decision for the reviewed PR #85 candidate on 2026-11-23 through December 10, 2026.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry. Nate renewed this decision for the reviewed PR #85 candidate on 2026-11-23 through December 10, 2026. Nate explicitly extended this approval to the peer.7 candidate with the version and two-Mac guide changes. The December 10 expiry is unchanged.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1395,12 +1395,12 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:c10810c5d8ec01eac20f02034e1291753efa564ac51bcffe9d0fafceb10e725b",
+        "candidateTree": "sha256:8e9356f14d24474cb2a5f272430edbf7ac3470958adc3a31f2d7e13aa6826270",
         "baselineCommit": "0636e6243ba83dd69d9f0a18952a545a27853868",
         "reviewer": "@ait-skills-dev",
         "upstreamCheckedOn": "2026-11-21",
         "supportedFixCheck": "November 21 registry review: PDS 0.5.64 still requires Nodemailer ^6.8.0. No supported upstream mail fix was available.",
-        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval. Independent November 21 review found no new network input or mail configuration from the Claude delivery changes. AIT Skills independently confirmed unchanged mail and MCP exposure in PR #85. The AppView change omits unusable historical records after verification and leaves the PDS, MCP, transport and dependency graph unchanged.",
+        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval. Independent November 21 review found no new network input or mail configuration from the Claude delivery changes. AIT Skills independently confirmed unchanged mail and MCP exposure in PR #85. The AppView change omits unusable historical records after verification and leaves the PDS, MCP, transport and dependency graph unchanged. AIT Skills independently confirmed the peer.7 version and guide change leaves the reviewed exposure unchanged.",
         "exploitationReview": "Current GitHub metadata reviewed for this finding and known inputs traced. KEV is freshly checked by the gate. Absence from KEV does not establish safety. Known resource/file risks remain disclosed."
       }
     },
@@ -1419,7 +1419,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry. Nate renewed this decision for the reviewed PR #85 candidate on 2026-11-23 through December 10, 2026.",
+      "reason": "Maintainer approved residual upstream mail risk for managed loopback/default JSON mail on November19. Known direct file/URL protection failures remain documented evidence. Administrative and historical recipient addresses retain denial-of-service risk. Operator SMTP and moderation SMTP are outside approval. Known file/URL and recipient-parser defects, including the measured 46.5-second parser result, are accepted residual upstream risks; reproducing them is not a release requirement. The reviewed scope must still match. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry. Nate renewed this decision for the reviewed PR #85 candidate on 2026-11-23 through December 10, 2026. Nate explicitly extended this approval to the peer.7 candidate with the version and two-Mac guide changes. The December 10 expiry is unchanged.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1441,12 +1441,12 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:c10810c5d8ec01eac20f02034e1291753efa564ac51bcffe9d0fafceb10e725b",
+        "candidateTree": "sha256:8e9356f14d24474cb2a5f272430edbf7ac3470958adc3a31f2d7e13aa6826270",
         "baselineCommit": "0636e6243ba83dd69d9f0a18952a545a27853868",
         "reviewer": "@ait-skills-dev",
         "upstreamCheckedOn": "2026-11-21",
         "supportedFixCheck": "November 21 registry review: PDS 0.5.64 still requires Nodemailer ^6.8.0. No supported upstream mail fix was available.",
-        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval. Independent November 21 review found no new network input or mail configuration from the Claude delivery changes. AIT Skills independently confirmed unchanged mail and MCP exposure in PR #85. The AppView change omits unusable historical records after verification and leaves the PDS, MCP, transport and dependency graph unchanged.",
+        "exposureComparison": "The peer.4 audit used unsupported mail majors. Restoring supported versions is mandatory. Reviewed scope is default JSON/loopback/generated accounts; recipient parsing and the direct file/URL defect are explicitly retained risks. SMTP is outside approval. Independent November 21 review found no new network input or mail configuration from the Claude delivery changes. AIT Skills independently confirmed unchanged mail and MCP exposure in PR #85. The AppView change omits unusable historical records after verification and leaves the PDS, MCP, transport and dependency graph unchanged. AIT Skills independently confirmed the peer.7 version and guide change leaves the reviewed exposure unchanged.",
         "exploitationReview": "Current GitHub metadata reviewed for this finding and known inputs traced. KEV is freshly checked by the gate. Absence from KEV does not establish safety. Known resource/file risks remain disclosed."
       }
     },
@@ -1795,7 +1795,7 @@ source commit, source-lock digest and exact crate path/version.
       "owner": "@natewalton",
       "reviewedOn": "2026-11-19",
       "expiresOn": "2026-12-10",
-      "reason": "Maintainer explicitly approved the independently reviewed temporary MCP availability-risk exception on November 19 through December 10. Supported upstream Zod 3 remains vulnerable. Local PDS HTTP responses can reach DID-document array validation without a complete response/work bound, potentially exhausting or terminating MCP or aitty. Existing stdio controls do not establish HTTP-response mitigation. No dependency override, custom validator or partial Lex migration is proposed. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry. Nate renewed this decision for the reviewed PR #85 candidate on 2026-11-23 through December 10, 2026.",
+      "reason": "Maintainer explicitly approved the independently reviewed temporary MCP availability-risk exception on November 19 through December 10. Supported upstream Zod 3 remains vulnerable. Local PDS HTTP responses can reach DID-document array validation without a complete response/work bound, potentially exhausting or terminating MCP or aitty. Existing stdio controls do not establish HTTP-response mitigation. No dependency override, custom validator or partial Lex migration is proposed. Nate renewed the decision for this reviewed candidate on November 22, 2026, with the original December 10 expiry. Nate renewed this decision for the reviewed PR #85 candidate on 2026-11-23 through December 10, 2026. Nate explicitly extended this approval to the peer.7 candidate with the version and two-Mac guide changes. The December 10 expiry is unchanged.",
       "exposures": [
         "local-and-approved-peer"
       ],
@@ -1830,12 +1830,12 @@ source commit, source-lock digest and exact crate path/version.
         }
       ],
       "upstreamAcceptance": {
-        "candidateTree": "sha256:c10810c5d8ec01eac20f02034e1291753efa564ac51bcffe9d0fafceb10e725b",
+        "candidateTree": "sha256:8e9356f14d24474cb2a5f272430edbf7ac3470958adc3a31f2d7e13aa6826270",
         "baselineCommit": "0636e6243ba83dd69d9f0a18952a545a27853868",
         "reviewer": "@ait-skills-dev",
         "upstreamCheckedOn": "2026-11-21",
         "supportedFixCheck": "November 21 registry review: API 0.32.5, common-web 0.5.19, Lexicon 0.7.21 and XRPC 0.8.20 still require Zod ^3.23.8. No complete supported upstream fix was available.",
-        "exposureComparison": "Peer.4 suppressed these findings through an unsupported package-wide Zod override. Restoring upstream contracts is mandatory and scan equivalence is not required. MCP and aitty route canonical client requests through localPdsFetch to the configured loopback PDS with redirects rejected. Approved peers can contribute data. Common-web response-controlled collections lack a complete pre-validation work bound; process denial of service remains a residual risk. API/XRPC use fixed-shape scalar validators and Lexicon loads bundled schema documents plus scalar blob shapes, but no non-applicability exemption is claimed for any of the four paths. Independent November 21 review found no new network input or mail configuration from the Claude delivery changes. AIT Skills independently confirmed unchanged mail and MCP exposure in PR #85. The AppView change omits unusable historical records after verification and leaves the PDS, MCP, transport and dependency graph unchanged.",
+        "exposureComparison": "Peer.4 suppressed these findings through an unsupported package-wide Zod override. Restoring upstream contracts is mandatory and scan equivalence is not required. MCP and aitty route canonical client requests through localPdsFetch to the configured loopback PDS with redirects rejected. Approved peers can contribute data. Common-web response-controlled collections lack a complete pre-validation work bound; process denial of service remains a residual risk. API/XRPC use fixed-shape scalar validators and Lexicon loads bundled schema documents plus scalar blob shapes, but no non-applicability exemption is claimed for any of the four paths. Independent November 21 review found no new network input or mail configuration from the Claude delivery changes. AIT Skills independently confirmed unchanged mail and MCP exposure in PR #85. The AppView change omits unusable historical records after verification and leaves the PDS, MCP, transport and dependency graph unchanged. AIT Skills independently confirmed the peer.7 version and guide change leaves the reviewed exposure unchanged.",
         "exploitationReview": "Fresh GitHub advisory metadata reviewed November 19; CVE-2023-54404 was absent from the CISA KEV catalog dated November 18. Absence is not proof of no exploitation. The release gate must repeat the fresh lookup. Known memory-exhaustion risk remains disclosed; existing ingress regressions prove only their actual tested surfaces."
       }
     },

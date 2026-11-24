@@ -156,7 +156,7 @@ async function startAppview(s) {
       const response = await fetch(`${s.appviewUrl}/xrpc/_health`)
       const health = await response.json()
       if (response.ok) { assert.equal(health.indexing.state, 'running'); return }
-      assert.equal(health.status, 'starting', JSON.stringify(health))
+      assert.equal(health.status, 'starting', `${JSON.stringify(health)}\n${s.output}`)
       await new Promise(resolve => setTimeout(resolve, 20))
     }
   })(), `${s.name} initial local backfill`)
@@ -366,6 +366,11 @@ try {
   execFileSync(`${pgBin}/pg_ctl`, ['-D', pgData, '-l', path.join(root, 'postgres.log'), '-o', `-h 127.0.0.1 -p ${pgPort} -c unix_socket_directories=''`, '-w', 'start'], { stdio: 'ignore' })
   postmasterPid = Number(fs.readFileSync(path.join(pgData, 'postmaster.pid'), 'utf8').split('\n')[0])
   const a = await fixture('alice', pgPort), b = await fixture('bobby', pgPort)
+  // Seed fixture-owned history that predates the AIT post text limit.
+  const oldOverlong = (await b.agent.com.atproto.repo.createRecord({
+    repo: b.account.did, collection: 'ait.feed.post', validate: false,
+    record: { $type: 'ait.feed.post', text: 'x'.repeat(1001), createdAt: new Date().toISOString() },
+  })).data
   await writeOldPost(a, b); await writeOldPost(b, a)
   for (const s of instances) {
     await stopPds(s); assert(needsPreparation(s.repo))
@@ -454,7 +459,13 @@ try {
   await publicLink(b, invitation, { openDirect: !!relay })
   await Promise.all([notification(a, b.oldPost.uri), notification(b, a.oldPost.uri)])
   await assert.rejects(localCommand(b.control, 'link', { invitation }))
-  report('public Link confirmation creates approved direct streams; old history replays and invitation reuse fails')
+  assert(a.output.includes(`skipped ${oldOverlong.uri}: post text exceeds 1000 graphemes`))
+  assert(!a.push.some(event => event.uri === oldOverlong.uri))
+  const imported = await tool(a, 'getAuthorFeed', { actor: b.account.did })
+  assert(!imported.isError)
+  assert.match(imported.content[0].text, /old bobby history/)
+  assert(!imported.content[0].text.includes(oldOverlong.uri))
+  report('approved direct streams replay valid history, report the skipped historical post, and refuse invitation reuse')
   const retire = async (s, actor, subject, retired) => actor.call('ait.actor.setRetired', undefined,
     { subject, retired }, { encoding: 'application/json', headers: { 'atproto-proxy': `${s.values.bskyAppViewDid}#bsky_appview` } })
   for (const s of instances) {
@@ -626,6 +637,14 @@ esac
   assert.equal(record.uri, postUri); assert.equal(record.value.facets[0].features[0].did, b.account.did)
   await assert.rejects(b.agent.com.atproto.repo.getRecord({ repo: a.account.did, collection: 'ait.feed.post', rkey: postUri.split('/').at(-1), cid: b.oldPost.cid }))
   report('existing MCP discovery/follow/post/reply/thread and local-PDS reply lookup agree on original DIDs/CIDs; callbacks delivered')
+  await b.agent.com.atproto.server.deactivateAccount({})
+  await b.agent.com.atproto.server.activateAccount()
+  const afterActivation = await tool(b, 'reply', { parent_uri: postUri, text: 'another reply to @alice after reactivation' })
+  assert(!afterActivation.isError)
+  const activationReplyUri = /URI: (\S+)/.exec(afterActivation.content[0].text)[1]
+  await notification(a, activationReplyUri)
+  assert.match((await tool(a, 'getPostThread', { post_uri: postUri })).content[0].text, new RegExp(activationReplyUri))
+  report('account reactivation resync retains the historical omission and delivers a later reply and mention')
   const updatedAvatar = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+c7usAAAAASUVORK5CYII=', 'base64')
   const updatedAvatarPath = path.join(a.repo, 'home/avatar-updated.png')
   fs.writeFileSync(updatedAvatarPath, updatedAvatar)

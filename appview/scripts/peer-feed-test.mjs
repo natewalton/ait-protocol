@@ -448,36 +448,74 @@ test('an initially sleeping peer resumes signed backfill and live delivery using
 })
 
 
-test('local legacy post is absent after snapshot and queued replay, and a later valid commit indexes', { timeout: 5000 }, async t => {
-  const value = await signed(A, [post('legacy', 'a'.repeat(1001)), post('valid', 'kept')])
-  const newer = await signed(A, [post('live', 'new valid post')], value.signer)
-  const f = await fixture(t, { source: 'local', repos: [value], pages: { '': { repos: [listing(value)] } },
-    messages: [await commit(value, 1), await commit(newer, 2)] })
-  legacyPost(f.db, A, 'legacy', 'stale projected content')
-  void f.feed.start().catch(() => {})
-  await waitFor(() => f.feed.getCursor() === 2)
-  assert.equal(f.feed.getStatus().state, 'running')
-  assert.deepEqual(f.db.prepare('SELECT text FROM posts ORDER BY text').all(),
-    [{ text: 'kept' }, { text: 'new valid post' }])
-})
+for (const source of ['local', SOURCE]) {
+  test(`${source} history skips only the overlong post and still indexes a later commit`, { timeout: 5000 }, async t => {
+    const value = await signed(A, [post('legacy', 'a'.repeat(1001)), post('valid', 'kept')])
+    const newer = await signed(A, [post('live', 'new valid post')], value.signer)
+    const f = await fixture(t, { source, repos: [value], pages: { '': { repos: [listing(value)] } },
+      messages: [await commit(value, 1), { $type: `${METHOD}#sync`, did: A, seq: 2,
+        time: TIME, rev: value.repo.commit.rev, blocks: value.car }, await commit(newer, 3)] })
+    legacyPost(f.db, A, 'legacy', 'stale projected content')
+    void f.feed.start().catch(() => {})
+    await waitFor(() => f.feed.getCursor() === 3 || f.feed.getStatus().state === 'failed')
+    assert.equal(f.feed.getStatus().state, 'running', f.feed.getStatus().error)
+    assert.deepEqual(f.db.prepare('SELECT text FROM posts ORDER BY text').all(),
+      [{ text: 'kept' }, { text: 'new valid post' }])
+  })
+}
 
-test('over-limit exception leaves peer, current live, and otherwise malformed records terminal', { timeout: 5000 }, async t => {
+test('over-limit exception keeps current live and otherwise malformed records terminal', { timeout: 5000 }, async t => {
   const oversized = post('legacy', 'a'.repeat(1001))
-  for (const mode of ['peer', 'live', 'sync', 'malformed']) {
+  for (const mode of ['local-live', 'peer-live', 'peer-sync', 'local-malformed', 'peer-malformed', 'peer-sync-malformed']) {
     await t.test(mode, async sub => {
-      const write = mode === 'malformed' ? { ...oversized, record: { ...oversized.record, createdAt: false } } : oversized
+      const write = mode.endsWith('malformed') ? { ...oversized, record: { ...oversized.record, text: mode.includes('sync') ? 'valid text' : oversized.record.text, createdAt: false } } : oversized
       const value = await signed(A, [write])
-      const messages = mode === 'live' ? [await commit(value, 1)] : []
-      if (mode === 'sync') messages.push({ $type: `${METHOD}#sync`, did: A, seq: 1,
+      const messages = mode.endsWith('live') ? [await commit(value, 1)] : []
+      if (mode.includes('sync')) messages.push({ $type: `${METHOD}#sync`, did: A, seq: 1,
         time: TIME, rev: value.repo.commit.rev, blocks: value.car })
-      const f = await fixture(sub, { source: mode === 'peer' ? SOURCE : 'local', repos: [value],
+      const f = await fixture(sub, { source: mode.startsWith('local-') ? 'local' : SOURCE, repos: [value],
         pages: { '': { repos: messages.length ? [] : [listing(value)] } }, messages })
-      assert.match((await failed(f.feed)).message, mode === 'malformed' ? /createdAt/ : /1000 graphemes/)
+      assert.match((await failed(f.feed)).message, mode.endsWith('malformed') ? /createdAt/ : /1000 graphemes/)
       assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM posts').get().n, 0)
       assert.equal(f.feed.getCursor(), 0)
     })
   }
 })
+
+test('account activation resync imports newer valid records past the same historical post', { timeout: 5000 }, async t => {
+  const initial = await signed(A, [post('legacy', 'a'.repeat(1001)), post('kept', 'valid history')])
+  const updated = await initial.repo.applyWrites([post('new', 'written before activation')], initial.signer)
+  assert(!updated.cid.equals(initial.repo.cid))
+  assert(updated.commit.rev > initial.repo.commit.rev)
+  const car = await concatBytesAsync(getFullRepo(updated.storage, updated.cid))
+  let reads = 0
+  const f = await fixture(t, { repos: [initial], pages: { '': { repos: [listing(initial)] } },
+    getRepo: async () => reads++ === 0 ? initial.car : car,
+    messages: [account(A, 1),
+      { $type: `${METHOD}#sync`, did: A, seq: 2, time: TIME, rev: updated.commit.rev, blocks: car }] })
+  void f.feed.start().catch(() => {})
+  await waitFor(() => f.feed.getCursor() === 2 || f.feed.getStatus().state === 'failed')
+  assert.equal(f.feed.getStatus().state, 'running', f.feed.getStatus().error)
+  assert.deepEqual(f.db.prepare('SELECT text FROM posts ORDER BY text').all(),
+    [{ text: 'valid history' }, { text: 'written before activation' }])
+})
+
+for (const [trigger, operation] of [['sync', 'create'], ['sync', 'update'], ['catch-up', 'create']]) {
+  test(`${trigger} rejects an overlong record it has not previously skipped: ${operation}`, { timeout: 5000 }, async t => {
+    const initial = await signed(A, [post('legacy', 'a'.repeat(1001)), post('kept', 'valid history')])
+    const rkey = operation === 'create' ? 'new' : 'legacy'
+    const updated = await initial.repo.applyWrites([{ ...post(rkey, 'b'.repeat(1001)), action: operation }], initial.signer)
+    const car = await concatBytesAsync(getFullRepo(updated.storage, updated.cid))
+    let reads = 0
+    const f = await fixture(t, { repos: [initial], pages: { '': { repos: [listing(initial)] } },
+      getRepo: async () => reads++ === 0 ? initial.car : car,
+      messages: trigger === 'catch-up' ? [{ $type: `${METHOD}#info`, name: 'OutdatedCursor' }]
+        : [{ $type: `${METHOD}#sync`, did: A, seq: 1, time: TIME, rev: updated.commit.rev, blocks: car }] })
+    assert.match((await failed(f.feed)).message, /1000 graphemes/)
+    assert.equal(f.feed.getCursor(), 0)
+    assert.deepEqual(f.db.prepare('SELECT text FROM posts').all(), [{ text: 'valid history' }])
+  })
+}
 
 test('signed malformed snapshot records never admit identity or earlier valid records', { timeout: 5000 }, async t => {
   for (const writes of [[post('bad', [])], [post('a-valid', 'valid but must not write'), post('z-bad', [])]]) {

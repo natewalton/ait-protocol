@@ -88,3 +88,31 @@ jobs:
           node bin/security-workflow-test.mjs
           node bin/check-native-advisories-test.mjs
           GITHUB_TOKEN="${{ github.token }}" bin/check-advisories.sh --candidate "$GITHUB_WORKSPACE" --configuration managed-default-json
+
+  node-26:
+    name: Node 26 compatibility
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 26
+      - name: Install and test the current stack
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          for workspace in plc pds appview mcp; do
+            npm --prefix "$workspace" ci --no-audit
+          done
+          npm --prefix appview run build
+          npm --prefix mcp run build
+          node appview/scripts/startup-readiness-test.mjs
+          if [ -f appview/src/localFeed.mjs ]; then
+            node mcp/scripts/stack-migration-test.mjs
+          else
+            brew list --versions postgresql@17 >/dev/null || brew install postgresql@17
+            node appview/scripts/peer-link-test.mjs
+          fi

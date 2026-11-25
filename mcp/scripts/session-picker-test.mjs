@@ -159,6 +159,14 @@ const unknownCodexId = '66666666-6666-4666-8666-666666666666'
 const corruptCodexId = '88888888-8888-4888-8888-888888888888'
 const codexServerFile = path.join(root, 'codex-server.mjs')
 const writerState = path.join(root, 'writer-state.json')
+const attachedProcesses = path.join(root, 'attached-processes')
+write(attachedProcesses, '')
+const attachmentProbe = `if (process.argv[2] === '-Aww') {
+  process.stdout.write(require('node:fs').readFileSync(${JSON.stringify(attachedProcesses)}, 'utf8'))
+  process.exit(0)
+}`
+write(path.join(bin, 'ps'), `#!${process.execPath}\n${attachmentProbe}\nprocess.exit(2)\n`)
+fs.chmodSync(path.join(bin, 'ps'), 0o755)
 const writerHome = path.join(root, 'native-server-home')
 const writerLock = path.join(writerHome, 'thread-writer-locks', `${codexId}.lock`)
 write(writerState, JSON.stringify({ enabled: false, calls: [] }))
@@ -329,6 +337,26 @@ assert.match(result.stderr, /no resumable AIT session matched/)
 // Repeated narrowing keeps one readline interface, so piped lines are not lost.
 result = run('', 'session\n1\n')
 assertSelection(result, 'codex', codexProject, codexId)
+
+// A Codex terminal can be open when AppView has no push registration.
+const relaySocket = path.join(path.dirname(codexSocket), 'ait-codex-tui-relay.Ab12Cd', 'relay.sock')
+for (const socket of [codexSocket, relaySocket]) {
+  write(attachedProcesses, `codex resume ${codexId} --remote unix://${socket}\n`)
+  result = run('', '')
+  assert.doesNotMatch(result.stderr, /@codex-session/)
+  assert.match(result.stderr, /1 live session hidden/)
+  for (const query of [codexHandle, codexId]) {
+    result = run(query, 'yes\n')
+    assert.equal(result.status, 1)
+    assert.equal(result.stdout, '')
+    assert.match(result.stderr, /already open in a Codex terminal/)
+    assert.doesNotMatch(result.stderr, /Resume it anyway/)
+  }
+}
+write(attachedProcesses, `codex resume ${codexId} --remote unix://${codexSocket}.other\n`)
+assertSelection(run(codexHandle), 'codex', codexProject, codexId)
+write(attachedProcesses, '')
+assertSelection(run(codexHandle), 'codex', codexProject, codexId)
 
 // AppView presence keeps live sessions out of the ordinary table. An exact
 // live handle or identifier gets one default-no confirmation instead.
@@ -571,6 +599,7 @@ console.log('p'+state.ownerPid); console.log('f46'); console.log('au'); console.
 `)
 fs.chmodSync(path.join(bin, 'lsof'), 0o755)
 write(path.join(bin, 'ps'), `#!${process.execPath}
+${attachmentProbe}
 const fs=require('node:fs'), state=JSON.parse(fs.readFileSync(${JSON.stringify(writerState)}));
 state.calls.push('ps');fs.writeFileSync(${JSON.stringify(writerState)},JSON.stringify(state));
 console.log('/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex');
@@ -696,6 +725,46 @@ assert.equal(result.stderr.includes(fakeSecret), false)
 // Public operator entry -> writer handoff -> one original-id/cwd dispatch.
 write(path.join(xdg, 'ait-mcp', `codex-thread-${codexId}.json`), JSON.stringify({ threadId: codexId, sessionId: codexId }))
 write(liveFile, '[]'); write(retiredFile, '[]')
+write(attachedProcesses, `codex resume ${codexId} --remote unix://${codexSocket}\n`)
+const loadedPty = path.join(root, 'public-loaded.exp')
+write(loadedPty, String.raw`
+set timeout 10
+spawn -noecho $env(AIT_PTY_EXECUTABLE) resume $env(AIT_PTY_HANDLE)
+expect eof
+set status [wait]
+exit [lindex $status 3]
+`)
+result = spawnSync('/usr/bin/expect', [loadedPty], {
+  env: { ...env, AIT_PTY_EXECUTABLE: path.join(publicRoot, 'ait'), AIT_PTY_HANDLE: codexHandle },
+  cwd: root, encoding: 'utf8', timeout: 15000,
+})
+assert.ifError(result.error)
+assert.equal(result.status, 1, result.stdout + result.stderr)
+assert.doesNotMatch(result.stdout + result.stderr, /PUBLIC /)
+assert.match(result.stdout, /already open in a Codex terminal/)
+write(attachedProcesses, '')
+
+const lateLoad = spawn(process.execPath, [picker], { env, stdio: ['pipe', 'pipe', 'pipe'] })
+let lateOutput = '', lateWarning = ''
+lateLoad.stdout.on('data', chunk => { lateOutput += chunk })
+lateLoad.stderr.on('data', chunk => {
+  lateWarning += chunk
+  if (!lateLoad.stdin.writableEnded && lateWarning.includes('Select a session by number or enter a search: ')) {
+    write(attachedProcesses, `codex resume ${codexId} --remote unix://${codexSocket}\n`)
+    lateLoad.stdin.end('1\n')
+  }
+})
+const lateTimer = setTimeout(() => lateLoad.kill(), 10000)
+try {
+  const lateStatus = await new Promise(resolve => lateLoad.once('close', resolve))
+  assert.equal(lateStatus, 1, lateWarning)
+  assert.equal(lateOutput, '')
+  assert.match(lateWarning, /already open in a Codex terminal/)
+} finally {
+  clearTimeout(lateTimer)
+  write(attachedProcesses, '')
+}
+
 const handoffPty = path.join(root, 'public-handoff.exp')
 write(handoffPty, String.raw`
 set timeout 10

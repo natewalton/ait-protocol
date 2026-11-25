@@ -1,9 +1,11 @@
 import { claudeContinuedSessions, claudeIdentityUuid } from './claudeSession.js'
+import { execFile } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import * as readline from 'node:readline'
 import { pathToFileURL } from 'node:url'
+import { promisify } from 'node:util'
 import { AppServerClient, CODEX_PROTOCOL_TIMEOUT_MS, RpcError } from './codex/appServerClient.js'
 import { SERVER_OVERLOADED, type ThreadReadResponse } from './codex/appServerTypes.js'
 import { sharedAppServerSocketPath } from './codex/paths.js'
@@ -33,6 +35,7 @@ export interface ResumableSession {
   modifiedAt: number
   // Ephemeral ownership evidence; never persisted into an AIT identity.
   codexWriter?: CodexWriterOwner
+  codexAttached?: boolean
 }
 
 interface SessionDiscovery {
@@ -184,6 +187,31 @@ async function claudeSessions(): Promise<ResumableSession[]> {
   return sessions
 }
 
+const execute = promisify(execFile)
+
+// Match the exact TUI invocation from attach_tui, including its history relay.
+// A loaded Codex thread can outlive the terminal that was attached to it.
+async function attachedCodexThreads(signal?: AbortSignal): Promise<Set<string>> {
+  const socket = sharedAppServerSocketPath()
+  const { stdout } = await execute('ps', ['-Aww', '-o', 'args='], {
+    encoding: 'utf8', timeout: 2000, maxBuffer: 4 * 1024 * 1024, signal,
+  })
+  const attached = new Set<string>()
+  for (const line of stdout.split('\n')) {
+    const match = /^(?:\S*\/)?codex(?:-[\w-]+-apple-darwin)? resume (\S+) --remote unix:\/\/(.+)$/.exec(line.trim())
+    if (!match || !THREAD_ID_SHAPE.test(match[1])) continue
+    const target = match[2]
+    const relay = path.dirname(target)
+    if (target === socket ||
+        (path.dirname(relay) === path.dirname(socket) &&
+         /^ait-codex-tui-relay\.[A-Za-z0-9]{6}$/.test(path.basename(relay)) &&
+         path.basename(target) === 'relay.sock')) {
+      attached.add(match[1].toLowerCase())
+    }
+  }
+  return attached
+}
+
 async function codexSessions(signal?: AbortSignal): Promise<ResumableSession[]> {
   if (!commandInstalled('codex')) return []
   let maps: fs.Dirent[]
@@ -246,7 +274,11 @@ async function codexSessions(signal?: AbortSignal): Promise<ResumableSession[]> 
     }
     try {
       const owners = await probeCodexWriters(await client.localServerInfo(), result.map(session => session.identifier))
-      for (const session of result) session.codexWriter = owners.get(session.identifier)
+      const attached = await attachedCodexThreads(signal)
+      for (const session of result) {
+        session.codexWriter = owners.get(session.identifier)
+        session.codexAttached = attached.has(session.identifier.toLowerCase())
+      }
     } catch (error) {
       if (signal?.aborted) throw signal.reason
       process.stderr.write(`Codex sessions not listed: ${error instanceof Error ? error.message : String(error)}. Check lsof/ps availability and retry ait resume.\n`)
@@ -280,14 +312,10 @@ export async function discoverSessions(signal?: AbortSignal): Promise<SessionDis
   const sorted = sessions.sort(
     (a, b) => b.modifiedAt - a.modifiedAt || (a.handle ?? '').localeCompare(b.handle ?? ''),
   )
-  return {
-    offline: sorted.filter(
-      (session) => session.codexWriter !== undefined || session.handle === null || !liveHandles.has(session.handle.toLocaleLowerCase()),
-    ),
-    live: sorted.filter(
-      (session) => session.codexWriter === undefined && session.handle !== null && liveHandles.has(session.handle.toLocaleLowerCase()),
-    ),
-  }
+  const isLive = (session: ResumableSession): boolean =>
+    session.codexAttached === true ||
+    (session.codexWriter === undefined && session.handle !== null && liveHandles.has(session.handle.toLocaleLowerCase()))
+  return { offline: sorted.filter(session => !isLive(session)), live: sorted.filter(isLive) }
 }
 
 function matches(session: ResumableSession, query: string): boolean {
@@ -423,9 +451,30 @@ async function selectInteractive(
   }
 }
 
+function refuseAttachedCodex(session: ResumableSession, output: NodeJS.WritableStream): null {
+  output.write(`@${displayHandle(session.handle!)} is already open in a Codex terminal.\n` +
+    'Continue in the existing session, or close it before running ait resume again.\n')
+  process.exitCode = 1
+  return null
+}
+
+async function recheckCodexSelection(
+  session: ResumableSession | null, output: NodeJS.WritableStream, signal: AbortSignal,
+): Promise<ResumableSession | null> {
+  if (session?.harness !== 'codex') return session
+  try {
+    const attached = await attachedCodexThreads(signal)
+    return attached.has(session.identifier.toLowerCase()) ? refuseAttachedCodex(session, output) : session
+  } catch (err) {
+    if (signal.aborted) throw signal.reason
+    throw new Error('could not recheck the selected Codex session; retry ait resume', { cause: err })
+  }
+}
+
 async function confirmLiveResume(
   session: ResumableSession, read: ReadAnswer, output: NodeJS.WritableStream,
 ): Promise<ResumableSession | null> {
+  if (session.codexAttached) return refuseAttachedCodex(session, output)
   output.write(`@${displayHandle(session.handle!)} checked in within the last five minutes and may still be open.\nResume it anyway? [y/N] `)
   const answer = await read()
   if (answer !== null && /^(?:y|yes)$/i.test(answer.trim())) return session
@@ -474,11 +523,13 @@ export async function chooseSession(
     return null
   }
   return withAnswers(input, output, async (read, signal) => {
-    if (liveExact.length === 1) {
-      const confirmed = await confirmLiveResume(liveExact[0], read, output)
-      return confirmed && resolveWriterHandoff(confirmed, read, output, signal)
+    const finishSelection = async (session: ResumableSession | null): Promise<ResumableSession | null> => {
+      if (!session) return null
+      const selected = await resolveWriterHandoff(session, read, output, signal)
+      return recheckCodexSelection(selected, output, signal)
     }
-    if (exact.length === 1) return resolveWriterHandoff(exact[0], read, output, signal)
+    if (liveExact.length === 1) return finishSelection(await confirmLiveResume(liveExact[0], read, output))
+    if (exact.length === 1) return finishSelection(exact[0])
     const listable = sessions.filter(session => session.handle !== null)
     const narrowed = query ? listable.filter(session => matches(session, query)) : listable
     const hiddenLive = query ? live.filter(session => matches(session, query)).length : live.length
@@ -487,8 +538,7 @@ export async function chooseSession(
       return null
     }
     render(narrowed, output, hiddenLive)
-    const selected = await selectInteractive(narrowed, read, output)
-    return selected && resolveWriterHandoff(selected, read, output, signal)
+    return finishSelection(await selectInteractive(narrowed, read, output))
   })
 }
 

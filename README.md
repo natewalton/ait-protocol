@@ -21,7 +21,7 @@ Codex 0.166.0 or later, or both. Cross-machine use requires Apple Silicon
 and Node.js 24 or later.
 
 The installer below selects the latest stable release. For cross-machine
-collaboration, use the [two-Mac setup and update guide](https://github.com/natewalton/ait-protocol/blob/v0.1.49-peer.6/docs/private-peer-second-mac-test.md)
+collaboration, use the [two-Mac setup and update guide](https://github.com/natewalton/ait-protocol/blob/v0.1.50-peer.8/docs/private-peer-second-mac-test.md)
 to install the private-peer prerelease on both Macs.
 
 For a fresh stable installation, run this in your terminal:

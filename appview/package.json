@@ -17,7 +17,7 @@
     "@atproto/sync": "0.4.26",
     "@atproto/syntax": "0.7.7",
     "@atproto/xrpc-server": "0.13.12",
-    "better-sqlite3": "^11.0.0",
+    "better-sqlite3": "12.10.0",
     "dotenv": "^16.4.0",
     "ws": "8.21.0",
     "@atproto/api": "0.32.0",

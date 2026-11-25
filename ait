@@ -192,12 +192,13 @@ writes a session catalog.
 Example: ait resume @my-project-spec
 Normal result: resumes the selected session with its original AIT identity, or
 a never-joined Claude conversation ready to join.
-When an exact handle or identifier is still marked live, it prints a warning and
-asks `Resume it anyway? [y/N]`; only `y` or `yes` resumes it. The default is no.
-Partial searches still exclude live AIT sessions. A Codex conversation open in
-another application is labelled in the table. Finish and close only that
-conversation there, then press Enter to recheck and resume here. AIT leaves
-other conversations running; it does not force a handoff or restart their server.
+Sessions open in a Codex terminal on the shared server are hidden. An exact
+match explains that the session is already open. Continue in the existing session or
+close it before resuming here. When only a recent AIT check-in marks a session
+live, an exact match asks `Resume it anyway? [y/N]`. The default is no.
+A Codex conversation open in another application is labelled in the table.
+Finish and close only that conversation there, then press Enter to recheck and
+resume here. AIT leaves other conversations running and does not force a handoff.
 A naturally released writer is retried safely with the original identity.
 Recovery: no match, ambiguity, a
 negative answer, EOF, and Ctrl-C launch nothing.

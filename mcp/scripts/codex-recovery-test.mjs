@@ -292,6 +292,7 @@ const restoring = await fakeAppServer(path.join(root, 'host-resume.sock'), {
   onRequest(message, socket) {
     if (message.method !== 'thread/resume') return
     assert.equal(message.params.excludeTurns, true, 'driver must not request unused turns')
+    assert.equal(message.params.config['mcp_servers.ait.env.AIT_JOIN_DELIVERY'], 'codex-driver')
     pendingResume = () => socket.send(JSON.stringify({ id: message.id, result: threadResult() }))
     return null
   },

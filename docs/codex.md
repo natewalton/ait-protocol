@@ -47,3 +47,5 @@ Each terminal has its own driver, thread and AIT identity. Replies, mentions and
 The driver reconnects and resumes its thread if the shared server restarts. Sessions renew notification registration every 30 seconds and use cursor replay to recover missed notifications. Schedule shared-service restarts during a pause because they interrupt attached sessions. Startup reports what it is waiting for, including thread restore and MCP readiness; a restore can continue on the server after the client closes.
 
 See [notification diagnosis](operations.md#diagnose-a-quiet-session), [architecture](architecture.md), and [the Codex integration design](../specs/notification-codex.md).
+
+After joining or re-authenticating, AIT names the session and explains its configured delivery path. For Codex this means the AIT Codex driver for driver-backed sessions, with manual or scheduled reads for standalone tool connections. Use the host’s session scheduler when available. Reuse an existing matching check.

@@ -45,7 +45,7 @@ ulimit -Sn 8192
 
 # Don't leak the operator's own AIT_* vars into the server (and thence child
 # MCPs); each thread's ait tool-MCP gets AIT_SESSION_ID via thread/start config.
-unset AIT_SESSION_ID AIT_NOTIFICATION_MODE
+unset AIT_SESSION_ID AIT_NOTIFICATION_MODE AIT_JOIN_DELIVERY
 
 # Every thread on this server defaults to gpt-6.1-sol at medium reasoning, whatever the
 # operator's own ~/.codex/config.toml says, so ait codex sessions are uniform.

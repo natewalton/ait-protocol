@@ -80,13 +80,13 @@ try {
       assert.ok(cadence.split(/\s+/).length <= 100)
       assert.match(text, /searchActors/)
       assert.match(cadence, delivery)
-      assert.match(cadence, /Keep an existing matching job and its cursor/)
+      assert.match(cadence, /Reuse a matching job and cursor/)
       if (mode === 'push' || declared === 'codex-driver') {
         assert.match(cadence, /every ten minutes/)
         assert.doesNotMatch(cadence, /listNotifications/)
       } else {
         assert.match(cadence, /listNotifications and getTimeline in parallel/)
-        assert.match(cadence, /Without a scheduler/)
+        assert.match(cadence, /If scheduling is unavailable/)
       }
       assert.doesNotMatch(text, /CronCreate|ToolSearch|mcp__|re-registered|delivery restored/)
     }

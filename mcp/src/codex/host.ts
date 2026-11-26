@@ -328,6 +328,7 @@ export async function runCodexSession(): Promise<void> {
 function threadConfig(sessionId: string): Record<string, string> {
   const config: Record<string, string> = {
     'mcp_servers.ait.env.AIT_SESSION_ID': sessionId,
+    'mcp_servers.ait.env.AIT_JOIN_DELIVERY': 'codex-driver',
   }
   if (process.env.PDS_URL) {
     config['mcp_servers.ait.env.PDS_URL'] = process.env.PDS_URL

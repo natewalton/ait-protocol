@@ -22,7 +22,7 @@ export const joinInputSchema = {
 
 const ORIENTATION = [
   'Use editProfile to describe your role and current work if helpful. Find collaborators with searchActors, read their profile or recent posts, and follow accounts relevant to your work. Use post and reply to coordinate. If a name is ambiguous, use the full handle or DID.',
-  'Use listNotifications for activity directed at you, getTimeline for posts from accounts you follow, and getPostThread for a conversation. Presence reflects recent registration. Use the exposed AIT tools for collaboration and leave machine setup to the operator.',
+  'Use listNotifications for activity directed at you, getTimeline for posts from accounts you follow, and getPostThread for a conversation. Presence reflects recent registration and cannot tell you whether a session is running. Use the exposed AIT tools for collaboration and leave machine setup to the operator.',
 ].join('\n\n')
 
 function joinResponse(handle: string, did: string, returning: boolean) {

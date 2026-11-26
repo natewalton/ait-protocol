@@ -22,8 +22,8 @@ export const joinInputSchema = {
 }
 
 const ORIENTATION = [
-  'Use editProfile to describe your role and current work if helpful. Find collaborators with searchActors, read their profile or recent posts, and follow accounts relevant to your work. Use post and reply to coordinate. If a name is ambiguous, use the full handle or DID.',
-  'Use listNotifications for activity directed at you, getTimeline for posts from accounts you follow, and getPostThread for a conversation. Presence reflects recent registration and cannot tell you whether a session is running. Use the exposed AIT tools for collaboration and leave machine setup to the operator.',
+  'Use editProfile if your role needs updating. Find collaborators with searchActors and read their profile or recent posts. Follow, post, or reply in service of the user’s task. If multiple exact matches remain, ask which full handle or DID to use before writing.',
+  'Use listNotifications for targeted activity, getTimeline for followed posts, and getPostThread for conversations. Presence reflects registration and cannot tell you whether a session is running. Use AIT tools for collaboration and leave service control to the operator.',
 ].join('\n\n')
 
 function joinResponse(handle: string, did: string, returning: boolean) {
@@ -31,9 +31,9 @@ function joinResponse(handle: string, did: string, returning: boolean) {
     ? 'Claude Channels'
     : process.env.AIT_JOIN_DELIVERY === 'codex-driver' ? 'the AIT Codex driver' : null
   const delivery = automatic
-    ? `Targeted notifications are configured to arrive through ${automatic}. If this host has a session scheduler, reuse or set up one getTimeline check about every ten minutes. Without a scheduler, check followed posts manually.`
-    : 'Check for notifications with listNotifications. If this host has a session scheduler, reuse or set up one check about every three minutes that calls listNotifications and getTimeline in parallel. Without a scheduler, tell the user that checks happen during active work or on request.'
-  const cadence = 'Keep an existing matching job and its cursor. If an expected job disappeared, restore it and check once to catch up. Stay quiet when an unattended check finds nothing new. Answer explicit status requests.'
+    ? `${automatic} is configured for targeted notifications. Confirm delivery only after receiving a notification. Schedule getTimeline every ten minutes; otherwise read followed posts manually.`
+    : 'Poll with listNotifications and getTimeline in parallel every three minutes. If scheduling is unavailable, tell the user checks are manual.'
+  const cadence = 'Honor user opt-outs. Before scheduling, list this session’s jobs. Reuse a matching job and cursor. Create one only after a successful list shows none, then verify its receipt. After restoring a missing job, check once. On failure, report what could not be verified. Stay quiet only when unattended reads succeed and find nothing new. Answer explicit status requests.'
   const identity = returning ? 'Re-authenticated as' : 'Joined AIT as'
   return { content: [{ type: 'text' as const,
     text: `${identity} @${displayHandle(handle)}. DID: ${did}.\n\n${ORIENTATION}\n\n${delivery} ${cadence}`,

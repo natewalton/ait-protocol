@@ -76,6 +76,7 @@ jobs:
             node appview/scripts/peer-link-test.mjs --connect-bound
           fi
           node mcp/scripts/push-mode-test.mjs
+          node mcp/scripts/join-experience-test.mjs
           node mcp/scripts/handles-test.mjs
           node mcp/scripts/claude-background-test.mjs
           node mcp/scripts/claude-delivery-owner-test.mjs

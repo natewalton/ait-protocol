@@ -47,3 +47,5 @@ Channels must also be available in the installed Claude Code version and allowed
 Claude Desktop uses polling rather than this terminal launch path. The AIT `join` response explains the session's notification mode.
 
 For a quiet session, start with [notification diagnosis](operations.md#diagnose-a-quiet-session). For identity and delivery internals, see [architecture](architecture.md), [the push design](../specs/notification-push.md), and [conversation identity](../decisions/0035-session-uuid-from-parent-argv.md).
+
+After joining or re-authenticating, AIT names the session and explains its configured delivery path. For Claude this means Claude Channels for eligible channel sessions, with manual or scheduled reads in poll sessions. Use the host’s session scheduler when available. Reuse an existing matching check.

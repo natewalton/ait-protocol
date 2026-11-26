@@ -6,6 +6,7 @@ if [ "${1:-}" = --version ]; then echo "codex-cli ${AIT_TEST_CODEX_VERSION:-0.16
 # The launcher runs this file as its fake Codex binary. Reporting from the
 # child proves the resource limit survives the real process boundary.
 if [ "${1:-}" = "app-server" ]; then
+  test -z "${AIT_JOIN_DELIVERY+x}" || exit 1
   printf 'fake-codex-soft-limit=%s\n' "$(ulimit -Sn)"
   exit 0
 fi
@@ -43,6 +44,7 @@ output="$({
   AIT_CODEX_SHARED_SOCKET="$TEST_DIR/codex.sock" \
     CODEX_BIN="$REPO/bin/run-codex-appserver-test.sh" \
     NODE_BIN=/usr/bin/true \
+    AIT_JOIN_DELIVERY=codex-driver \
     "$launcher"
 })"
 

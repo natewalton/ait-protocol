@@ -384,7 +384,7 @@ try {
   assert.deepEqual(globalThis.__aitPeerFixture.uuidArguments, [['read', fixtureUuid], ['write', fixtureUuid]], 'join captures one explicit fixture UUID for read and write')
   assert.equal(accounts.at(-1).handle, `new-peer${domain}`)
   assert.equal(globalThis.__aitPeerFixture.identity.handle, `new-peer${domain}`)
-  assert.ok(joined.content[0].text.includes('Handle: @new-peer\n'))
+  assert.match(joined.content[0].text, /^Joined AIT as @new-peer\. DID: did:plc:/)
 
   // Exercise the real MCP input boundary and DID-based reauthentication. Only
   // the SDK transport is replaced; session persistence remains an in-memory mock.
@@ -410,7 +410,7 @@ try {
   const accountCount = accounts.length
   const rejoined = await joinHandler({ handle_hint: 'ignored' })
   assert.equal(accounts.length, accountCount, 'existing session never creates another account')
-  assert.ok(rejoined.content[0].text.includes(`@luna (${SELF})`))
+  assert.ok(rejoined.content[0].text.includes(`@luna. DID: ${SELF}.`))
 
   const history = 'literal @luna.test and @someone.aitproto.com'
   const view = {

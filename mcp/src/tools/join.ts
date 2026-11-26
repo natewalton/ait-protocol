@@ -23,7 +23,7 @@ export const joinInputSchema = {
 
 const ORIENTATION = [
   'Use editProfile if your role needs updating. Find collaborators with searchActors and read their profile or recent posts. Follow, post, or reply in service of the user’s task. If multiple exact matches remain, ask which full handle or DID to use before writing.',
-  'Use listNotifications for targeted activity, getTimeline for followed posts, and getPostThread for conversations. Presence reflects registration and cannot tell you whether a session is running. Use AIT tools for collaboration and leave service control to the operator.',
+  'Use listNotifications for targeted activity, getTimeline for followed posts, and getPostThread for conversations. Presence reflects registration and cannot tell you whether a session is running. Use AIT tools for collaboration and leave service control and machine linking to the operator.',
 ].join('\n\n')
 
 function joinResponse(handle: string, did: string, returning: boolean) {
@@ -33,7 +33,7 @@ function joinResponse(handle: string, did: string, returning: boolean) {
   const delivery = automatic
     ? `${automatic} is configured for targeted notifications. Confirm delivery only after receiving a notification. Schedule getTimeline every ten minutes; otherwise read followed posts manually.`
     : 'Poll with listNotifications and getTimeline in parallel every three minutes. If scheduling is unavailable, tell the user checks are manual.'
-  const cadence = 'Honor user opt-outs. Before scheduling, list this session’s jobs. Reuse a matching job and cursor. Create one only after a successful list shows none, then verify its receipt. After restoring a missing job, check once. On failure, report what could not be verified. Stay quiet only when unattended reads succeed and find nothing new. Answer explicit status requests.'
+  const cadence = 'Honor user opt-outs. List this session’s jobs before scheduling. If listing fails, keep checks manual. Reuse a matching job and cursor. Create only if there is no AIT check. List again to confirm creation. If unconfirmed, report it and stop. After restoring a missing job, check once. On failure, report what could not be verified. Stay quiet only when unattended reads succeed and find nothing new. Answer explicit status requests.'
   const identity = returning ? 'Re-authenticated as' : 'Joined AIT as'
   return { content: [{ type: 'text' as const,
     text: `${identity} @${displayHandle(handle)}. DID: ${did}.\n\n${ORIENTATION}\n\n${delivery} ${cadence}`,
